@@ -619,6 +619,7 @@ const WHATSAPP_NUMBER = "15550142200";
 const PENDING_CART_KEY = "subbie_pending_cart";
 const PENDING_WA_RFQ_KEY = "subbie_pending_whatsapp_rfq";
 const PENDING_CUSTOM_KEY = "subbie_pending_custom";
+const PENDING_WA_ORDER_KEY = "subbie_pending_whatsapp_order";
 
 function formatPrice(price) {
   if (price == null) {
@@ -1168,6 +1169,7 @@ function submitRfq(productIds, options = {}) {
       productNo: l.productNo || "",
       category: l.category || "",
       green: Boolean(l.green),
+      image: l.image || null,
       attachments: Array.isArray(l.attachments) ? l.attachments : [],
     })),
     pricedSubtotal: totals.pricedSubtotal,
@@ -1398,6 +1400,26 @@ function setPendingWhatsappRfq(productId) {
   if (productId) sessionStorage.setItem(PENDING_WA_RFQ_KEY, productId);
 }
 
+function setPendingWhatsappOrder(order) {
+  if (!order) return;
+  try {
+    sessionStorage.setItem(PENDING_WA_ORDER_KEY, JSON.stringify(order));
+  } catch {
+    /* ignore */
+  }
+}
+
+function getPendingWhatsappOrder() {
+  try {
+    const raw = sessionStorage.getItem(PENDING_WA_ORDER_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && Array.isArray(parsed.lines) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 function setPendingCustom() {
   sessionStorage.setItem(PENDING_CUSTOM_KEY, "1");
 }
@@ -1518,6 +1540,8 @@ export {
   logoutUser,
   setPendingCart,
   setPendingWhatsappRfq,
+  setPendingWhatsappOrder,
+  getPendingWhatsappOrder,
   setPendingCustom,
   consumePendingAfterAuth,
   whatsappUrl,

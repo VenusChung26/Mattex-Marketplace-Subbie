@@ -206,12 +206,6 @@ export default function SiteHeader({
                 </span>
               ) : null}
             </button>
-            <Link
-              to="/rfqs"
-              className="hidden sm:inline-flex items-center px-3 py-2 text-sm font-medium text-white/85 hover:text-white hover:bg-white/10 transition-colors"
-            >
-              {t("myRfqs")}
-            </Link>
             <AccountMenu user={user} light />
             <LangToggle light />
             <button
@@ -325,9 +319,6 @@ export default function SiteHeader({
             ))}
             <Link to="/rfq" className="py-2.5 hover:text-white" onClick={closeMenu}>
               {t("rfqDraft")}
-            </Link>
-            <Link to="/rfqs" className="py-2.5 hover:text-white" onClick={closeMenu}>
-              {t("myRfqs")}
             </Link>
             {user ? (
               <>

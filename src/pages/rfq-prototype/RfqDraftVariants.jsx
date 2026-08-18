@@ -7,7 +7,6 @@ import { Link } from "react-router-dom";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { draftTotals, formatPrice, getCategoryDefs, SAMPLE_PROJECTS } from "../../lib/store";
 import CustomProductForm from "../../components/CustomProductForm";
-import CustomProductModal from "../../components/CustomProductModal";
 import AiSpecExtractModal from "../../components/AiSpecExtractModal";
 import AttachmentLinks from "../../components/AttachmentLinks";
 import { useLanguage } from "../../i18n";
@@ -23,17 +22,6 @@ export const CUSTOM_PLACEMENT = {
   B: "modal",
   C: "drawer",
 };
-
-function customLineProps(props) {
-  return {
-    editingId: props.editingId,
-    setEditingId: props.setEditingId,
-    showAddCustom: props.showAddCustom,
-    setShowAddCustom: props.setShowAddCustom,
-    onAddCustom: props.onAddCustom,
-    onUpdateCustom: props.onUpdateCustom,
-  };
-}
 
 function GreenProductTag({ t, className = "" }) {
   return (
@@ -91,10 +79,6 @@ function selectedFor(lines, selectedIds) {
   return (selectedIds || []).filter((id) => set.has(String(id)));
 }
 
-function canBuyFromStock(line) {
-  return Boolean(line) && !line.custom && line.unitPrice != null;
-}
-
 function hasLowerAsk(line) {
   return (
     line?.unitPrice != null &&
@@ -127,346 +111,50 @@ function IntentDraftSections(props) {
     toggleId,
     toggleSection,
     setLineQty,
-    setLineIntent,
     removeLine,
     onContinueKind,
     formError,
     formErrorKind,
-    embedded = false,
     showActions = true,
-    customPlacement = "inline",
-    showAddCustom,
-    setShowAddCustom,
-    onAddCustom,
   } = props;
   const { t } = useLanguage();
-  const { buyLines, quoteLines } = splitDraftLines(lines);
+  const { buyLines } = splitDraftLines(lines);
   const buySelected = selectedFor(buyLines, selectedIds);
-  const quoteSelected = selectedFor(quoteLines, selectedIds);
   const buyTotals = draftTotals({ lines: buyLines }, buySelected);
-  const quoteTotals = draftTotals({ lines: quoteLines }, quoteSelected);
   const buyAll = buyLines.length > 0 && buySelected.length === buyLines.length;
-  const quoteAll = quoteLines.length > 0 && quoteSelected.length === quoteLines.length;
-  const [dragging, setDragging] = useState(null);
-  const [overSection, setOverSection] = useState(null);
-  const [dropError, setDropError] = useState("");
-  const [leavePrompt, setLeavePrompt] = useState(null);
-  const dragSession = useRef(null);
-
-  useEffect(() => {
-    if (!dropError) return undefined;
-    const timer = window.setTimeout(() => setDropError(""), 4500);
-    return () => window.clearTimeout(timer);
-  }, [dropError]);
-
-  function hitDropTarget(x, y) {
-    let found = null;
-    for (const el of document.querySelectorAll("[data-drop-target]")) {
-      const r = el.getBoundingClientRect();
-      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
-        found = el.getAttribute("data-drop-target");
-      }
-    }
-    return found;
-  }
-
-  function moveLine(productId, intent) {
-    if (!setLineIntent) return;
-    const result = setLineIntent(productId, intent);
-    if (!result?.ok && result?.reason === "unpriced") {
-      setDropError(t("cannotMoveToStock"));
-    }
-  }
-
-  function finishDrop(payload, target) {
-    if (!payload || !target || payload.from === target) return;
-    if (target === "buy" && !payload.canBuy) {
-      setDropError(t("cannotMoveToStock"));
-      return;
-    }
-    if (payload.from === "buy" && target === "quote") {
-      setLeavePrompt({ productId: payload.productId, name: payload.name });
-      return;
-    }
-    moveLine(payload.productId, target);
-  }
-
-  function beginDrag(line, from, event) {
-    if (event.button != null && event.button !== 0) return;
-    event.preventDefault();
-    event.stopPropagation();
-    setDropError("");
-    const payload = {
-      productId: String(line.productId),
-      name: line.name,
-      from,
-      canBuy: canBuyFromStock(line),
-    };
-    const origin = { x: event.clientX, y: event.clientY };
-    dragSession.current = { payload, origin, active: false };
-
-    function onMove(ev) {
-      const session = dragSession.current;
-      if (!session) return;
-      const dx = ev.clientX - session.origin.x;
-      const dy = ev.clientY - session.origin.y;
-      if (!session.active && dx * dx + dy * dy < 36) return;
-      session.active = true;
-      setDragging({ ...session.payload, x: ev.clientX, y: ev.clientY });
-      setOverSection(hitDropTarget(ev.clientX, ev.clientY));
-      const edge = 80;
-      if (ev.clientY < edge) window.scrollBy(0, -22);
-      else if (ev.clientY > window.innerHeight - edge) window.scrollBy(0, 22);
-    }
-
-    function onUp(ev) {
-      window.removeEventListener("pointermove", onMove, true);
-      window.removeEventListener("pointerup", onUp, true);
-      window.removeEventListener("pointercancel", onUp, true);
-      window.removeEventListener("blur", onUp);
-      const session = dragSession.current;
-      dragSession.current = null;
-      const target = ev?.clientX != null ? hitDropTarget(ev.clientX, ev.clientY) : null;
-      if (session?.active) finishDrop(session.payload, target);
-      setDragging(null);
-      setOverSection(null);
-    }
-
-    window.addEventListener("pointermove", onMove, { capture: true, passive: true });
-    window.addEventListener("pointerup", onUp, true);
-    window.addEventListener("pointercancel", onUp, true);
-    window.addEventListener("blur", onUp);
-  }
-
-  const listProps = {
-    toggleId,
-    setLineQty,
-    removeLine,
-    embedded: true,
-    showIntent: false,
-    dragging,
-    overSection,
-    onDragLineStart: beginDrag,
-  };
-
-  function sectionClass(target) {
-    const invalid = target === "buy" && dragging && !dragging.canBuy;
-    return `relative bg-white border rounded-xl overflow-hidden transition-shadow flex flex-col min-h-[14rem] lg:max-h-[calc(100vh-12.5rem)] ${
-      dragging
-        ? overSection === target
-          ? invalid
-            ? "border-amber-600 ring-2 ring-amber-500/40 bg-amber-50/40"
-            : "border-brand-600 ring-2 ring-brand-600/40 bg-brand-50/50"
-          : "border-dashed border-brand-300"
-        : "border-line"
-    }`;
-  }
 
   return (
-    <div
-      className={
+    <section className="relative bg-white border border-line rounded-xl overflow-hidden flex flex-col min-h-[14rem]">
+      <LinesList
+        toggleId={toggleId}
+        setLineQty={setLineQty}
+        removeLine={removeLine}
         embedded
-          ? "space-y-4 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-5 lg:items-stretch"
-          : "space-y-5 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-5 lg:items-stretch"
-      }
-    >
-      {dropError ? (
-        <p className="lg:col-span-2 text-sm text-amber-950 bg-amber-50 border border-amber-200 px-3.5 py-2.5 flex items-start justify-between gap-3">
-          <span>{dropError}</span>
-          <button type="button" className="text-xs font-semibold text-amber-900 hover:underline shrink-0" onClick={() => setDropError("")}>
-            {t("dismiss")}
-          </button>
-        </p>
-      ) : null}
-
-      <section data-drop-target="buy" className={sectionClass("buy")}>
-        <DropLane
-          visible={Boolean(dragging)}
-          active={overSection === "buy"}
-          invalid={Boolean(dragging) && !dragging.canBuy}
-          label={t("dropToBuy")}
-          invalidLabel={t("dropInvalidStock")}
-        />
-        <LinesList
-          {...listProps}
-          lines={buyLines}
-          selectedIds={buySelected}
-          allSelected={buyAll}
-          toggleAll={() => toggleSection(buyLines.map((l) => String(l.productId)))}
-          title={t("sectionBuy")}
-          subtitle={t("sectionBuyHint")}
-          selectAllLabel={t("selectAllBuy")}
-          allowCustom={false}
-          tone="buy"
-          dropIntent="buy"
-          emptyMessage={t("emptyBuySection")}
-        />
-        {showActions && buyLines.length ? (
-          <div className="mt-auto px-4 sm:px-5 py-4 border-t border-line bg-brand-50/40 shrink-0">
-            <SubmitBar
-              bare
-              selectedIds={buySelected}
-              selectedTotals={buyTotals}
-              formError={formErrorKind === "buy" ? formError : ""}
-              onSubmit={() => onContinueKind("buy")}
-              submitLabel={t("createOrder")}
-            />
-          </div>
-        ) : null}
-      </section>
-
-      <section data-drop-target="quote" className={sectionClass("quote")}>
-        <DropLane
-          visible={Boolean(dragging)}
-          active={overSection === "quote"}
-          invalid={false}
-          label={t("dropToQuote")}
-          invalidLabel=""
-        />
-        <LinesList
-          {...listProps}
-          lines={quoteLines}
-          selectedIds={quoteSelected}
-          allSelected={quoteAll}
-          toggleAll={() => toggleSection(quoteLines.map((l) => String(l.productId)))}
-          title={t("sectionQuote")}
-          subtitle={t("sectionQuoteHint")}
-          selectAllLabel={t("selectAllQuote")}
-          allowCustom
-          tone="quote"
-          dropIntent="quote"
-          emptyMessage={t("emptyQuoteSection")}
-          customPlacement={customPlacement}
-          {...customLineProps(props)}
-        />
-        {showActions ? (
-          <div className="mt-auto px-4 sm:px-5 py-4 border-t border-line shrink-0">
-            <SubmitBar
-              bare
-              selectedIds={quoteSelected}
-              selectedTotals={quoteTotals}
-              formError={formErrorKind === "quote" ? formError : ""}
-              onSubmit={() => onContinueKind("quote")}
-              submitLabel={t("confirmProductsCreateRfq")}
-            />
-          </div>
-        ) : null}
-      </section>
-
-      {customPlacement === "modal" ? (
-        <CustomProductModal
-          open={Boolean(showAddCustom)}
-          onClose={() => setShowAddCustom?.(false)}
-          onSubmit={(payload) => onAddCustom?.(payload)}
-        />
-      ) : null}
-
-      {customPlacement === "drawer" && showAddCustom ? (
-        <div className="fixed inset-0 z-[60] flex justify-end" role="presentation">
-          <div className="absolute inset-0 bg-charcoal/45" onClick={() => setShowAddCustom?.(false)} />
-          <aside
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="custom-drawer-title"
-            className="relative flex h-full w-full max-w-md flex-col border-l border-line bg-white shadow-[0_0_48px_rgba(16,21,19,0.28)]"
-          >
-            <div className="flex items-start justify-between gap-3 border-b border-line px-5 py-4 shrink-0">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-brand-600">{t("customItem")}</p>
-                <h3 id="custom-drawer-title" className="mt-0.5 text-lg font-bold text-brand-800">
-                  {t("addCustomProduct")}
-                </h3>
-              </div>
-              <button
-                type="button"
-                className="h-8 w-8 text-lg text-mute hover:text-ink"
-                onClick={() => setShowAddCustom?.(false)}
-                aria-label={t("cancel")}
-              >
-                ×
-              </button>
-            </div>
-            <div className="flex-1 overflow-y-auto px-5 py-4">
-              <CustomProductForm
-                compact
-                onSubmit={(payload) => onAddCustom?.(payload)}
-                onCancel={() => setShowAddCustom?.(false)}
-              />
-            </div>
-          </aside>
+        showIntent={false}
+        lines={buyLines}
+        selectedIds={buySelected}
+        allSelected={buyAll}
+        toggleAll={() => toggleSection(buyLines.map((l) => String(l.productId)))}
+        title={t("sectionBuy")}
+        subtitle={t("sectionBuyHint")}
+        selectAllLabel={t("selectAllBuy")}
+        allowCustom={false}
+        tone="buy"
+        emptyMessage={t("emptyBuySection")}
+      />
+      {showActions && buyLines.length ? (
+        <div className="mt-auto px-4 sm:px-5 py-4 border-t border-line bg-brand-50/40 shrink-0">
+          <SubmitBar
+            bare
+            selectedIds={buySelected}
+            selectedTotals={buyTotals}
+            formError={formErrorKind === "buy" ? formError : ""}
+            onSubmit={() => onContinueKind("buy")}
+            submitLabel={t("createOrder")}
+          />
         </div>
       ) : null}
-
-      {dragging ? (
-        <>
-          <div
-            className="fixed z-[90] pointer-events-none max-w-[16rem] truncate px-3 py-2 bg-white border border-brand-600 text-sm font-semibold text-ink shadow-[0_12px_28px_rgba(16,21,19,0.18)]"
-            style={{ left: dragging.x + 12, top: dragging.y + 12 }}
-          >
-            {dragging.name}
-          </div>
-          <div className="fixed inset-x-0 bottom-6 z-[70] flex justify-center px-4 pointer-events-none lg:hidden">
-            <div className="w-full max-w-xl grid grid-cols-2 gap-2">
-              {["buy", "quote"].map((target) => {
-                const invalid = target === "buy" && !dragging.canBuy;
-                const active = overSection === target;
-                return (
-                  <div
-                    key={target}
-                    data-drop-target={target}
-                    className={`pointer-events-auto px-3 py-3 text-center text-xs sm:text-sm font-semibold border shadow-[0_12px_28px_rgba(16,21,19,0.18)] ${
-                      invalid
-                        ? active
-                          ? "bg-amber-600 text-white border-amber-600"
-                          : "bg-amber-50 text-amber-900 border-amber-300"
-                        : active
-                          ? "bg-brand-700 text-white border-brand-700"
-                          : "bg-white text-brand-800 border-brand-300"
-                    }`}
-                  >
-                    {invalid ? t("dropInvalidStock") : target === "buy" ? t("dropToBuy") : t("dropToQuote")}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </>
-      ) : null}
-
-      {leavePrompt ? (
-        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4" role="presentation">
-          <div className="absolute inset-0 bg-charcoal/50" onClick={() => setLeavePrompt(null)} />
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="leave-stock-title"
-            className="relative bg-white border border-line max-w-md w-full p-6 shadow-[0_24px_60px_rgba(16,21,19,0.25)]"
-          >
-            <h3 id="leave-stock-title" className="text-lg font-bold text-brand-800">
-              {t("dragLeaveStockTitle")}
-            </h3>
-            <p className="mt-2 text-sm text-mute leading-relaxed">
-              {t("dragLeaveStockBody", { name: leavePrompt.name })}
-            </p>
-            <div className="mt-5 flex flex-wrap justify-end gap-2">
-              <button type="button" className="btn-soft !px-4 !py-2" onClick={() => setLeavePrompt(null)}>
-                {t("cancel")}
-              </button>
-              <button
-                type="button"
-                className="btn-primary !px-4 !py-2"
-                onClick={() => {
-                  moveLine(leavePrompt.productId, "quote");
-                  setLeavePrompt(null);
-                }}
-              >
-                {t("dragLeaveStockConfirm")}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-    </div>
+    </section>
   );
 }
 
@@ -568,11 +256,9 @@ export function VariantB(props) {
     onContinueKind,
   } = props;
   const { t } = useLanguage();
-  const { buyLines, quoteLines } = splitDraftLines(lines);
+  const { buyLines } = splitDraftLines(lines);
   const buySelected = selectedFor(buyLines, selectedIds);
-  const quoteSelected = selectedFor(quoteLines, selectedIds);
   const buyTotals = draftTotals({ lines: buyLines }, buySelected);
-  const quoteTotals = draftTotals({ lines: quoteLines }, quoteSelected);
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8 sm:py-10 pb-28">
@@ -593,36 +279,19 @@ export function VariantB(props) {
           <h2 className="font-display text-xl font-semibold text-brand-800">{t("confirmPageTitle")}</h2>
           <p className="text-sm text-mute">{t("reviewQuoteHint")}</p>
           <div className="pt-3 border-t border-line space-y-4">
-            {buyLines.length ? (
-              <div>
-                <p className="text-xs text-mute uppercase tracking-wide">{t("sectionBuy")}</p>
-                <p className="text-xl font-bold text-brand-600 mt-1">{formatPrice(buyTotals.pricedSubtotal)}</p>
-                {formErrorKind === "buy" && formError ? (
-                  <p className="mt-2 text-sm text-red-700 font-medium">{formError}</p>
-                ) : null}
-                <button
-                  type="button"
-                  onClick={() => onContinueKind("buy")}
-                  disabled={buySelected.length === 0}
-                  className="btn-primary w-full !py-3 mt-3 disabled:opacity-45"
-                >
-                  {t("confirmProductsCreateRfq")}
-                </button>
-              </div>
-            ) : null}
             <div>
-              <p className="text-xs text-mute uppercase tracking-wide">{t("sectionQuote")}</p>
-              <p className="text-xl font-bold text-brand-600 mt-1">{formatPrice(quoteTotals.pricedSubtotal)}</p>
-              {formErrorKind === "quote" && formError ? (
+              <p className="text-xs text-mute uppercase tracking-wide">{t("sectionBuy")}</p>
+              <p className="text-xl font-bold text-brand-600 mt-1">{formatPrice(buyTotals.pricedSubtotal)}</p>
+              {formErrorKind === "buy" && formError ? (
                 <p className="mt-2 text-sm text-red-700 font-medium">{formError}</p>
               ) : null}
               <button
                 type="button"
-                onClick={() => onContinueKind("quote")}
-                disabled={quoteSelected.length === 0}
+                onClick={() => onContinueKind("buy")}
+                disabled={buySelected.length === 0}
                 className="btn-primary w-full !py-3 mt-3 disabled:opacity-45"
               >
-                {t("confirmProductsCreateRfq")}
+                {t("createOrder")}
               </button>
             </div>
             <Link to="/#products" className="btn-soft w-full !py-2.5">
@@ -889,28 +558,7 @@ function QtyField({ productId, qty, minQty, onChange, t }) {
   );
 }
 
-function DropLane({ visible, active, invalid, label, invalidLabel }) {
-  if (!visible) return null;
-  const text = invalid ? invalidLabel : label;
-  return (
-    <div
-      className={`px-4 py-2.5 text-center text-sm font-semibold border-b shrink-0 sticky top-0 z-10 ${
-        invalid
-          ? active
-            ? "bg-amber-600 text-white"
-            : "bg-amber-50 text-amber-900"
-          : active
-            ? "bg-brand-700 text-white"
-            : "bg-brand-50 text-brand-800 border-dashed border-brand-200"
-      }`}
-    >
-      {text}
-    </div>
-  );
-}
-
 function DragGrip({ hint, onPointerDown }) {
-
   return (
     <button
       type="button"

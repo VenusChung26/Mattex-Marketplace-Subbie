@@ -11,6 +11,7 @@
     "prototype:rfq": "vite --open /rfq?variant=A",
     "prototype:quotes": "vite --open /rfqs?variant=A",
     "prototype:website": "vite --open /?variant=A",
+    "prototype:whatsapp": "vite --open /whatsapp-chat?variant=A",
     "prototype:logic": "python3 -m http.server 8766 --directory public"
   },
   "dependencies": {

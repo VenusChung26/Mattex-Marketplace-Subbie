@@ -8,6 +8,7 @@ import DetailsPage from "./pages/DetailsPage";
 import RfqPage from "./pages/RfqPage";
 import RfqsPage from "./pages/RfqsPage";
 import WhatsappPage from "./pages/WhatsappPage";
+import WhatsappChatPage from "./pages/WhatsappChatPage";
 import SupplierPage from "./pages/SupplierPage";
 
 export default function App() {
@@ -25,6 +26,8 @@ export default function App() {
         <Route path="/rfqs" element={<RfqsPage />} />
         <Route path="/whatsapp" element={<WhatsappPage />} />
         <Route path="/whatsapp/:id" element={<WhatsappPage />} />
+        <Route path="/whatsapp-chat" element={<WhatsappChatPage />} />
+        <Route path="/whatsapp-chat/:rfqId" element={<WhatsappChatPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

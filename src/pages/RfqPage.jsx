@@ -1,7 +1,7 @@
 /**
  * RFQ draft — select products, then confirm logistics on the next page.
  */
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useStore } from "../hooks/useStore";
 import {
   addCustomLine,
@@ -22,6 +22,7 @@ import {
   setLineIntent,
   setLineRequestedPrice,
   submitRfq,
+  setPendingWhatsappOrder,
   updateCustomLine,
 } from "../lib/store";
 import { useEffect, useMemo, useState } from "react";
@@ -34,6 +35,7 @@ import PrototypeSwitcher from "../components/PrototypeSwitcher";
 export default function RfqPage() {
   const { user, draft } = useStore();
   const { t } = useLanguage();
+  const navigate = useNavigate();
   const [params] = useSearchParams();
   const variant = String(params.get("variant") || "A").toUpperCase();
   const customPlacement = CUSTOM_PLACEMENT[variant] || "inline";
@@ -273,6 +275,20 @@ export default function RfqPage() {
     }
     setFormError("");
     setFormErrorKind("");
+    if (kind === "buy") {
+      const buyLines = totals.lines.filter(
+        (line) => line.intent === "buy" && ids.includes(String(line.productId))
+      );
+      const buyTotals = draftTotals({ lines: buyLines }, ids);
+      setPendingWhatsappOrder({
+        id: `DRAFT-${Date.now().toString(36).toUpperCase()}`,
+        project: String(project || "").trim(),
+        pricedSubtotal: buyTotals.pricedSubtotal,
+        lines: buyTotals.lines,
+      });
+      navigate("/whatsapp-chat");
+      return;
+    }
     setConfirmKind(kind);
     window.scrollTo(0, 0);
   }
@@ -305,6 +321,10 @@ export default function RfqPage() {
     setFormError("");
     setFormErrorKind("");
     setConfirmKind(null);
+    if (kind === "buy") {
+      navigate(`/whatsapp-chat/${encodeURIComponent(result.rfq.id)}`);
+      return;
+    }
     setSuccessKind(kind);
     setSuccess(result.rfq);
   }
