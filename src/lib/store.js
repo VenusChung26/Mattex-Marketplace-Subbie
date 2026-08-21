@@ -2,7 +2,7 @@ const CATEGORY_DEFS = [
   { id: "service", name: "Service", image: "/assets/sensor.png", count: 3, unit: "lot", base: 1800, supplier: "SiteServe Contracting", specs: ["Type: survey / install / inspect", "Scope: labour + report", "Lead: scheduled", "Use: site support"] },
   { id: "computer", name: "Computer", image: "/assets/plc.png", count: 3, unit: "pc", base: 920, supplier: "BuildIT Workstations", specs: ["Type: desktop / rugged laptop", "OS: Windows", "Use: site office / BIM", "Warranty: 3 year"] },
   { id: "hardware", name: "Hardware", image: "/assets/gearbox.png", count: 4, unit: "pack", base: 48, supplier: "FixRight Hardware Co.", specs: ["Type: fixings / tools", "Grade: commercial", "Finish: zinc / stainless", "Use: install"] },
-  { id: "software", name: "Software", image: "/assets/vfd.png", count: 3, unit: "license", base: 240, supplier: "PlanGrid Software", specs: ["Type: BIM / takeoff / RFQ", "Term: annual", "Seats: named", "Use: project coordination"] },
+  { id: "software", name: "Software", image: "/assets/cat-software.png", count: 14, unit: "license", base: 240, supplier: "SmartSite Solutions Ltd.", specs: ["Type: construction software / SaaS", "Term: annual license", "Deployment: cloud", "Use: site, safety, documents"] },
   { id: "precast", name: "Precast Concrete", image: "/assets/cat-precast.png", count: 3, unit: "panel", base: 420, supplier: "Harbor Precast Co.", specs: ["Grade: C40/50", "Size: modular", "Finish: fair-faced", "Use: structural"] },
   { id: "barriers", name: "Barriers", image: "/assets/cat-barriers.png", count: 2, unit: "unit", base: 280, supplier: "SafeRoute Barriers Ltd.", specs: ["Type: temporary / permanent", "Material: concrete", "Length: 2–3 m", "Reflective: optional"] },
   { id: "brick", name: "Brick & Block", image: "/assets/cat-brick.png", count: 3, unit: "pack", base: 95, supplier: "Redclay Masonry Works", specs: ["Material: clay / concrete", "Size: standard", "Strength: load-bearing", "Finish: common / facing"] },
@@ -39,7 +39,7 @@ const ALT_SUPPLIERS = {
   service: ["SiteServe Contracting", "FieldLine Site Services"],
   computer: ["BuildIT Workstations", "SiteDesk Computing"],
   hardware: ["FixRight Hardware Co.", "BoltHouse Fasteners"],
-  software: ["PlanGrid Software", "Takeoff Lab"],
+  software: ["SmartSite Solutions Ltd."],
 };
 const FEATURED_NAMES = {
   "precast-01": "Hollow-core Precast Slab",
@@ -55,8 +55,125 @@ const FEATURED_NAMES = {
   "service-01": "Site Survey & Setting-out",
   "computer-01": "Rugged Site Workstation",
   "hardware-01": "Structural Fixings Kit",
-  "software-01": "BIM Coordination License",
+  "software-01": "SSMS",
 };
+
+const SOFTWARE_CATALOG = [
+  {
+    short: "SSMS",
+    fullName: "Smart Site Management System",
+    image: "/assets/software-ssms.png",
+    description:
+      "Smart Site Management System — live dashboard for site progress, plant, weather, and daily operations.",
+    specs: ["Product: SSMS", "Type: site operations platform", "Term: annual SaaS", "Use: command room / site office"],
+  },
+  {
+    short: "DWSS",
+    fullName: "Digital Works Supervision System",
+    image: "/assets/software-dwss.png",
+    description:
+      "Digital Works Supervision System — digital records for works supervision, hold points, and photo evidence.",
+    specs: ["Product: DWSS", "Type: supervision platform", "Term: annual SaaS", "Use: resident site staff"],
+  },
+  {
+    short: "SDM",
+    fullName: "Smart Document Management System",
+    image: "/assets/software-sdm.png",
+    description:
+      "Smart Document Management System — controlled drawings, transmittals, and versioned project files.",
+    specs: ["Product: SDM", "Type: document control", "Term: annual SaaS", "Use: document controllers"],
+  },
+  {
+    short: "ESIS",
+    fullName: "Electronic Site Inspection System",
+    image: "/assets/software-esis.png",
+    description:
+      "Electronic Site Inspection System — mobile inspections, snagging, and close-out on a rugged tablet.",
+    specs: ["Product: ESIS", "Type: inspection app", "Term: annual SaaS", "Use: site inspectors"],
+  },
+  {
+    short: "CSP",
+    fullName: "Co-supervision Platform for Smart Construction Management",
+    image: "/assets/software-csp.png",
+    description:
+      "Co-supervision Platform for Smart Construction Management — shared workspace for contractor, consultant, and client.",
+    specs: ["Product: CSP", "Type: collaboration platform", "Term: annual SaaS", "Use: multi-party supervision"],
+  },
+  {
+    short: "SSSS",
+    fullName: "Smart Site Safety System",
+    image: "/assets/software-ssss.png",
+    description:
+      "Smart Site Safety System — digital safety briefings, PPE checks, and site access control.",
+    specs: ["Product: SSSS", "Type: safety platform", "Term: annual SaaS", "Use: safety officers"],
+  },
+  {
+    short: "Contract Webpage",
+    fullName: "Contract Webpage Design Service",
+    image: "/assets/software-contract.png",
+    unit: "lot",
+    description:
+      "Contract Webpage Design Service — branded project / contract webpage for notices, contacts, and public information.",
+    specs: ["Product: Contract Webpage", "Type: design service", "Delivery: milestone lot", "Use: contract communications"],
+  },
+  {
+    short: "BIM Service",
+    fullName: "BIM Modeling and Consulting Service",
+    image: "/assets/software-bim.png",
+    unit: "lot",
+    description:
+      "BIM Modeling and Consulting Service — model production, coordination, and BIM execution support.",
+    specs: ["Product: BIM Service", "Type: professional service", "Delivery: milestone lot", "Use: design / construction BIM"],
+  },
+  {
+    short: "ePTW",
+    fullName: "ePermit to work System",
+    image: "/assets/software-eptw.png",
+    description:
+      "ePermit to work System — digital PTW request, approval, isolation, and close-out on site.",
+    specs: ["Product: ePTW", "Type: permit workflow", "Term: annual SaaS", "Use: high-risk works control"],
+  },
+  {
+    short: "CCTV AI",
+    fullName: "CCTV Vision AI System",
+    image: "/assets/software-cctv.png",
+    description:
+      "CCTV Vision AI System — camera analytics for people, plant, and unsafe acts on live site feeds.",
+    specs: ["Product: CCTV AI", "Type: vision AI", "Term: annual license", "Use: control room monitoring"],
+  },
+  {
+    short: "Red Zone AI",
+    fullName: "Red Zone AI Management System",
+    image: "/assets/software-redzone.png",
+    description:
+      "Red Zone AI Management System — exclusion-zone detection around plant and live alerts to supervisors.",
+    specs: ["Product: Red Zone AI", "Type: AI safety zone", "Term: annual license", "Use: plant / lifting areas"],
+  },
+  {
+    short: "PIMS",
+    fullName: "Project Information Management System Data Hub",
+    image: "/assets/software-pims.png",
+    description:
+      "Project Information Management System Data Hub — one hub for programme, cost, and project records.",
+    specs: ["Product: PIMS", "Type: data hub", "Term: annual SaaS", "Use: project controls"],
+  },
+  {
+    short: "EDMS",
+    fullName: "Electronic Document Management System",
+    image: "/assets/software-edms.png",
+    description:
+      "Electronic Document Management System — scan, index, and retrieve drawings and contractual documents.",
+    specs: ["Product: EDMS", "Type: EDMS", "Term: annual SaaS", "Use: records office"],
+  },
+  {
+    short: "eProcurement",
+    fullName: "eProcurement System for Construction",
+    image: "/assets/software-eproc.png",
+    description:
+      "eProcurement System for Construction — RFQ, quotation compare, and supplier award for project buying.",
+    specs: ["Product: eProcurement", "Type: procurement platform", "Term: annual SaaS", "Use: quantity surveyors / buyers"],
+  },
+];
 
 const GREEN_PRODUCT_IDS = new Set([
   "insulation-01",
@@ -110,7 +227,7 @@ const CATEGORY_BLURBS = {
   service: "Scheduled site service lot with labour and report.",
   computer: "Rugged workstation for site office and BIM coordination.",
   hardware: "Commercial fixings pack for install and assembly.",
-  software: "Named annual license for takeoff, BIM, and RFQ.",
+  software: "Construction software and digital site platforms for HK projects.",
 };
 
 const CATEGORY_STANDARDS = {
@@ -274,16 +391,21 @@ function buildProducts() {
       const price = unpriced
         ? null
         : Math.round((cat.base * (0.85 + (i % 7) * 0.08)) * 100) / 100;
+      const extra = cat.id === "software" ? SOFTWARE_CATALOG[i - 1] : null;
       const name =
+        extra?.short ||
         FEATURED_NAMES[id] ||
         cat.name.split(",")[0].trim() + " " + cat.unit + " #" + i;
       const isGreen = GREEN_PRODUCT_IDS.has(id);
       const suppliers = ALT_SUPPLIERS[cat.id] || [cat.supplier];
-      const supplier = suppliers[(i - 1) % suppliers.length];
+      const supplier = extra?.supplier || suppliers[(i - 1) % suppliers.length];
       const prefix = CATEGORY_PREFIX[cat.id] || cat.id.slice(0, 2).toUpperCase();
-      const productNo = `SB-${prefix}-${String(i).padStart(4, "0")}`;
-      const stockStatus = stockStatusFor(i, price);
-      const moq = UNIT_MOQ[cat.unit] || 1;
+      const productNo = extra
+        ? `SB-${prefix}-${String(extra.short.replace(/[^A-Za-z0-9]/g, "").slice(0, 8)).padStart(4, "0")}`
+        : `SB-${prefix}-${String(i).padStart(4, "0")}`;
+      const stockStatus = extra ? "in_stock" : stockStatusFor(i, price);
+      const unit = extra?.unit || cat.unit;
+      const moq = UNIT_MOQ[unit] || 1;
       const quote = quoteFor(i, price, isGreen);
       out.push({
         id,
@@ -295,18 +417,22 @@ function buildProducts() {
         green: isGreen,
         price,
         quote,
-        unit: cat.unit,
+        unit,
         moq,
         stockStatus,
-        leadTime: leadTimeFor(stockStatus, i),
+        leadTime: extra ? { min: 14, max: 21 } : leadTimeFor(stockStatus, i),
         standard: CATEGORY_STANDARDS[cat.id] || "—",
-        description: isGreen
-          ? GREEN_BLURBS[id] || "Green-preferred SKU for lower-impact project procurement."
-          : CATEGORY_BLURBS[cat.id] || "Spec-ready SKU for RFQ.",
-        image: cat.image,
-        specs: isGreen
-          ? cat.specs.concat(["Tag: Green preferred", "Impact: lower-carbon option"])
-          : cat.specs.slice(),
+        description: extra
+          ? extra.description
+          : isGreen
+            ? GREEN_BLURBS[id] || "Green-preferred SKU for lower-impact project procurement."
+            : CATEGORY_BLURBS[cat.id] || "Spec-ready SKU for RFQ.",
+        image: extra?.image || cat.image,
+        specs: extra
+          ? extra.specs.concat([`Full name: ${extra.fullName}`])
+          : isGreen
+            ? cat.specs.concat(["Tag: Green preferred", "Impact: lower-carbon option"])
+            : cat.specs.slice(),
       });
     }
   });

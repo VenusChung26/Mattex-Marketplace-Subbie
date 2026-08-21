@@ -138,6 +138,8 @@ export default function HomePage() {
     if (greenOnly) list = list.filter((p) => p.green);
     if (priceFilter === "priced") list = list.filter((p) => getEffectivePrice(p).displayPrice != null);
     if (priceFilter === "unpriced") list = list.filter((p) => getEffectivePrice(p).displayPrice == null);
+    if (priceFilter === "quoted") list = list.filter((p) => getEffectivePrice(p).status === "quoted");
+    if (priceFilter === "hot") list = list.filter((p) => p.featuredRank != null);
     return list;
   }, [searchQuery, selectedCategories, greenOnly, priceFilter, extractSession]);
 
@@ -628,6 +630,8 @@ export default function HomePage() {
                 {[
                   ["all", t("priceFilterAll")],
                   ["priced", t("priceFilterPriced")],
+                  ["quoted", t("priceFilterQuoted")],
+                  ["hot", t("priceFilterHot")],
                   ["unpriced", t("priceFilterUnpriced")],
                 ].map(([id, label]) => (
                   <button
