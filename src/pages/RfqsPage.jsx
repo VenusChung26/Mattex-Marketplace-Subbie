@@ -478,7 +478,9 @@ export default function RfqsPage() {
             ? "awaiting supplier"
             : quotes.length
               ? "quoted"
-              : selected?.status || "";
+              : selected?.status === "whatsapp_sent"
+                ? t("waSavedInSubbie")
+                : selected?.status || "";
 
   function setActiveStep(stepId) {
     if (!selected) return;

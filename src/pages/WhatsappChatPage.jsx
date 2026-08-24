@@ -202,8 +202,16 @@ export default function WhatsappChatPage() {
       <SiteHeader />
       <div className="border-b border-white/10 bg-[#111b21] px-4 py-2 text-center text-[11px] text-[#8696a0]">
         {t("waChatDemoBanner")}
-        {isDemo ? ` · ${t("waDemoHint")}` : ` · ${t("waSentOrder", { id: rfq.id })}`}
+        {isDemo ? ` · ${t("waDemoHint")}` : ` · ${t("waSentOrder", { id: rfq.id })} · ${t("waSavedInSubbie")}`}
         {" · "}
+        {!isDemo ? (
+          <>
+            <Link to={`/rfqs?id=${encodeURIComponent(rfq.id)}`} className="text-[#00a884] hover:underline">
+              {t("waViewRfqs")}
+            </Link>
+            {" · "}
+          </>
+        ) : null}
         <Link to="/rfq" className="text-[#00a884] hover:underline">
           {t("waBackDraft")}
         </Link>

@@ -276,17 +276,23 @@ export default function RfqPage() {
     setFormError("");
     setFormErrorKind("");
     if (kind === "buy") {
-      const buyLines = totals.lines.filter(
-        (line) => line.intent === "buy" && ids.includes(String(line.productId))
-      );
-      const buyTotals = draftTotals({ lines: buyLines }, ids);
-      setPendingWhatsappOrder({
-        id: `DRAFT-${Date.now().toString(36).toUpperCase()}`,
-        project: String(project || "").trim(),
-        pricedSubtotal: buyTotals.pricedSubtotal,
-        lines: buyTotals.lines,
-      });
-      navigate("/whatsapp-chat");
+      setDraftNote(note);
+      setDraftResponseDate(responseDate);
+      setDraftDeliveryDate(deliveryDate);
+      setDraftDeliveryMode(deliveryMode);
+      setDraftDeliveryLots(deliveryLots);
+      setDraftProject(project);
+      setDraftAddress(address);
+      setDraftCanonicalCategory(canonicalCategory);
+      setDraftAcceptSubstitutes(acceptSubstitutes);
+      const result = submitRfq(ids, { kind: "buy", skipLogistics: true, channel: "whatsapp" });
+      if (!result.ok) {
+        setFormErrorKind("buy");
+        setFormError(result.error === "not_logged_in" ? t("loginRequiredRfq") : t("submitFailed"));
+        return;
+      }
+      setPendingWhatsappOrder(result.rfq);
+      navigate(`/whatsapp-chat/${encodeURIComponent(result.rfq.id)}`);
       return;
     }
     setConfirmKind(kind);

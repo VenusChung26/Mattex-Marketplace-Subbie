@@ -1120,18 +1120,21 @@ function submitRfq(productIds, options = {}) {
   if (!email) return { ok: false, error: "not_logged_in" };
   let draft = getDraft();
   if (!draft.lines.length) return { ok: false, error: "empty" };
-  if (!String(draft.responseDate || "").trim()) return { ok: false, error: "response_date" };
-  if (!String(draft.deliveryDate || "").trim()) return { ok: false, error: "delivery_date" };
+  const skipLogistics = Boolean(options.skipLogistics);
+  if (!skipLogistics) {
+    if (!String(draft.responseDate || "").trim()) return { ok: false, error: "response_date" };
+    if (!String(draft.deliveryDate || "").trim()) return { ok: false, error: "delivery_date" };
+  }
   const deliveryMode = normalizeDeliveryMode(draft.deliveryMode);
   const deliveryLots = normalizeDeliveryLots(draft.deliveryLots, {
     mode: deliveryMode,
     deliveryDate: draft.deliveryDate,
   });
-  if (deliveryMode === "partial") {
+  if (!skipLogistics && deliveryMode === "partial") {
     const dated = deliveryLots.filter((lot) => lot.date);
     if (dated.length < 2) return { ok: false, error: "delivery_lots" };
   }
-  if (!String(draft.address || "").trim()) return { ok: false, error: "address" };
+  if (!skipLogistics && !String(draft.address || "").trim()) return { ok: false, error: "address" };
 
   const selectedIds =
     Array.isArray(productIds) && productIds.length
@@ -1142,9 +1145,11 @@ function submitRfq(productIds, options = {}) {
   if (!selectedLines.length) return { ok: false, error: "none_selected" };
 
   const totals = draftTotals({ ...draft, lines: selectedLines });
+  const channel = options.channel === "whatsapp" ? "whatsapp" : "rfq";
   const rfq = {
     id: nextRfqId(),
-    status: "submitted",
+    status: channel === "whatsapp" ? "whatsapp_sent" : "submitted",
+    channel,
     submittedAt: new Date().toISOString(),
     note: totals.note,
     responseDate: totals.responseDate,
