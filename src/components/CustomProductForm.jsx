@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useLanguage } from "../i18n";
 import { extractSpecItems, fileToAttachment } from "../lib/extractSpec";
 import AttachmentLinks from "./AttachmentLinks";
+import { QtyStepper } from "./ProductCard";
 import { getCategoryDefs } from "../lib/store";
 
 const emptyForm = { name: "", description: "", qty: 1, image: "", category: "", attachments: [] };
@@ -259,19 +260,15 @@ export default function CustomProductForm({
             required
           />
         </label>
-        <label className="block">
-          <span className="block text-sm font-semibold text-ink mb-1">
-            {t("qty")} <span className="text-brand-600">*</span>
-          </span>
-          <input
-            type="number"
-            min="1"
-            value={qty}
-            onChange={(e) => setQty(e.target.value)}
-            className="field-input"
-            required
+        <div className="block">
+          <QtyStepper
+            value={Math.max(1, Number(qty) || 1)}
+            min={1}
+            onChange={setQty}
+            size="card"
+            t={t}
           />
-        </label>
+        </div>
       </div>
 
       <label className="block">

@@ -100,12 +100,12 @@ export default function SupplierPage() {
     );
   }
 
-  function handleAdd(productId, intent = "quote") {
+  function handleAdd(productId, intent = "quote", qty) {
     if (intent === "buy-now" || intent === "quote-now") {
-      whatsappNow(productId, { kind: intent === "buy-now" ? "buy" : "quote", lang });
+      whatsappNow(productId, { qty, kind: intent === "buy-now" ? "buy" : "quote", lang });
       return;
     }
-    addToCart(productId, { intent });
+    addToCart(productId, { intent, qty });
     const product =
       products.find((p) => p.id === productId) ||
       catalog.find((p) => p.id === productId) ||

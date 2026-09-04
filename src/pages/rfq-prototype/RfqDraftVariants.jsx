@@ -9,6 +9,7 @@ import { draftTotals, formatPrice, getEffectivePrice, getProduct, isDiscontinued
 import CustomProductForm from "../../components/CustomProductForm";
 import CustomProductModal from "../../components/CustomProductModal";
 import AttachmentLinks from "../../components/AttachmentLinks";
+import { QtyStepper } from "../../components/ProductCard";
 import { useLanguage } from "../../i18n";
 
 export const RFQ_PROTOTYPE_VARIANTS = [
@@ -847,65 +848,6 @@ export function VariantC(props) {
   );
 }
 
-function QtyField({ productId, qty, minQty, onChange, t }) {
-  const [draft, setDraft] = useState(null);
-  const [warn, setWarn] = useState(false);
-  const shown = draft ?? String(qty ?? "");
-  const min = Math.max(1, Number(minQty) || 1);
-
-  function commit(raw) {
-    const next = Math.floor(Number(raw));
-    if (!Number.isFinite(next) || next < 1) {
-      setDraft(null);
-      return;
-    }
-    if (next < min) {
-      setWarn(true);
-      onChange(productId, min);
-      setDraft(null);
-      return;
-    }
-    setWarn(false);
-    onChange(productId, next);
-    setDraft(null);
-  }
-
-  return (
-    <span className="inline-flex flex-col items-end max-w-[11rem]">
-      <span className="inline-flex items-center">
-        <input
-          type="text"
-          inputMode="numeric"
-          pattern="[0-9]*"
-          value={shown}
-          aria-label="Quantity"
-          aria-invalid={warn}
-          onPointerDown={(e) => e.stopPropagation()}
-          onMouseDown={(e) => e.stopPropagation()}
-          onFocus={() => {
-            setWarn(false);
-            setDraft(String(qty ?? ""));
-          }}
-          onChange={(e) => setDraft(e.target.value.replace(/[^\d]/g, ""))}
-          onBlur={() => commit(draft ?? shown)}
-          onKeyDown={(e) => {
-            e.stopPropagation();
-            if (e.key === "Enter") e.currentTarget.blur();
-          }}
-          className={`ml-1 w-16 bg-white border px-1.5 py-1 text-xs text-ink tabular-nums ${
-            warn ? "border-amber-600" : "border-line"
-          }`}
-        />
-      </span>
-      {warn ? (
-        <span className="mt-1 text-[10px] leading-snug text-amber-800 text-right">
-          {t("qtyBelowMoq", { n: min })}
-        </span>
-      ) : null}
-    </span>
-  );
-}
-
 function DragGrip({ hint, onPointerDown }) {
   return (
     <button
@@ -1140,20 +1082,24 @@ function LinesList({
                       ) : null}
                       <AttachmentLinks files={l.attachments} />
                     </div>
-                    <div className="shrink-0 flex flex-col items-end gap-1 min-w-[5.5rem]">
-                      <p className="text-sm font-semibold text-right">
+                    <div className="shrink-0 flex flex-col items-end gap-1.5 w-[13rem] max-w-[46%]">
+                      <p className="text-sm font-semibold text-right w-full">
                         <LineMoney line={l} t={t} compact />
                       </p>
-                      <label className="text-[11px] text-mute inline-flex items-center">
-                        {t("qty")}
-                        <QtyField
-                          productId={l.productId}
-                          qty={l.qty}
-                          minQty={l.moq || 1}
-                          onChange={setLineQty}
+                      <div
+                        className="w-full"
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onMouseDown={(e) => e.stopPropagation()}
+                      >
+                        <QtyStepper
+                          value={l.qty}
+                          min={Math.max(1, Number(l.moq) || 1)}
+                          unit={l.unit || ""}
+                          onChange={(qty) => setLineQty(l.productId, qty)}
+                          size="row"
                           t={t}
                         />
-                      </label>
+                      </div>
                       <div className="flex items-center gap-2">
                         {l.custom ? (
                           <button

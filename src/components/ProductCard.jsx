@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { canDirectBuy, catalogPathForCategory, isHitProduct, stockStatusKey, supplierDisplayName, supplierPath } from "../lib/store";
 import { useStore } from "../hooks/useStore";
@@ -122,155 +122,252 @@ export function ProductBadges({ product, rank = null }) {
   );
 }
 
-function canHoverMenu() {
-  return typeof window !== "undefined" && window.matchMedia("(hover: hover) and (pointer: fine)").matches;
-}
-
 function cartLineFor(draft, productId) {
   return (draft?.lines || []).find((line) => String(line.productId) === String(productId) && !line.custom) || null;
 }
 
-export function ActionChoiceButton({
-  className = "",
-  block = true,
-  count = 0,
-  triggerLabel,
-  nowLabel,
-  addLabel,
-  onNow,
-  onAdd,
-  onOpenChange,
-}) {
-  const { t } = useLanguage();
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef(null);
-  const closeTimer = useRef(null);
-  const pinnedRef = useRef(false);
+function clampQty(value, min) {
+  const n = Math.floor(Number(value));
+  return Math.max(min, Number.isFinite(n) ? n : min);
+}
 
-  function setMenu(next) {
-    if (closeTimer.current) {
-      window.clearTimeout(closeTimer.current);
-      closeTimer.current = null;
-    }
-    if (!next) pinnedRef.current = false;
-    setOpen(next);
-    onOpenChange?.(next);
-  }
-
-  function scheduleClose() {
-    if (pinnedRef.current) return;
-    if (closeTimer.current) window.clearTimeout(closeTimer.current);
-    closeTimer.current = window.setTimeout(() => setMenu(false), 120);
-  }
+export function QtyStepper({ value, min = 1, unit = "", onChange, size = "card", t }) {
+  const compact = size === "card" || size === "row" || size === "bar";
+  const stretch = size !== "bar";
+  const [draft, setDraft] = useState(String(value));
+  const [underMin, setUnderMin] = useState(false);
+  const atMin = value <= min;
+  const btn = compact
+    ? "h-8 w-8 shrink-0 text-base leading-none text-brand-800 hover:bg-brand-50 disabled:text-mute disabled:hover:bg-transparent disabled:opacity-40"
+    : "h-10 w-10 shrink-0 text-lg leading-none text-brand-800 hover:bg-brand-50 disabled:text-mute disabled:hover:bg-transparent disabled:opacity-40";
+  const valueBox = compact ? "h-8 min-w-0 text-sm" : "h-10 min-w-0 text-base";
 
   useEffect(() => {
-    if (!open) return undefined;
-    function onPointer(event) {
-      if (!rootRef.current?.contains(event.target)) setMenu(false);
-    }
-    function onKey(event) {
-      if (event.key === "Escape") setMenu(false);
-    }
-    document.addEventListener("pointerdown", onPointer);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("pointerdown", onPointer);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
+    setDraft(String(value));
+  }, [value]);
 
-  useEffect(
-    () => () => {
-      if (closeTimer.current) window.clearTimeout(closeTimer.current);
-    },
-    []
-  );
+  function parseDraft(raw) {
+    const n = Math.floor(Number(String(raw).replace(/[^\d]/g, "")));
+    return Number.isFinite(n) ? n : NaN;
+  }
 
-  const label = count > 0 ? t("addedCount", { n: count }) : triggerLabel;
+  function commit(raw) {
+    const n = parseDraft(raw);
+    if (String(raw).trim() === "" || !Number.isFinite(n)) {
+      setUnderMin(true);
+      onChange(min);
+      setDraft(String(min));
+      return;
+    }
+    if (n < min) {
+      setUnderMin(true);
+      onChange(n);
+      setDraft(String(n));
+      return;
+    }
+    setUnderMin(false);
+    onChange(n);
+    setDraft(String(n));
+  }
+
+  function handleInput(raw) {
+    const cleaned = String(raw).replace(/[^\d]/g, "");
+    setDraft(cleaned);
+    if (cleaned === "") {
+      setUnderMin(true);
+      onChange(0);
+      return;
+    }
+    const n = parseDraft(cleaned);
+    if (!Number.isFinite(n)) return;
+    setUnderMin(n < min);
+    onChange(n);
+  }
 
   return (
-    <div
-      ref={rootRef}
-      className={`relative ${block ? "w-full" : "inline-block"} ${open ? "z-30" : ""}`}
-      onMouseEnter={() => {
-        if (canHoverMenu()) setMenu(true);
-      }}
-      onMouseLeave={scheduleClose}
-    >
-      <button
-        type="button"
-        className={`${className} ${count > 0 ? "btn-added" : ""}`}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => {
-          pinnedRef.current = true;
-          setMenu(true);
-        }}
+    <div className={stretch ? "w-full" : "min-w-[10.5rem] shrink-0"}>
+      <div
+        className={`flex w-full items-stretch overflow-hidden rounded-md border bg-white ${
+          underMin ? "border-amber-400" : "border-line"
+        }`}
       >
-        {label}
-      </button>
-      {open ? (
-        <div
-          role="menu"
-          className="absolute bottom-full left-0 right-0 z-50 mb-1 min-w-[9.5rem] overflow-hidden border border-line bg-white shadow-[0_10px_28px_rgba(16,21,19,0.16)]"
+        <span
+          className={`flex shrink-0 items-center border-r px-2.5 font-medium text-mute ${
+            underMin ? "border-amber-200" : "border-line"
+          } ${compact ? "text-[11px]" : "text-xs"}`}
         >
-          <button
-            type="button"
-            role="menuitem"
-            className="block w-full px-3 py-2.5 text-left text-xs font-semibold text-brand-800 hover:bg-brand-50"
-            onClick={() => {
-              setMenu(false);
-              onNow?.();
-            }}
+          {t("qty")}
+        </span>
+        <button
+          type="button"
+          className={btn}
+          aria-label="−"
+          disabled={atMin}
+          onClick={() => {
+            setUnderMin(false);
+            onChange(clampQty(value - 1, min));
+          }}
+        >
+          −
+        </button>
+        <input
+          type="text"
+          inputMode="numeric"
+          pattern="[0-9]*"
+          autoComplete="off"
+          spellCheck={false}
+          aria-label={t("qty")}
+          value={draft}
+          onChange={(e) => handleInput(e.target.value)}
+          onBlur={() => commit(draft)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") e.currentTarget.blur();
+          }}
+          className={`${valueBox} min-w-0 flex-1 bg-transparent px-1 text-center font-semibold tabular-nums text-ink outline-none`}
+        />
+        <button
+          type="button"
+          className={btn}
+          aria-label="+"
+          onClick={() => {
+            setUnderMin(false);
+            onChange(clampQty(value + 1, min));
+          }}
+        >
+          +
+        </button>
+        {unit ? (
+          <span
+            className={`flex shrink-0 items-center border-l px-2.5 text-mute ${
+              underMin ? "border-amber-200" : "border-line"
+            } ${compact ? "text-[11px]" : "text-xs"}`}
           >
-            {nowLabel}
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            className="block w-full border-t border-line px-3 py-2.5 text-left text-xs font-semibold text-ink hover:bg-paper"
-            onClick={() => {
-              setMenu(false);
-              onAdd?.();
-            }}
-          >
-            {addLabel}
-          </button>
-        </div>
+            {unit}
+          </span>
+        ) : null}
+      </div>
+      {underMin ? (
+        <p className={`mt-1 text-amber-800 ${compact ? "text-[10px] leading-snug" : "text-[11px]"}`} role="alert">
+          {t("qtyUnderMin", { n: `${min} ${unit}`.trim() })}
+        </p>
+      ) : size === "detail" ? (
+        <p className="mt-1 text-[11px] text-mute">{t("qtyMinMoq", { n: `${min} ${unit}`.trim() })}</p>
       ) : null}
     </div>
   );
 }
 
-export function QuoteChoiceButton(props) {
+export function ProductActions({ product, onAdd, size = "card", qty: qtyProp, onQtyChange, hideQty = false }) {
   const { t } = useLanguage();
+  const { draft } = useStore();
+  const minQty = Math.max(1, Number(product.moq) || 1);
+  const [innerQty, setInnerQty] = useState(minQty);
+  const controlled = qtyProp != null && typeof onQtyChange === "function";
+  const qty = controlled ? qtyProp : innerQty;
+  const priced = canDirectBuy(product);
+  const line = cartLineFor(draft, product.id);
+  const count = line?.qty || 0;
+
+  useEffect(() => {
+    if (!controlled) setInnerQty(minQty);
+  }, [product.id, minQty, controlled]);
+
+  function setQty(next) {
+    const n = Math.floor(Number(next));
+    const resolved = Number.isFinite(n) ? Math.max(0, n) : minQty;
+    if (controlled) onQtyChange(resolved);
+    else setInnerQty(resolved);
+  }
+
+  function fire(intent) {
+    if (qty < minQty) {
+      setQty(minQty);
+      return;
+    }
+    onAdd?.(product.id, intent, qty);
+  }
+
+  const cartIntent = priced ? "buy" : "quote";
+  const addLabel = count > 0 ? t("addedCount", { n: count }) : t("addToCart");
+  const compactBtn = size !== "detail";
+  const primaryClass = compactBtn ? `btn-primary ${ACTION_BTN}` : "btn-primary !px-5 !py-3 !text-sm w-auto";
+  const softClass = compactBtn
+    ? `btn-soft !border-brand-600/50 !text-brand-700 ${ACTION_BTN}`
+    : "btn-soft !border-brand-600/50 !text-brand-700 !px-5 !py-3 !text-sm w-auto";
+  const addClass = `${softClass} ${count > 0 ? "btn-added" : ""}`;
+
+  const stepper = hideQty ? null : (
+    <QtyStepper value={qty} min={minQty} unit={product.unit} onChange={setQty} size={size} t={t} />
+  );
+
+  const primaryBtn = (
+    <button
+      type="button"
+      className={primaryClass}
+      onClick={() => fire(priced ? "buy-now" : "quote-now")}
+    >
+      {priced ? t("buyNowAction") : t("requestNow")}
+    </button>
+  );
+
+  const addBtn = (
+    <button type="button" className={addClass} onClick={() => fire(cartIntent)}>
+      {addLabel}
+    </button>
+  );
+
+  const quoteLink = priced ? (
+    <button
+      type="button"
+      className={`font-semibold text-brand-700 hover:text-brand-800 hover:underline ${
+        compactBtn ? "text-[11px]" : "text-xs"
+      }`}
+      onClick={() => fire("quote-now")}
+    >
+      {t("orRequestNow")}
+    </button>
+  ) : null;
+
+  const buttons = (
+    <div className={size === "detail" ? "space-y-2" : "space-y-1.5"}>
+      <div className={size === "detail" ? "flex flex-wrap gap-2.5" : "grid grid-cols-2 gap-2"}>
+        {primaryBtn}
+        {addBtn}
+      </div>
+      {quoteLink ? <div className={size === "detail" ? "" : "text-center"}>{quoteLink}</div> : null}
+    </div>
+  );
+
+  if (size === "bar") {
+    return (
+      <div className="space-y-1.5">
+        <div className="flex items-end gap-2">
+          {stepper}
+          <div className="min-w-0 flex-1">
+            <div className="grid grid-cols-2 gap-2">
+              {primaryBtn}
+              {addBtn}
+            </div>
+          </div>
+        </div>
+        {quoteLink ? <div className="text-right">{quoteLink}</div> : null}
+      </div>
+    );
+  }
+
   return (
-    <ActionChoiceButton
-      {...props}
-      triggerLabel={props.triggerLabel || t("requestQuoteCta")}
-      nowLabel={props.nowLabel || t("requestNow")}
-      addLabel={props.addLabel || t("addToCart")}
-      onNow={props.onNow || props.onRequestNow}
-      onAdd={props.onAdd || props.onAddToOrder}
-    />
+    <div className={size === "detail" ? "space-y-3" : "space-y-2"}>
+      {stepper}
+      {buttons}
+    </div>
   );
 }
 
 export function ProductListRow({ product, onAdd }) {
   const { t, lang } = useLanguage();
-  const { draft } = useStore();
-  const priced = canDirectBuy(product);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const line = cartLineFor(draft, product.id);
-  const buyCount = line?.intent === "buy" ? line.qty : 0;
-  const quoteCount = line && line.intent !== "buy" ? line.qty : 0;
 
   return (
-    <article
-      className={`relative flex flex-col sm:flex-row sm:items-center gap-3 border border-line bg-white p-3 ${
-        menuOpen ? "z-20" : ""
-      }`}
-    >
+    <article className="relative flex flex-col sm:flex-row sm:items-center gap-3 border border-line bg-white p-3">
       <Link
         to={withLocale(lang, `/details/${product.id}`)}
         className="h-20 w-full sm:h-16 sm:w-24 shrink-0 overflow-hidden bg-brand-50"
@@ -303,34 +400,11 @@ export function ProductListRow({ product, onAdd }) {
         </p>
         <ProductMetaChips product={product} showTags className="mt-1.5" />
       </div>
-      <div className="sm:w-36 shrink-0">
+      <div className="sm:w-32 shrink-0">
         <ProductPrice product={product} className="!mt-0" />
       </div>
-      <div className={`sm:w-56 shrink-0 grid gap-2 ${priced ? "grid-cols-2" : "grid-cols-1"}`}>
-        {priced ? (
-          <ActionChoiceButton
-            count={buyCount}
-            triggerLabel={t("buyNow")}
-            nowLabel={t("buyNowAction")}
-            addLabel={t("addToCart")}
-            onOpenChange={setMenuOpen}
-            onNow={() => onAdd?.(product.id, "buy-now")}
-            onAdd={() => onAdd?.(product.id, "buy")}
-            className={`btn-primary ${ACTION_BTN}`}
-          />
-        ) : null}
-        <ActionChoiceButton
-          count={quoteCount}
-          triggerLabel={t("requestQuoteCta")}
-          nowLabel={t("requestNow")}
-          addLabel={t("addToCart")}
-          onOpenChange={setMenuOpen}
-          onNow={() => onAdd?.(product.id, "quote-now")}
-          onAdd={() => onAdd?.(product.id, "quote")}
-          className={`${
-            priced ? "btn-soft !border-brand-600/50 !text-brand-700" : "btn-primary"
-          } ${ACTION_BTN}`}
-        />
+      <div className="sm:w-64 shrink-0">
+        <ProductActions product={product} onAdd={onAdd} size="row" />
       </div>
     </article>
   );
@@ -338,16 +412,10 @@ export function ProductListRow({ product, onAdd }) {
 
 export default function ProductCard({ product, onAdd, rank = null }) {
   const { t, lang } = useLanguage();
-  const { draft } = useStore();
-  const priced = canDirectBuy(product);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const line = cartLineFor(draft, product.id);
-  const buyCount = line?.intent === "buy" ? line.qty : 0;
-  const quoteCount = line && line.intent !== "buy" ? line.qty : 0;
   const supplierName = supplierDisplayName(product.supplier);
 
   return (
-    <article className={`product-tile relative flex flex-col overflow-visible h-full ${menuOpen ? "z-20" : ""}`}>
+    <article className="product-tile relative flex flex-col overflow-visible h-full">
       <ProductBadges product={product} rank={rank} />
       <Link
         to={withLocale(lang, `/details/${product.id}`)}
@@ -388,31 +456,8 @@ export default function ProductCard({ product, onAdd, rank = null }) {
         <ProductMetaChips product={product} className="mt-2.5" />
         <div className="mt-auto mt-4">
           <ProductPrice product={product} className="!mt-0" />
-          <div className={`mt-3 grid gap-2 ${priced ? "grid-cols-2" : "grid-cols-1"}`}>
-            {priced ? (
-              <ActionChoiceButton
-                count={buyCount}
-                triggerLabel={t("buyNow")}
-                nowLabel={t("buyNowAction")}
-                addLabel={t("addToCart")}
-                onOpenChange={setMenuOpen}
-                onNow={() => onAdd?.(product.id, "buy-now")}
-                onAdd={() => onAdd?.(product.id, "buy")}
-                className={`btn-primary ${ACTION_BTN}`}
-              />
-            ) : null}
-            <ActionChoiceButton
-              count={quoteCount}
-              triggerLabel={t("requestQuoteCta")}
-              nowLabel={t("requestNow")}
-              addLabel={t("addToCart")}
-              onOpenChange={setMenuOpen}
-              onNow={() => onAdd?.(product.id, "quote-now")}
-              onAdd={() => onAdd?.(product.id, "quote")}
-              className={`${
-                priced ? "btn-soft !border-brand-600/50 !text-brand-700" : "btn-primary"
-              } ${ACTION_BTN}`}
-            />
+          <div className="mt-3">
+            <ProductActions product={product} onAdd={onAdd} size="card" />
           </div>
         </div>
       </div>

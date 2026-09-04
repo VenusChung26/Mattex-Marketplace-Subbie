@@ -6,9 +6,8 @@ import SiteFooter from "../components/SiteFooter";
 import Seo, { breadcrumbJsonLd, orgJsonLd, productJsonLd } from "../components/Seo";
 import ProductPrice from "../components/ProductPrice";
 import ProductRating from "../components/ProductRating";
-import { ActionChoiceButton, ProductBadges, ProductImage } from "../components/ProductCard";
+import { ProductActions, ProductBadges, ProductImage } from "../components/ProductCard";
 import { useLanguage } from "../i18n";
-import { useStore } from "../hooks/useStore";
 import { allProductsTo, siteOrigin, withLocale } from "../lib/locale";
 import { seoCopy } from "../lib/seoCopy";
 import {
@@ -35,7 +34,6 @@ export default function DetailsPage() {
   const { id } = useParams();
   const product = getProduct(id);
   const { t, lang } = useLanguage();
-  const { draft } = useStore();
   const [qty, setQty] = useState(1);
 
   useEffect(() => {
@@ -89,22 +87,19 @@ export default function DetailsPage() {
     { label: t("standard"), value: product.standard },
   ];
 
-  const cartLine = (draft?.lines || []).find((line) => String(line.productId) === String(product.id) && !line.custom);
-  const buyCount = cartLine?.intent === "buy" ? cartLine.qty : 0;
-  const quoteCount = cartLine && cartLine.intent !== "buy" ? cartLine.qty : 0;
   const remarks = getProductRemarks(product);
 
-  function goToRfq(intent) {
-    const nextQty = Math.max(minQty, Math.floor(Number(qty)) || minQty);
+  function goToRfq(intent, nextQty = qty) {
+    const sendQty = Math.max(minQty, Math.floor(Number(nextQty)) || minQty);
     if (intent === "buy-now" || intent === "quote-now") {
       whatsappNow(product.id, {
-        qty: nextQty,
+        qty: sendQty,
         kind: intent === "buy-now" ? "buy" : "quote",
         lang,
       });
       return;
     }
-    addToCart(product.id, { intent, qty: nextQty });
+    addToCart(product.id, { intent, qty: sendQty });
   }
 
   const origin = siteOrigin();
@@ -203,63 +198,27 @@ export default function DetailsPage() {
               ))}
             </dl>
 
-            <div className="mt-6 flex flex-wrap items-end gap-4">
-              <label className="block">
-                <span className="block text-xs font-semibold uppercase tracking-[0.12em] text-mute mb-1">
-                  {t("qty")}
+            <div className="mt-6 hidden lg:block">
+              {discontinued ? (
+                <span className="inline-flex items-center bg-[#f8e8e8] text-[#8a2b2b] text-xs font-bold uppercase tracking-wide px-3 py-2">
+                  {t("discontinued")}
                 </span>
-                <input
-                  type="number"
-                  min={minQty}
-                  value={qty}
-                  onChange={(e) => {
-                    const next = Math.floor(Number(e.target.value));
-                    setQty(Number.isFinite(next) ? next : minQty);
-                  }}
-                  onBlur={() => setQty((v) => Math.max(minQty, Math.floor(Number(v)) || minQty))}
-                  className="w-24 border border-line px-3 py-2 text-sm"
+              ) : (
+                <ProductActions
+                  product={product}
+                  qty={qty}
+                  onQtyChange={setQty}
+                  onAdd={(_, intent, nextQty) => goToRfq(intent, nextQty)}
+                  size="detail"
                 />
-                <span className="mt-1 block text-[11px] text-mute">
-                  {t("qtyMinMoq", { n: `${minQty} ${product.unit}` })}
-                </span>
-              </label>
+              )}
             </div>
 
             <p className="mt-5 text-xs text-mute leading-relaxed max-w-prose">
               {discontinued ? t("discontinuedHint") : priceHint}
             </p>
 
-            <div className="mt-4 hidden lg:flex flex-wrap gap-2.5">
-              {discontinued ? (
-                <span className="inline-flex items-center bg-[#f8e8e8] text-[#8a2b2b] text-xs font-bold uppercase tracking-wide px-3 py-2">
-                  {t("discontinued")}
-                </span>
-              ) : (
-                <>
-                  {priced ? (
-                    <ActionChoiceButton
-                      block={false}
-                      count={buyCount}
-                      triggerLabel={t("buyNow")}
-                      nowLabel={t("buyNowAction")}
-                      addLabel={t("addToCart")}
-                      onNow={() => goToRfq("buy-now")}
-                      onAdd={() => goToRfq("buy")}
-                      className="btn-primary !px-5 !py-3"
-                    />
-                  ) : null}
-                  <ActionChoiceButton
-                    block={false}
-                    count={quoteCount}
-                    triggerLabel={t("requestQuoteCta")}
-                    nowLabel={t("requestNow")}
-                    addLabel={t("addToCart")}
-                    onNow={() => goToRfq("quote-now")}
-                    onAdd={() => goToRfq("quote")}
-                    className={priced ? "btn-soft !px-5 !py-3 !border-brand-600 !text-brand-700" : "btn-primary !px-5 !py-3"}
-                  />
-                </>
-              )}
+            <div className="mt-4 hidden lg:block">
               <Link to={allProductsTo(lang)} className="btn-soft !px-5 !py-3">
                 {t("backToCatalog")}
               </Link>
@@ -308,26 +267,13 @@ export default function DetailsPage() {
         {discontinued ? (
           <p className="max-w-7xl mx-auto text-center text-xs font-semibold text-[#8a2b2b]">{t("discontinuedUnavailable")}</p>
         ) : (
-          <div className={`max-w-7xl mx-auto grid gap-2 ${priced ? "grid-cols-2" : "grid-cols-1"}`}>
-            {priced ? (
-              <ActionChoiceButton
-                count={buyCount}
-                triggerLabel={t("buyNow")}
-                nowLabel={t("buyNowAction")}
-                addLabel={t("addToCart")}
-                onNow={() => goToRfq("buy-now")}
-                onAdd={() => goToRfq("buy")}
-                className="btn-primary !py-3"
-              />
-            ) : null}
-            <ActionChoiceButton
-              count={quoteCount}
-              triggerLabel={t("requestQuoteCta")}
-              nowLabel={t("requestNow")}
-              addLabel={t("addToCart")}
-              onNow={() => goToRfq("quote-now")}
-              onAdd={() => goToRfq("quote")}
-              className={priced ? "btn-soft !py-3 !border-brand-600 !text-brand-700 w-full" : "btn-primary !py-3 w-full"}
+          <div className="max-w-7xl mx-auto">
+            <ProductActions
+              product={product}
+              qty={qty}
+              onQtyChange={setQty}
+              onAdd={(_, intent, nextQty) => goToRfq(intent, nextQty)}
+              size="bar"
             />
           </div>
         )}

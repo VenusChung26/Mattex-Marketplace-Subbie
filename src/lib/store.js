@@ -1369,6 +1369,7 @@ function draftTotals(draft, productIds) {
         custom: true,
         intent: line.intent || "quote",
         moq: 1,
+        unit: line.unit || "",
         productNo: "",
         category: line.category || "",
         green: false,
@@ -1394,6 +1395,7 @@ function draftTotals(draft, productIds) {
       custom: false,
       intent: line.intent || (unitPrice != null ? "buy" : "quote"),
       moq: product ? product.moq : 1,
+      unit: product ? product.unit : "",
       productNo: product ? product.productNo : "",
       category: product ? product.category : "",
       green: Boolean(product?.green),
@@ -2011,6 +2013,7 @@ function showWhatsappPdfModal({ kind, count, text, pdf, failed, reused, refNo, b
                 ? `共 ${count} 項。WhatsApp 訊息會帶 PDF 連結同產品圖片。`
                 : `共 ${count} 項。WhatsApp 連結加唔到檔案，請先下載 PDF，再開對話用附件傳送。`
               : "正在把貨名、貨號、數量、單價同產品圖整成 PDF。",
+        copied: "產品清單已複製。開啟 WhatsApp 後，可喺下一則訊息貼上。",
         preview: "PDF 預覽",
         download: reused ? "再次下載同一份 PDF" : "下載 PDF",
         share: "分享 PDF",
@@ -2042,6 +2045,7 @@ function showWhatsappPdfModal({ kind, count, text, pdf, failed, reused, refNo, b
                 ? `${count} item(s). WhatsApp will include the PDF link and product images.`
                 : `${count} item(s). WhatsApp links cannot attach files — download the PDF, then attach it in the chat.`
               : "Creating a PDF with name, SKU, qty, unit price, and product images.",
+        copied: "The product list is copied. After WhatsApp opens, paste it as the next message.",
         preview: "PDF preview",
         download: reused ? "Download the same PDF again" : "Download PDF",
         share: "Share PDF",
@@ -2115,6 +2119,13 @@ function showWhatsappPdfModal({ kind, count, text, pdf, failed, reused, refNo, b
   }
 
   card.append(body);
+
+  const copiedEl = document.createElement("p");
+  copiedEl.setAttribute("role", "status");
+  copiedEl.textContent = copy.copied;
+  copiedEl.style.cssText =
+    "margin:0.7rem 0 0;padding:0.65rem 0.75rem;border:1px solid #c5ddd0;background:#eef6f1;color:#143528;font-size:0.8125rem;line-height:1.45;font-weight:600;border-radius:0.5rem;";
+  card.append(copiedEl);
 
   if (blobUrl) {
     const linkWrap = document.createElement("p");
