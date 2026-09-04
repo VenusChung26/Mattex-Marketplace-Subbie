@@ -9,7 +9,7 @@ export default function CustomProductModal({ open, onClose, onSubmit }) {
     <div className="fixed inset-0 z-[70] flex items-center justify-center p-4" role="presentation">
       <div className="absolute inset-0 bg-charcoal/50 backdrop-blur-[2px]" onClick={onClose} />
       <div
-        className="modal-panel relative bg-white border border-line max-w-md w-full max-h-[min(92vh,46rem)] overflow-y-auto p-6 sm:p-7 shadow-[0_24px_60px_rgba(16,21,19,0.25)]"
+        className="modal-panel relative bg-white border border-line max-w-2xl w-full max-h-[min(92vh,46rem)] overflow-y-auto p-6 sm:p-7 shadow-[0_24px_60px_rgba(16,21,19,0.25)]"
         role="dialog"
         aria-modal="true"
         aria-labelledby="custom-product-title"

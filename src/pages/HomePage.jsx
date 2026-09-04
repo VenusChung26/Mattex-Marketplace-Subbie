@@ -36,6 +36,31 @@ const SUPPLIER_PREVIEW_COUNT = 9;
 const CATALOG_BATCH = 24;
 const CATALOG_VIEW_KEY = "subbie_catalog_view";
 
+function PitchIcon({ name }) {
+  const common = "h-4 w-4 shrink-0 text-brand-600";
+  if (name === "spec") {
+    return (
+      <svg viewBox="0 0 24 24" className={common} fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M8 7h8M8 12h5M7 4h7l4 4v12a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z" />
+      </svg>
+    );
+  }
+  if (name === "cart") {
+    return (
+      <svg viewBox="0 0 24 24" className={common} fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h2l2.2 9.2a1 1 0 0 0 1 .8h7.6a1 1 0 0 0 1-.7L20 8H7" />
+        <circle cx="10" cy="19" r="1.3" fill="currentColor" stroke="none" />
+        <circle cx="17" cy="19" r="1.3" fill="currentColor" stroke="none" />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 24 24" className={common} fill="currentColor" aria-hidden="true">
+      <path d="M17.47 14.38c-.3-.15-1.76-.87-2.03-.97-.27-.1-.47-.15-.67.15-.2.3-.77.97-.94 1.17-.17.2-.35.22-.64.07-.3-.15-1.26-.46-2.4-1.47-.88-.79-1.48-1.76-1.65-2.06-.17-.3-.02-.46.13-.61.13-.13.3-.35.45-.52.14-.17.2-.3.3-.5.1-.2.05-.37-.02-.52-.08-.15-.67-1.61-.92-2.21-.24-.58-.49-.5-.67-.51h-.57c-.2 0-.52.07-.79.37-.27.3-1.04 1.02-1.04 2.48s1.07 2.88 1.21 3.08c.15.2 2.1 3.2 5.08 4.48.71.31 1.26.49 1.69.63.71.23 1.36.2 1.87.12.57-.08 1.76-.72 2.01-1.41.25-.7.25-1.29.17-1.41-.07-.13-.27-.2-.57-.35Z" />
+    </svg>
+  );
+}
+
 function readCatalogView() {
   try {
     return sessionStorage.getItem(CATALOG_VIEW_KEY) === "list" ? "list" : "card";
@@ -249,12 +274,12 @@ export default function HomePage() {
     return () => window.clearTimeout(timer);
   }, [urlQ, urlCat, urlFilter, lang, navigate]);
 
-  function handleAdd(productId, intent = "quote") {
+  function handleAdd(productId, intent = "quote", qty) {
     if (intent === "buy-now" || intent === "quote-now") {
-      whatsappNow(productId, { kind: intent === "buy-now" ? "buy" : "quote", lang });
+      whatsappNow(productId, { qty, kind: intent === "buy-now" ? "buy" : "quote", lang });
       return;
     }
-    addToCart(productId, { intent });
+    addToCart(productId, { intent, qty });
     const product =
       products.find((p) => p.id === productId) ||
       top.find((p) => p.id === productId) ||
@@ -346,6 +371,9 @@ export default function HomePage() {
               >
                 {t("browseCatalog")}
               </a>
+              <button type="button" className="btn-ghost !px-6 !py-3.5" onClick={openCustomProduct}>
+                {t("customPitchCta")}
+              </button>
               <Link to={withLocale(lang, "/rfq")} className="btn-ghost !px-6 !py-3.5">
                 {t("openRfqDraft")}
               </Link>
@@ -548,6 +576,51 @@ export default function HomePage() {
                 </p>
               </div>
             </div>
+          </div>
+        </section>
+
+        <section id="custom" className="max-w-7xl mx-auto px-4 pt-14 sm:pt-16" style={{ scrollMarginTop: navHeight }}>
+          <div className="grid overflow-hidden border border-line bg-white lg:grid-cols-[minmax(0,1.25fr)_minmax(16rem,0.75fr)]">
+            <div className="relative flex flex-col justify-center bg-brand-50/70 px-6 py-10 sm:px-10 sm:py-12">
+              <div className="absolute left-0 top-0 h-full w-1.5 bg-brand-400" aria-hidden />
+              <p className="inline-flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.18em] text-brand-600">
+                <span className="h-1.5 w-1.5 rounded-full bg-brand-400" aria-hidden />
+                {t("customPitchEyebrow")}
+              </p>
+              <h2 className="mt-3 font-display text-3xl font-semibold leading-[1.12] tracking-tight text-brand-800 sm:text-4xl lg:whitespace-nowrap lg:text-[2.35rem]">
+                {t("customPitchTitle")}
+              </h2>
+              <p className="mt-4 max-w-lg text-base leading-relaxed text-mute">
+                {t("customPitchBody")}
+              </p>
+              <ul className="mt-7 grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+                {[
+                  ["spec", t("customPitchPoint1")],
+                  ["cart", t("customPitchPoint2")],
+                  ["wa", t("customPitchPoint3")],
+                ].map(([icon, point]) => (
+                  <li key={point} className="flex items-center gap-2.5 text-sm font-medium text-ink">
+                    <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center border border-brand-100 bg-white">
+                      <PitchIcon name={icon} />
+                    </span>
+                    <span className="leading-snug">{point}</span>
+                  </li>
+                ))}
+              </ul>
+              <button
+                type="button"
+                className="mt-8 inline-flex self-start items-center justify-center gap-2 bg-brand-600 px-6 py-3.5 text-sm font-semibold text-white shadow-[0_8px_20px_rgba(36,90,65,0.22)] transition-colors hover:bg-brand-700"
+                onClick={openCustomProduct}
+              >
+                {t("customPitchCta")}
+                <span aria-hidden>→</span>
+              </button>
+            </div>
+            <div
+              className="min-h-[18rem] bg-cover bg-center bg-no-repeat lg:min-h-0"
+              style={{ backgroundImage: 'url("/assets/prod-custom-rail.png?v=2")' }}
+              aria-hidden
+            />
           </div>
         </section>
 
