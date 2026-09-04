@@ -1,23 +1,32 @@
+import { MATTEX_PRODUCTS } from "../data/mattexProducts.js";
+import { collectAttachmentUrls, collectProductImageUrls, fitWhatsappUrls, uploadRfqPdf } from "./rfqBlob.js";
+import { buildQuotePdf, canSharePdfFile, downloadBlob, sharePdfFile } from "./quotePdf.js";
+import { fetchRemoteState, isSupabaseConfigured, persistKv } from "./supabasePersist.js";
+
+const HIDDEN_CATEGORY_IDS = new Set(["service", "computer", "hardware"]);
+const SYNTHETIC_CATEGORY_IDS = new Set(["service", "computer", "hardware"]);
+
 const CATEGORY_DEFS = [
+  { id: "reinforcement-mesh", name: "Reinforcement Mesh", image: "/assets/prod-mesh.png", count: 12, unit: "sheet", base: 100, supplier: "Mattex", specs: ["Type: reinforcement mesh", "Size: 2.1m × 4.8m / custom", "Standard: BS4483 / BS4449", "Use: road / slab"] },
+  { id: "safety-net", name: "Dense Mesh Flame Retardant Safety Net", image: "/assets/prod-safetynet.png", count: 7, unit: "sheet", base: 100, supplier: "Mattex", specs: ["Type: dense mesh FR net", "Color: green / orange", "Use: edge protection", "Stock: HK / site lead"] },
+  { id: "gypsum-block", name: "Gypsum Block", image: "/assets/prod-gypsum-block.png", count: 3, unit: "m²", base: 100, supplier: "Mattex", specs: ["Material: gypsum block", "Size: 500 mm series", "Density: 1100–1200 kg/m³", "Use: partition"] },
+  { id: "xps-foam-board", name: "XPS Foam Board", image: "/assets/prod-xps.png", count: 21, unit: "sheet", base: 100, supplier: "Mattex", specs: ["Type: XPS foam board", "Grade: JL150–JL900", "Thickness: 50–100 mm", "Fire: B1 / B2"] },
+  { id: "tiles", name: "Tiles", image: "/assets/prod-tile.png", count: 152, unit: "m²", base: 100, supplier: "Mattex", specs: ["Material: sintered stone / porcelain", "Size: 600×600–1200×3000", "Finish: marble / texture / artistic", "Use: floor / wall"] },
+  { id: "vinyl", name: "Vinyl", image: "/assets/prod-vinyl.png", count: 2, unit: "m²", base: 100, supplier: "Mattex", specs: ["Type: homogeneous / heterogeneous vinyl", "Size: 2×20 m", "Thickness: 2–3 mm", "Use: flooring"] },
+  { id: "precasted-concrete", name: "Precasted Concrete", image: "/assets/prod-precast.png", count: 40, unit: "m³", base: 100, supplier: "Mattex", specs: ["Type: precast block", "Size: modular / custom", "Finish: structural", "Use: civil / building"] },
+  { id: "cat-ladder", name: "Cat Ladder", image: "/assets/prod-ironwork.png", count: 1, unit: "lot", base: 100, supplier: "Mattex", specs: ["Type: cat ladder", "Finish: galvanized", "Custom: by drawing"] },
+  { id: "steel-shelving", name: "Logistics Storage Platform & Steel Shelving", image: "/assets/prod-ironwork.png", count: 1, unit: "lot", base: 100, supplier: "Mattex", specs: ["Type: storage platform / shelving", "Custom: by drawing"] },
+  { id: "handrails", name: "Handrails", image: "/assets/prod-ironwork.png", count: 1, unit: "lot", base: 100, supplier: "Mattex", specs: ["Type: ball joint handrail", "Custom: by drawing"] },
+  { id: "balustrades", name: "Balustrades", image: "/assets/prod-ironwork.png", count: 4, unit: "lot", base: 100, supplier: "Mattex", specs: ["Type: carbon / stainless / disability", "Custom: by drawing"] },
+  { id: "forge-welded-grating", name: "Forge-welded Grating", image: "/assets/prod-grating.png", count: 5, unit: "m²", base: 100, supplier: "Mattex", specs: ["Type: forge-welded", "Material: galvanized steel", "Load: by drawing"] },
+  { id: "press-lock-grating", name: "Press-Lock Grating", image: "/assets/prod-grating.png", count: 6, unit: "m²", base: 100, supplier: "Mattex", specs: ["Type: press-lock", "Material: galvanized steel", "Load: by drawing"] },
+  { id: "gu-gratings", name: "GU Type Drainage Gratings", image: "/assets/prod-grating.png", count: 15, unit: "lot", base: 100, supplier: "Mattex", specs: ["Type: GU drainage grating", "Material: galvanized steel"] },
+  { id: "gt-gratings", name: "GT Type Drainage Gratings", image: "/assets/prod-grating.png", count: 24, unit: "lot", base: 100, supplier: "Mattex", specs: ["Type: GT drainage grating", "Material: galvanized steel"] },
+  { id: "gypsum-board", name: "Gypsum Board", image: "/assets/prod-gypsum-board.png", count: 4, unit: "m²", base: 100, supplier: "Mattex", specs: ["Type: fire-resistant gypsum board", "Size: 1220×2440", "Thickness: 9.5–15 mm"] },
   { id: "service", name: "Service", image: "/assets/sensor.png", count: 3, unit: "lot", base: 1800, supplier: "SiteServe Contracting", specs: ["Type: survey / install / inspect", "Scope: labour + report", "Lead: scheduled", "Use: site support"] },
   { id: "computer", name: "Computer", image: "/assets/plc.png", count: 3, unit: "pc", base: 920, supplier: "BuildIT Workstations", specs: ["Type: desktop / rugged laptop", "OS: Windows", "Use: site office / BIM", "Warranty: 3 year"] },
   { id: "hardware", name: "Hardware", image: "/assets/gearbox.png", count: 4, unit: "pack", base: 48, supplier: "FixRight Hardware Co.", specs: ["Type: fixings / tools", "Grade: commercial", "Finish: zinc / stainless", "Use: install"] },
-  { id: "software", name: "Software", image: "/assets/vfd.png", count: 3, unit: "license", base: 240, supplier: "PlanGrid Software", specs: ["Type: BIM / takeoff / RFQ", "Term: annual", "Seats: named", "Use: project coordination"] },
-  { id: "precast", name: "Precast Concrete", image: "/assets/cat-precast.png", count: 3, unit: "panel", base: 420, supplier: "Harbor Precast Co.", specs: ["Grade: C40/50", "Size: modular", "Finish: fair-faced", "Use: structural"] },
-  { id: "barriers", name: "Barriers", image: "/assets/cat-barriers.png", count: 2, unit: "unit", base: 280, supplier: "SafeRoute Barriers Ltd.", specs: ["Type: temporary / permanent", "Material: concrete", "Length: 2–3 m", "Reflective: optional"] },
-  { id: "brick", name: "Brick & Block", image: "/assets/cat-brick.png", count: 3, unit: "pack", base: 95, supplier: "Redclay Masonry Works", specs: ["Material: clay / concrete", "Size: standard", "Strength: load-bearing", "Finish: common / facing"] },
-  { id: "waterproof", name: "Waterproofing", image: "/assets/cat-waterproof.png", count: 5, unit: "roll", base: 145, supplier: "AquaShield Membranes", specs: ["Type: membrane", "Thickness: 1.5–4 mm", "Application: torch / self-adhesive", "Area: roof / basement"] },
-  { id: "manhole", name: "Manhole & Channel", image: "/assets/cat-manhole.png", count: 1, unit: "set", base: 560, supplier: "DrainCore Industrial", specs: ["Cover: ductile iron", "Channel: polymer concrete", "Load class: D400", "Size: DN600"] },
-  { id: "insulation", name: "Insulation", image: "/assets/cat-insulation.png", count: 2, unit: "pack", base: 210, supplier: "ThermoWrap Building Systems", specs: ["Type: XPS / PIR", "Thickness: 50–100 mm", "R-value: high", "Edge: tongue & groove"] },
-  { id: "plaster", name: "Plastering", image: "/assets/cat-plaster.png", count: 9, unit: "bag", base: 18, supplier: "FinishLine Plasters", specs: ["Type: gypsum / cement", "Bag size: 25 kg", "Finish: skim / base", "Indoor / outdoor"] },
-  { id: "safetynet", name: "Safety Net", image: "/assets/cat-safetynet.png", count: 0, unit: "roll", base: 320, supplier: "SiteGuard Safety Gear", specs: ["Mesh: HDPE", "Color: orange", "Use: edge protection", "UV stabilized"] },
-  { id: "steel", name: "Structure Steel Element, Metal Product", image: "/assets/cat-steel.png", count: 13, unit: "pc", base: 380, supplier: "Northspan Steel Group", specs: ["Grade: S275 / S355", "Section: UB / UC / angle", "Finish: primed", "Cut-to-length: yes"] },
-  { id: "tile", name: "Tile", image: "/assets/cat-tile.png", count: 6, unit: "box", base: 42, supplier: "Stoneform Ceramics", specs: ["Material: ceramic / porcelain", "Size: 300×300–600×600", "Finish: matt / gloss", "Use: floor / wall"] },
-  { id: "timber", name: "Timber / Plywood", image: "/assets/cat-timber.png", count: 4, unit: "sheet", base: 68, supplier: "Pacific Timber Supply", specs: ["Species: softwood / hardwood", "Grade: structural", "Thickness: 9–18 mm", "Treatment: optional"] },
-  { id: "board", name: "Board", image: "/assets/cat-board.png", count: 4, unit: "sheet", base: 36, supplier: "PanelCraft Interiors", specs: ["Type: gypsum / cement board", "Size: 1200×2400", "Thickness: 9–15 mm", "Edge: tapered"] },
-  { id: "aggregate", name: "Aggregate", image: "/assets/cat-aggregate.png", count: 4, unit: "ton", base: 55, supplier: "QuarryPeak Aggregates", specs: ["Type: crushed stone / sand", "Size: 10–20 mm", "Wash: washed", "Use: concrete / fill"] },
-  { id: "pipe", name: "Pipe & Fittings & Accessories", image: "/assets/cat-pipe.png", count: 11, unit: "pc", base: 24, supplier: "Flowline Pipe & Fittings", specs: ["Material: UPVC / steel", "Size: DN15–DN200", "Pressure: PN10–PN16", "Includes: fittings"] },
-  { id: "cable", name: "Cable Containment", image: "/assets/cat-cable.png", count: 3, unit: "length", base: 88, supplier: "VoltTray Electrical", specs: ["Type: tray / trunking", "Material: GI steel", "Width: 100–300 mm", "Finish: hot-dip galvanized"] },
+  { id: "software", name: "Software", image: "/assets/vfd.png", count: 14, unit: "license", base: 240, supplier: "Mattex", specs: ["Type: construction software / platform", "Term: project / annual", "Use: site management / safety / BIM"] },
 ];
 
 const ALT_SUPPLIERS = {
@@ -39,7 +48,6 @@ const ALT_SUPPLIERS = {
   service: ["SiteServe Contracting", "FieldLine Site Services"],
   computer: ["BuildIT Workstations", "SiteDesk Computing"],
   hardware: ["FixRight Hardware Co.", "BoltHouse Fasteners"],
-  software: ["PlanGrid Software", "Takeoff Lab"],
 };
 const FEATURED_NAMES = {
   "precast-01": "Hollow-core Precast Slab",
@@ -58,18 +66,7 @@ const FEATURED_NAMES = {
   "software-01": "BIM Coordination License",
 };
 
-const GREEN_PRODUCT_IDS = new Set([
-  "insulation-01",
-  "insulation-02",
-  "timber-01",
-  "timber-02",
-  "aggregate-01",
-  "board-01",
-  "board-02",
-  "tile-01",
-  "waterproof-02",
-  "precast-02",
-]);
+const GREEN_PRODUCT_IDS = new Set();
 
 const SAMPLE_PROJECTS = [
   "Kai Tak Tower",
@@ -79,31 +76,25 @@ const SAMPLE_PROJECTS = [
 ];
 
 const GREEN_BLURBS = {
-  "insulation-01": "High thermal resistance for lower HVAC load and energy use.",
-  "insulation-02": "Continuous insulation pack for envelope performance upgrades.",
   "timber-01": "FSC-certified plywood for responsible structural framing.",
   "timber-02": "Responsibly sourced timber sheet for fit-out and formwork.",
   "aggregate-01": "Recycled aggregate that reduces virgin quarry demand.",
-  "board-01": "Low-VOC gypsum board for healthier indoor air.",
-  "board-02": "Lightweight board option that cuts transport emissions.",
-  "tile-01": "Porcelain tile with lower embodied carbon mix design.",
   "waterproof-02": "Long-life membrane that reduces rework and waste.",
-  "precast-02": "Optimized precast panel for less on-site waste.",
 };
 
 const CATEGORY_BLURBS = {
-  precast: "Modular C40/50 panel, spec-ready for structural RFQ.",
+  precast: "Precast concrete blocks and custom units, quote-ready from Mattex.",
   barriers: "Concrete barrier unit for temporary or permanent works.",
-  brick: "Load-bearing brick pack for facing and common masonry.",
+  brick: "Gypsum partition blocks, 500 mm series, quote-ready from Mattex.",
   waterproof: "Torch-on or self-adhesive membrane for roof and basement.",
-  manhole: "D400 cover and channel set for drainage works.",
-  insulation: "High-R board pack for envelope and HVAC load reduction.",
+  manhole: "Forge-welded, press-lock, GU and GT drainage gratings.",
+  insulation: "JL series XPS foam board, 50–100 mm, quote-ready from Mattex.",
   plaster: "25 kg skim or base coat for indoor and outdoor finishing.",
-  safetynet: "UV-stabilized HDPE mesh for edge protection.",
-  steel: "Primed UB/UC sections, cut-to-length for structural frames.",
-  tile: "Ceramic or porcelain tile for floor and wall finishes.",
+  safetynet: "Dense mesh flame-retardant safety nets in site sizes.",
+  steel: "Reinforcement mesh, cat ladders, handrails and balustrades.",
+  tile: "Sintered stone, porcelain tile and homogeneous vinyl flooring.",
   timber: "Structural plywood sheet for framing, fit-out, and formwork.",
-  board: "Gypsum or cement board, tapered edge for interiors.",
+  board: "Fire-resistant gypsum board 9.5–15 mm.",
   aggregate: "Washed crushed stone or sand for concrete and fill.",
   pipe: "UPVC or steel pipe with fittings, DN15–DN200.",
   cable: "Galvanized tray or trunking for electrical containment.",
@@ -114,18 +105,18 @@ const CATEGORY_BLURBS = {
 };
 
 const CATEGORY_STANDARDS = {
-  precast: "BS EN 13369:2018",
+  precast: "ISO 9001:2015",
   barriers: "BS EN 1317-2:2010",
-  brick: "BS EN 771-1:2011",
+  brick: "ISO 9001:2015",
   waterproof: "BS EN 13707:2013",
-  manhole: "BS EN 124-2:2015",
-  insulation: "BS EN 13165:2012",
+  manhole: "ISO 9001:2015",
+  insulation: "ISO 9001:2015",
   plaster: "BS EN 998-1:2016",
-  safetynet: "BS EN 1263-1:2014",
-  steel: "BS 4449:2005",
-  tile: "BS EN 14411:2016",
+  safetynet: "GB 5725-2009",
+  steel: "BS4483:2005",
+  tile: "ISO 9001:2015",
   timber: "BS EN 636:2012",
-  board: "BS EN 520:2004",
+  board: "ISO 9001:2015",
   aggregate: "BS EN 12620:2013",
   pipe: "BS EN 1401-1:2019",
   cable: "BS EN 61537:2007",
@@ -171,6 +162,11 @@ const UNIT_MOQ = {
   length: 10,
   lot: 1,
   license: 1,
+  m: 1,
+  m2: 1,
+  m3: 1,
+  "m²": 1,
+  "m³": 1,
 };
 
 const STOCK_I18N = {
@@ -199,7 +195,16 @@ function stockStatusKey(status) {
   return STOCK_I18N[status] || "stockInStock";
 }
 
+function isDiscontinued(product) {
+  return Boolean(product?.discontinued);
+}
+
+function activeCatalog(list) {
+  return (list || []).filter((p) => !isDiscontinued(p));
+}
+
 function canDirectBuy(product) {
+  if (isDiscontinued(product)) return false;
   return getEffectivePrice(product).displayPrice != null;
 }
 
@@ -226,6 +231,40 @@ function quoteFor(i, price, isGreen) {
   return null;
 }
 
+function withMattexDemoPrice(product) {
+  const seed = hashSeed(product.id);
+  const stockStatus = product.stockStatus || stockStatusFor(seed % 11, null);
+  return {
+    ...product,
+    price: null,
+    quote: null,
+    stockStatus,
+    leadTime: product.leadTime || leadTimeFor(stockStatus, seed % 11),
+  };
+}
+
+function isHitProduct(product) {
+  return Boolean(product && (product.hit || product.featuredRank != null));
+}
+
+function withHitFlag(product) {
+  if (product.featuredRank != null) return { ...product, hit: true };
+  const seed = hashSeed(product.id);
+  if (seed % 7 === 0) return { ...product, hit: true };
+  return { ...product, hit: Boolean(product.hit) };
+}
+
+function applyMattexDemoPrices(list) {
+  const out = list.map((p) => {
+    const next = withHitFlag({ ...withMattexDemoPrice(p), sales: true });
+    if (p.featuredRank != null) return next;
+    const seed = hashSeed(p.id);
+    if (seed % 73 !== 0) return next;
+    return { ...next, discontinued: true };
+  });
+  return out;
+}
+
 function isQuoteActive(quote) {
   if (!quote?.validUntil) return false;
   const end = new Date(`${quote.validUntil}T23:59:59`);
@@ -235,21 +274,7 @@ function isQuoteActive(quote) {
 
 function getEffectivePrice(product) {
   if (!product) return { displayPrice: null, status: "none", quote: null };
-  const quote = product.quote || null;
-  if (!quote) {
-    return {
-      displayPrice: product.price ?? null,
-      status: product.price == null ? "none" : "list",
-      quote: null,
-    };
-  }
-  if (isQuoteActive(quote)) {
-    return { displayPrice: quote.unitPrice, status: "quoted", quote };
-  }
-  if (quote.listPrice != null) {
-    return { displayPrice: quote.listPrice, status: "expired-list", quote };
-  }
-  return { displayPrice: null, status: "expired-requote", quote };
+  return { displayPrice: null, status: "none", quote: null };
 }
 
 function formatQuoteDate(iso, lang) {
@@ -263,11 +288,22 @@ function formatQuoteDate(iso, lang) {
   });
 }
 
+function formatQuoteDateShort(iso, lang) {
+  if (!iso) return "";
+  const d = new Date(`${iso}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString(lang === "zh" ? "zh-HK" : "en-GB", {
+    day: "numeric",
+    month: "short",
+  });
+}
+
 function buildProducts() {
-  const featuredIds = ["precast-01", "barriers-01", "brick-01", "waterproof-01", "steel-01"];
+  const featuredIds = [];
   const out = [];
   CATEGORY_DEFS.forEach((cat) => {
-    const total = cat.id === "safetynet" ? 2 : cat.count;
+    if (!SYNTHETIC_CATEGORY_IDS.has(cat.id)) return;
+    const total = cat.count;
     for (let i = 1; i <= total; i++) {
       const id = cat.id + "-" + String(i).padStart(2, "0");
       const unpriced = i % 3 === 0 || (total <= 4 && i === total);
@@ -310,7 +346,15 @@ function buildProducts() {
       });
     }
   });
-  return out;
+  const leftover = out.filter(
+    (p) => !HIDDEN_CATEGORY_IDS.has(categoryIdFromName(p.category)) && isMattexSupplier(p.supplier)
+  );
+  return applyMattexDemoPrices(MATTEX_PRODUCTS).concat(leftover);
+}
+
+function categoryIdFromName(name) {
+  const found = CATEGORY_DEFS.find((c) => c.name === name);
+  return found ? found.id : "";
 }
 
 const PRODUCTS = buildProducts();
@@ -318,28 +362,56 @@ const PRODUCTS = buildProducts();
 const CATEGORIES = CATEGORY_DEFS.map((c) => c.name);
 
 function getCategoryDefs() {
-  return CATEGORY_DEFS.map((c) => ({
+  return CATEGORY_DEFS.filter((c) => !HIDDEN_CATEGORY_IDS.has(c.id)).map((c) => ({
     id: c.id,
     name: c.name,
     image: c.image,
-    count: PRODUCTS.filter((p) => p.category === c.name).length,
+    count: activeCatalog(PRODUCTS).filter((p) => p.category === c.name).length,
   }));
 }
 
 function getCategories() {
-  return CATEGORIES.slice();
+  return CATEGORY_DEFS.filter((c) => !HIDDEN_CATEGORY_IDS.has(c.id)).map((c) => c.name);
+}
+
+function getCategoryBySlug(slug) {
+  const id = String(slug || "").trim();
+  if (!id || HIDDEN_CATEGORY_IDS.has(id)) return null;
+  return getCategoryDefs().find((c) => c.id === id) || null;
+}
+
+function getCategoryByName(name) {
+  const value = String(name || "").trim();
+  if (!value) return null;
+  return getCategoryDefs().find((c) => c.name === value) || null;
+}
+
+function catalogPathForCategory(nameOrSlug) {
+  const found = getCategoryBySlug(nameOrSlug) || getCategoryByName(nameOrSlug);
+  return found ? `/catalog/${found.id}` : "/";
 }
 
 function getTopProducts(limit) {
   const n = limit || 5;
-  return PRODUCTS.filter((p) => p.featuredRank != null)
+  return activeCatalog(PRODUCTS)
+    .filter((p) => p.featuredRank != null)
     .sort((a, b) => a.featuredRank - b.featuredRank)
     .slice(0, n);
 }
 
 function getGreenProducts(limit) {
-  const list = PRODUCTS.filter((p) => p.green);
+  const list = activeCatalog(PRODUCTS).filter((p) => p.green);
   return typeof limit === "number" ? list.slice(0, limit) : list;
+}
+
+function getSalesProducts(limit) {
+  const list = activeCatalog(PRODUCTS).filter((p) => p.sales);
+  const featured = list
+    .filter((p) => p.featuredRank != null)
+    .sort((a, b) => a.featuredRank - b.featuredRank);
+  const rest = list.filter((p) => p.featuredRank == null);
+  const ordered = featured.concat(rest);
+  return typeof limit === "number" ? ordered.slice(0, limit) : ordered;
 }
 
 function getProductsByCategory(category) {
@@ -348,15 +420,56 @@ function getProductsByCategory(category) {
     : !category || category === "all"
       ? []
       : [category];
-  if (!names.length) return PRODUCTS.slice();
+  const source = activeCatalog(PRODUCTS);
+  if (!names.length) return source.slice();
   const set = new Set(names);
-  return PRODUCTS.filter((p) => set.has(p.category));
+  return source.filter((p) => set.has(p.category));
+}
+
+const CATEGORY_SEARCH_TERMS = {
+  "Reinforcement Mesh": ["BRC", "welded mesh", "reinforcing mesh", "square mesh", "鋼筋網", "鐵網", "鋼網"],
+  "Dense Mesh Flame Retardant Safety Net": ["safety net", "FR net", "debris net", "密目網", "安全網", "阻燃網"],
+  "Gypsum Block": ["gypsum block", "partition block", "石膏砌塊", "石膏磚"],
+  "XPS Foam Board": ["XPS", "foam board", "insulation board", "擠塑板", "保溫板"],
+  "Tiles": ["tile", "sintered stone", "porcelain", "瓷磚", "岩板"],
+  "Vinyl": ["vinyl flooring", "PVC floor", "膠地板", "塑膠地板"],
+  "Precasted Concrete": ["precast", "precast block", "預製混凝土", "預製件"],
+  "Cat Ladder": ["cat ladder", "roof ladder", "貓梯", "爬梯"],
+  "Logistics Storage Platform & Steel Shelving": ["steel shelving", "storage platform", "貨架", "鋼架"],
+  "Handrails": ["handrail", "ball joint", "扶手"],
+  "Balustrades": ["balustrade", "railing", "欄杆", "欄河"],
+  "Forge-welded Grating": ["forge-welded grating", "steel grating", "焊接格柵", "鋼格板"],
+  "Press-Lock Grating": ["press-lock grating", "pressure locked grating", "壓鎖格柵"],
+  "GU Type Drainage Gratings": ["GU grating", "drainage grating", "排水溝蓋"],
+  "GT Type Drainage Gratings": ["GT grating", "drainage grating", "排水溝蓋"],
+  "Gypsum Board": ["plasterboard", "drywall", "石膏板"],
+  "Software": ["license", "BIM", "軟件授權"],
+};
+
+function getProductRemarks(product) {
+  if (!product) return [];
+  if (Array.isArray(product.remarks) && product.remarks.length) {
+    return product.remarks.map((term) => String(term).trim()).filter(Boolean);
+  }
+  const fromName = String(product.name || "")
+    .split(/[—–,/()]+/)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 1 && part.length < 48);
+  const fromCat = CATEGORY_SEARCH_TERMS[product.category] || [];
+  const extra = [product.productNo, product.standard].filter(Boolean);
+  const seen = new Set();
+  const out = [];
+  for (const term of [...fromName, ...fromCat, ...extra]) {
+    const key = String(term).toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(String(term));
+  }
+  return out.slice(0, 14);
 }
 
 function productSearchBlob(product) {
   const specs = Array.isArray(product.specs) ? product.specs.join(" ") : "";
-  const price =
-    product.price == null ? "price upon request" : String(product.price);
   return [
     product.id,
     product.productNo,
@@ -367,9 +480,8 @@ function productSearchBlob(product) {
     product.standard,
     product.stockStatus,
     specs,
-    price,
-    product.quote?.validUntil,
-    product.quote ? "quoted price quotation validity" : "",
+    getProductRemarks(product).join(" "),
+    "price upon request quote",
     product.green ? "green eco sustainable low-carbon fsc recycled" : "",
   ]
     .filter(Boolean)
@@ -377,7 +489,25 @@ function productSearchBlob(product) {
     .toLowerCase();
 }
 
-function searchProducts(query, category) {
+const SEARCH_FIELD_KEYS = ["name", "category", "sku", "spec", "supplier", "remarks"];
+
+function productSearchText(product, fields) {
+  const selected = Array.isArray(fields) ? fields.filter((f) => SEARCH_FIELD_KEYS.includes(f)) : [];
+  if (!selected.length || selected.length === SEARCH_FIELD_KEYS.length) {
+    return productSearchBlob(product);
+  }
+  const specs = Array.isArray(product.specs) ? product.specs.join(" ") : "";
+  const parts = [];
+  if (selected.includes("name")) parts.push(product.name);
+  if (selected.includes("category")) parts.push(product.category);
+  if (selected.includes("sku")) parts.push(product.productNo, product.id);
+  if (selected.includes("spec")) parts.push(specs, product.standard, product.description);
+  if (selected.includes("supplier")) parts.push(product.supplier);
+  if (selected.includes("remarks")) parts.push(getProductRemarks(product).join(" "));
+  return parts.filter(Boolean).join(" ").toLowerCase();
+}
+
+function searchProducts(query, category, options = {}) {
   const base = getProductsByCategory(category);
   const q = String(query || "")
     .trim()
@@ -385,16 +515,16 @@ function searchProducts(query, category) {
   if (!q) return base;
   const tokens = q.split(/\s+/).filter(Boolean);
   return base.filter((p) => {
-    const blob = productSearchBlob(p);
+    const blob = productSearchText(p, options.fields);
     return tokens.every((token) => blob.includes(token));
   });
 }
 
-function searchProductsUnion(queries, category) {
+function searchProductsUnion(queries, category, options = {}) {
   const seen = new Set();
   const out = [];
   for (const raw of queries || []) {
-    const hits = searchProducts(raw, category);
+    const hits = searchProducts(raw, category, options);
     for (const product of hits) {
       if (seen.has(product.id)) continue;
       seen.add(product.id);
@@ -404,11 +534,69 @@ function searchProductsUnion(queries, category) {
   return out;
 }
 
+function tokenizeMatch(value) {
+  return String(value || "")
+    .toLowerCase()
+    .split(/[^a-z0-9\u4e00-\u9fff]+/)
+    .filter((token) => token.length >= 2);
+}
+
+function suggestCatalogMatch(item) {
+  const nameTokens = tokenizeMatch(item?.name);
+  const specTokens = tokenizeMatch(item?.spec);
+  const category = String(item?.category || "").toLowerCase();
+  if (!nameTokens.length && !specTokens.length) return null;
+  let best = null;
+  let bestScore = 0;
+  for (const product of activeCatalog(PRODUCTS)) {
+    const name = String(product.name || "").toLowerCase();
+    const blob = [
+      name,
+      product.productNo,
+      product.id,
+      product.category,
+      product.description,
+      Array.isArray(product.specs) ? product.specs.join(" ") : "",
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    let score = 0;
+    for (const token of nameTokens) {
+      if (name.includes(token)) score += 4;
+      else if (blob.includes(token)) score += 1;
+    }
+    for (const token of specTokens) {
+      if (blob.includes(token)) score += 2;
+    }
+    if (category && String(product.category || "").toLowerCase() === category) score += 3;
+    if (score > bestScore) {
+      bestScore = score;
+      best = product;
+    }
+  }
+  if (!best || bestScore < 4) return null;
+  return {
+    id: best.id,
+    name: best.name,
+    productNo: best.productNo,
+    category: best.category,
+    image: best.image,
+  };
+}
+
+function getProductsByIds(ids) {
+  const set = new Set((ids || []).map(String));
+  return activeCatalog(PRODUCTS).filter((p) => set.has(String(p.id)));
+}
+
 function supplierSlug(name) {
-  return String(name || "")
+  const raw = String(name || "")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)/g, "");
+  if (raw === "mattex" || raw.startsWith("mattex-")) return "mattex";
+  return raw;
 }
 
 function supplierPath(name) {
@@ -503,18 +691,121 @@ function buildSupplierMetrics(slug) {
   };
 }
 
-function getProductRating(product) {
-  const seed = hashSeed(product?.id || product?.name || "product");
+function getProductRating() {
+  return { rating: 0, reviews: 0, empty: true };
+}
+
+const SUPPLIER_DISPLAY_NAMES = {
+  Mattex: "Mattex Asia Development Limited",
+};
+
+function supplierDisplayName(name) {
+  return SUPPLIER_DISPLAY_NAMES[name] || name || "";
+}
+
+function isMattexSupplier(name) {
+  const slug = supplierSlug(name);
+  return slug === "mattex" || slug.startsWith("mattex-") || /\bmattex\b/i.test(String(name || ""));
+}
+
+const supplierMetricsBySlug = new Map();
+
+function emptySupplierMetrics() {
   return {
-    rating: Math.round(clamp(3.7 + (seed % 14) / 10, 3.6, 5) * 10) / 10,
-    reviews: 8 + ((seed >> 2) % 92),
+    rating: 0,
+    completionRate: 0,
+    onTimeRate: 0,
+    searchCount: 0,
+    foundCount: 0,
+    rfqCount: 0,
+    empty: true,
   };
+}
+
+function metricsForSlug(slug) {
+  return supplierMetricsBySlug.get(slug) || emptySupplierMetrics();
+}
+
+function mergeDraftMaps(local, remote) {
+  const out = remote && typeof remote === "object" ? { ...remote } : {};
+  const src = local && typeof local === "object" ? local : {};
+  for (const [key, draft] of Object.entries(src)) {
+    const localLines = Array.isArray(draft?.lines) ? draft.lines.length : 0;
+    const remoteLines = Array.isArray(out[key]?.lines) ? out[key].lines.length : 0;
+    if (localLines && localLines >= remoteLines) out[key] = draft;
+  }
+  return out;
+}
+
+function mergeRfqMaps(local, remote) {
+  const out = remote && typeof remote === "object" ? { ...remote } : {};
+  const src = local && typeof local === "object" ? local : {};
+  for (const [key, list] of Object.entries(src)) {
+    const byId = new Map((Array.isArray(out[key]) ? out[key] : []).map((rfq) => [rfq?.id, rfq]));
+    for (const rfq of Array.isArray(list) ? list : []) {
+      if (rfq?.id && !byId.has(rfq.id)) byId.set(rfq.id, rfq);
+    }
+    out[key] = [...byId.values()].sort((a, b) =>
+      String(b?.submittedAt || "").localeCompare(String(a?.submittedAt || ""))
+    );
+  }
+  return out;
+}
+
+function writeLocalOnly(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* ignore quota */
+  }
+}
+
+async function hydrateStore() {
+  try {
+    const remote = await fetchRemoteState();
+    if (!remote) return false;
+    if (remote.products.length) {
+      PRODUCTS.splice(0, PRODUCTS.length, ...remote.products);
+    }
+    supplierMetricsBySlug.clear();
+    Object.entries(remote.metrics || {}).forEach(([slug, metrics]) => {
+      supplierMetricsBySlug.set(slug, metrics);
+    });
+    if (remote.kv[ACCOUNTS_KEY]) {
+      writeLocalOnly(ACCOUNTS_KEY, { ...readJson(ACCOUNTS_KEY, {}), ...remote.kv[ACCOUNTS_KEY] });
+    }
+    if (remote.kv[DRAFTS_KEY]) {
+      writeLocalOnly(DRAFTS_KEY, mergeDraftMaps(readJson(DRAFTS_KEY, {}), remote.kv[DRAFTS_KEY]));
+    }
+    if (remote.kv[RFQS_KEY]) {
+      writeLocalOnly(RFQS_KEY, mergeRfqMaps(readJson(RFQS_KEY, {}), remote.kv[RFQS_KEY]));
+    }
+    const remoteSeq = Number(remote.kv[SEQ_KEY] || 0);
+    let localSeq = 0;
+    try {
+      localSeq = Number(localStorage.getItem(SEQ_KEY) || 0);
+    } catch {
+      localSeq = 0;
+    }
+    if (remoteSeq > localSeq) {
+      try {
+        localStorage.setItem(SEQ_KEY, String(remoteSeq));
+      } catch {
+        /* ignore */
+      }
+    }
+    emitStoreChange();
+    return true;
+  } catch (error) {
+    console.warn("supabase hydrate", error?.message || error);
+    return false;
+  }
 }
 
 function getSuppliers() {
   const map = new Map();
   PRODUCTS.forEach((p) => {
-    if (!p.supplier) return;
+    if (!p.supplier || !isMattexSupplier(p.supplier)) return;
     const slug = supplierSlug(p.supplier);
     if (!map.has(slug)) {
       map.set(slug, {
@@ -533,12 +824,12 @@ function getSuppliers() {
   return Array.from(map.values())
     .map((s) => ({
       slug: s.slug,
-      name: s.name,
+      name: supplierDisplayName(s.name),
       image: s.image,
       verified: hashSeed(s.slug) % 3 !== 2,
       count: s.count,
       categories: Array.from(s.categories).sort(),
-      metrics: buildSupplierMetrics(s.slug),
+      metrics: metricsForSlug(s.slug),
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -550,7 +841,7 @@ function getSupplier(slugOrName) {
 
 function getProductsBySupplier(slugOrName) {
   const key = supplierSlug(slugOrName);
-  return PRODUCTS.filter((p) => supplierSlug(p.supplier) === key);
+  return activeCatalog(PRODUCTS).filter((p) => supplierSlug(p.supplier) === key);
 }
 
 function getTopProductsForSupplier(slugOrName, limit) {
@@ -613,8 +904,13 @@ const AUTH_KEY = "subbie_auth";
 const ACCOUNTS_KEY = "subbie_accounts";
 const DRAFTS_KEY = "subbie_drafts_by_user";
 const RFQS_KEY = "subbie_rfqs_by_user";
+const GUEST_KEY = "__guest__";
 const SEQ_KEY = "subbie_rfq_seq";
-const WHATSAPP_NUMBER = "15550142200";
+const WHATSAPP_NUMBER = "85256013989";
+const WHATSAPP_DISPLAY = "852-56013989";
+const WHATSAPP_HREF = `https://wa.me/${WHATSAPP_NUMBER}`;
+const MATTEX_CHAIN_URL = "https://uat-chain.mattex.com.hk/overview";
+const MATTEX_SITE_URL = "https://www.mattex.com.hk/";
 
 const PENDING_CART_KEY = "subbie_pending_cart";
 const PENDING_WA_RFQ_KEY = "subbie_pending_whatsapp_rfq";
@@ -653,7 +949,12 @@ function readJson(key, fallback) {
 }
 
 function writeJson(key, value) {
-  localStorage.setItem(key, JSON.stringify(value));
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* ignore quota */
+  }
+  persistKv(key, value);
 }
 
 function normalizeEmail(email) {
@@ -754,18 +1055,20 @@ function currentEmail() {
   return user ? normalizeEmail(user.email) : null;
 }
 
+function accountKey() {
+  return currentEmail() || GUEST_KEY;
+}
+
 function getDraft() {
-  const email = currentEmail();
-  if (!email) return emptyDraft();
+  const key = accountKey();
   const map = getDraftsMap();
-  return map[email] ? normalizeDraft(map[email]) : emptyDraft();
+  return map[key] ? normalizeDraft(map[key]) : emptyDraft();
 }
 
 function setDraft(draft) {
-  const email = currentEmail();
-  if (!email) return;
+  const key = accountKey();
   const map = getDraftsMap();
-  map[email] = normalizeDraft(draft);
+  map[key] = normalizeDraft(draft);
   setDraftsMap(map);
   emitStoreChange();
 }
@@ -795,7 +1098,7 @@ function getCart() {
 }
 
 function cartCount() {
-  return getDraft().lines.reduce((sum, line) => sum + (line.qty || 0), 0);
+  return getDraft().lines.length;
 }
 
 function newCustomProductId() {
@@ -804,14 +1107,14 @@ function newCustomProductId() {
 
 function addToCart(productId, { intent, qty } = {}) {
   const product = getProduct(productId);
-  if (!product || !currentEmail()) return getCart();
+  if (!product || isDiscontinued(product)) return getCart();
   const draft = getDraft();
   const minQty = Math.max(1, Number(product.moq) || 1);
   const addQty = Math.max(minQty, Math.floor(Number(qty)) || minQty);
   const nextIntent = intent || (getEffectivePrice(product).displayPrice != null ? "buy" : "quote");
   const existing = draft.lines.find((l) => l.productId === productId && !l.custom);
   if (existing) {
-    existing.qty = Math.max(existing.qty || 0, addQty);
+    existing.qty = (existing.qty || 0) + addQty;
     existing.intent = nextIntent;
   } else {
     draft.lines.push({ productId, qty: addQty, intent: nextIntent });
@@ -820,17 +1123,22 @@ function addToCart(productId, { intent, qty } = {}) {
   return getCart();
 }
 
+function isStoredAttachmentUrl(url) {
+  const value = String(url || "").trim();
+  return value.startsWith("data:") || /^https?:\/\//i.test(value);
+}
+
 function normalizeAttachments(list) {
   if (!list) return [];
   return (Array.isArray(list) ? list : [list])
     .map((item) => {
-      const url = String(item?.url || "");
+      const url = String(item?.url || "").trim();
       return {
         name: String(item?.name || "file").slice(0, 180),
         type: String(item?.type || ""),
         size: Number(item?.size) || 0,
         kind: item?.kind === "image" || item?.kind === "text" ? item.kind : "document",
-        url: url.startsWith("data:") ? url : "",
+        url: isStoredAttachmentUrl(url) ? url : "",
       };
     })
     .filter((item) => item.name)
@@ -838,7 +1146,6 @@ function normalizeAttachments(list) {
 }
 
 function addCustomLine({ name, description = "", qty = 1, category = "", attachments, image = "" } = {}) {
-  if (!currentEmail()) return { ok: false, error: "not_logged_in" };
   const trimmed = String(name || "").trim();
   if (!trimmed) return { ok: false, error: "name" };
   const nextQty = Math.floor(Number(qty));
@@ -941,6 +1248,15 @@ function setLineRequestedPrice(productId, value) {
 function removeLine(productId) {
   const draft = getDraft();
   draft.lines = draft.lines.filter((l) => String(l.productId) !== String(productId));
+  setDraft(draft);
+  return draft;
+}
+
+function removeLines(productIds) {
+  const ids = new Set((productIds || []).map((id) => String(id)));
+  if (!ids.size) return getDraft();
+  const draft = getDraft();
+  draft.lines = draft.lines.filter((l) => !ids.has(String(l.productId)));
   setDraft(draft);
   return draft;
 }
@@ -1104,20 +1420,23 @@ function draftTotals(draft, productIds) {
 
 function nextRfqId() {
   const seq = Number(localStorage.getItem(SEQ_KEY) || "1000") + 1;
-  localStorage.setItem(SEQ_KEY, String(seq));
+  try {
+    localStorage.setItem(SEQ_KEY, String(seq));
+  } catch {
+    /* ignore quota */
+  }
+  persistKv(SEQ_KEY, seq);
   return `RFQ-${seq}`;
 }
 
 function getRfqs() {
-  const email = currentEmail();
-  if (!email) return [];
+  const key = accountKey();
   const map = getRfqsMap();
-  return Array.isArray(map[email]) ? map[email] : [];
+  return Array.isArray(map[key]) ? map[key] : [];
 }
 
 function submitRfq(productIds, options = {}) {
-  const email = currentEmail();
-  if (!email) return { ok: false, error: "not_logged_in" };
+  const email = accountKey();
   let draft = getDraft();
   if (!draft.lines.length) return { ok: false, error: "empty" };
   const skipLogistics = Boolean(options.skipLogistics);
@@ -1143,13 +1462,17 @@ function submitRfq(productIds, options = {}) {
   const selectedSet = new Set(selectedIds);
   const selectedLines = draft.lines.filter((l) => selectedSet.has(String(l.productId)));
   if (!selectedLines.length) return { ok: false, error: "none_selected" };
+  const blocked = selectedLines.filter((l) => !l.custom && isDiscontinued(getProduct(l.productId)));
+  if (blocked.length) return { ok: false, error: "discontinued" };
 
   const totals = draftTotals({ ...draft, lines: selectedLines });
-  const channel = options.channel === "whatsapp" ? "whatsapp" : "rfq";
+  const channel =
+    options.channel === "whatsapp" ? "whatsapp" : options.channel === "email" ? "email" : "rfq";
   const rfq = {
     id: nextRfqId(),
-    status: channel === "whatsapp" ? "whatsapp_sent" : "submitted",
+    status: channel === "whatsapp" ? "whatsapp_sent" : channel === "email" ? "email_sent" : "submitted",
     channel,
+    askKind: options.kind === "buy" ? "buy" : "quote",
     submittedAt: new Date().toISOString(),
     note: totals.note,
     responseDate: totals.responseDate,
@@ -1176,6 +1499,7 @@ function submitRfq(productIds, options = {}) {
       green: Boolean(l.green),
       image: l.image || null,
       attachments: Array.isArray(l.attachments) ? l.attachments : [],
+      remark: String(l.remark || ""),
     })),
     pricedSubtotal: totals.pricedSubtotal,
     unpricedCount: totals.unpricedCount,
@@ -1185,24 +1509,46 @@ function submitRfq(productIds, options = {}) {
   list.unshift(rfq);
   map[email] = list;
   setRfqsMap(map);
-
-  // Keep unselected lines in the draft for later RFQs
-  const remaining = draft.lines.filter((l) => !selectedSet.has(String(l.productId)));
-  setDraft({
-    ...draft,
-    lines: remaining,
-  });
   emitStoreChange();
   return { ok: true, rfq };
+}
+
+function sendImmediateQuote(productId, { qty, channel } = {}) {
+  return whatsappNow(productId, { qty, kind: "quote", lang: "zh" });
+}
+
+function sendWhatsappQuote(productId, { qty } = {}) {
+  return whatsappNow(productId, { qty, kind: "quote", lang: "zh" });
 }
 
 function getRfq(id) {
   return getRfqs().find((r) => r.id === id) || null;
 }
 
+function saveRfq(rfq) {
+  if (!rfq?.id) return { ok: false };
+  const key = accountKey();
+  const map = getRfqsMap();
+  const list = Array.isArray(map[key]) ? map[key] : [];
+  const idx = list.findIndex((r) => r.id === rfq.id);
+  if (idx < 0) return { ok: false };
+  const lines = Array.isArray(rfq.lines) ? rfq.lines : [];
+  const next = {
+    ...rfq,
+    lines,
+    pricedSubtotal: lines.reduce((sum, l) => sum + (Number(l.unitPrice) || 0) * (Number(l.qty) || 0), 0),
+    unpricedCount: lines.filter((l) => l.unitPrice == null).length,
+  };
+  list[idx] = next;
+  map[key] = list;
+  setRfqsMap(map);
+  emitStoreChange();
+  return { ok: true, rfq: next };
+}
+
 function reorderRfq(id) {
   const src = getRfq(id);
-  if (!src || !currentEmail()) return { ok: false };
+  if (!src) return { ok: false };
   setDraft({
     note: src.note || "",
     responseDate: src.responseDate || src.quotationDeadline || "",
@@ -1465,11 +1811,594 @@ function consumePendingAfterAuth() {
   return wentToRfq ? "/rfq" : "/";
 }
 
-function whatsappUrl(product) {
-  const text = product
-    ? `Hi Subbie sales, I'd like to ask for the price of: ${product.name} (SKU: ${product.id.toUpperCase()}).`
-    : "Hi Subbie sales, I'd like to ask about product pricing.";
-  return `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(text)}`;
+function enrichCartLine(line) {
+  if (!line) return null;
+  if (line.custom) {
+    return {
+      name: line.name || "Custom item",
+      productNo: line.productNo || "",
+      productId: line.productId,
+      custom: true,
+      description: line.description || "",
+      qty: line.qty || 1,
+      unit: line.unit || "",
+      unitPrice: line.unitPrice ?? null,
+      supplier: line.supplier || "",
+      image: line.image || "",
+      attachments: Array.isArray(line.attachments) ? line.attachments : [],
+    };
+  }
+  const product = getProduct(line.productId);
+  return {
+    name: line.name || product?.name || line.productId,
+    productNo: line.productNo || product?.productNo || "",
+    productId: line.productId,
+    custom: false,
+    description: line.description || "",
+    qty: line.qty || 1,
+    unit: product?.unit || line.unit || "",
+    unitPrice: line.unitPrice ?? (product ? getEffectivePrice(product).displayPrice : null),
+    supplier: line.supplier || product?.supplier || "",
+    image: line.image || product?.image || "",
+    attachments: Array.isArray(line.attachments) ? line.attachments : [],
+  };
+}
+
+function flattenWaSpec(text) {
+  return String(text || "")
+    .trim()
+    .replace(/\s*\n+\s*/g, "; ");
+}
+
+function waImageLabel(src, lang) {
+  const value = String(src || "").trim();
+  if (!value) return "";
+  if (value.startsWith("data:")) return lang === "zh" ? "自訂相片" : "custom photo";
+  if (/^https?:\/\//i.test(value)) return value;
+  return value.split("/").pop() || value;
+}
+
+function waAttachmentNames(files) {
+  return (Array.isArray(files) ? files : [])
+    .map((file) => String(file?.name || "").trim())
+    .filter(Boolean)
+    .join(", ");
+}
+
+function hasWaMedia(rows) {
+  return rows.some(
+    (line) =>
+      (line.attachments && line.attachments.length) ||
+      (line.image && String(line.image).startsWith("data:"))
+  );
+}
+
+function waField(label, value, prefixWidth) {
+  const prefix = `${label}:`;
+  const pad = " ".repeat(Math.max(0, prefixWidth - Array.from(prefix).length));
+  return `   ${prefix}${pad} ${value}`;
+}
+
+function whatsappItemBlock(line, index) {
+  const isCustom = Boolean(line.custom);
+  const name = String(line.name || (isCustom ? "自訂產品" : line.productId) || "-").trim();
+  const sku = line.productNo || (isCustom ? "自訂" : line.productId) || "-";
+  const qty = `${line.qty}${line.unit ? ` ${line.unit}` : ""}`;
+  const price = line.unitPrice != null ? formatPrice(line.unitPrice) : "待報價";
+  const spec = flattenWaSpec(line.description);
+  const width = 6;
+  const rows = [
+    `${index + 1}.`,
+    waField("貨名", name, width),
+    waField("貨號", sku, width),
+    waField("數量", qty, width),
+    waField("單價", price, width),
+  ];
+  if (isCustom && spec) rows.push(waField("規格／備註", spec, width));
+  const attached = waAttachmentNames(line.attachments);
+  if (attached) rows.push(waField("附件", attached, width));
+  return rows.join("\n");
+}
+
+function waRefLabel(kind, zh = true) {
+  if (kind === "buy") return zh ? "訂單編號" : "Order no.";
+  return zh ? "RFQ 編號" : "RFQ no.";
+}
+
+function whatsappWrapList(list, kind, refNo) {
+  const isBuy = kind === "buy";
+  const intro = isBuy ? "你好，我想買以下現貨：" : "你好，我想問以下報價：";
+  const outro = isBuy ? "請確認庫存及單價，謝謝。" : "請提供交貨期及單價，謝謝。";
+  const head = refNo ? `${intro}\n${waRefLabel(kind)}：${refNo}` : intro;
+  return `${head}\n\n${list}\n\n${outro}`;
+}
+
+function whatsappPdfHintText(kind, refNo, pdfUrl) {
+  const isBuy = kind === "buy";
+  const intro = isBuy ? "你好，我想買以下現貨：" : "你好，我想問以下報價：";
+  const outro = isBuy ? "請確認庫存及單價，謝謝。" : "請提供交貨期及單價，謝謝。";
+  const refLine = refNo ? `${waRefLabel(kind)}：${refNo}` : "";
+  const pdfLine = pdfUrl ? `產品清單 PDF：\n${pdfUrl}` : "請睇附件 PDF（產品清單）。";
+  return [intro, refLine, pdfLine, outro].filter(Boolean).join("\n\n");
+}
+
+function whatsappChatHref(text = "") {
+  const base = `https://wa.me/${WHATSAPP_NUMBER}`;
+  return text ? `${base}?text=${encodeURIComponent(text)}` : base;
+}
+
+function whatsappNativeHref(text = "") {
+  const base = `whatsapp://send?phone=${WHATSAPP_NUMBER}`;
+  return text ? `${base}&text=${encodeURIComponent(text)}` : base;
+}
+
+function openWhatsappChat(text = "") {
+  if (typeof window === "undefined") return;
+  const mobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "");
+  window.open(mobile ? whatsappNativeHref(text) : whatsappChatHref(text), "_blank", "noopener,noreferrer");
+}
+
+function copyPlainText(text) {
+  if (typeof document === "undefined") return;
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).catch(() => copyPlainTextFallback(text));
+    return;
+  }
+  copyPlainTextFallback(text);
+}
+
+function copyPlainTextFallback(text) {
+  try {
+    const input = document.createElement("textarea");
+    input.value = text;
+    input.setAttribute("readonly", "");
+    input.style.position = "fixed";
+    input.style.left = "-9999px";
+    document.body.appendChild(input);
+    input.select();
+    document.execCommand("copy");
+    input.remove();
+  } catch {
+    /* ignore */
+  }
+}
+
+function closeWhatsappCopiedModal() {
+  const el = document.querySelector("[data-wa-copy-modal]");
+  const url = el?.dataset.waPdfUrl;
+  el?.remove();
+  if (url && url.startsWith("blob:") && url !== waPdfCache?.pdf?.url) URL.revokeObjectURL(url);
+  document.body.style.overflow = "";
+}
+
+function modalButtonStyle(primary, disabled = false) {
+  const base = primary
+    ? "display:inline-flex;align-items:center;justify-content:center;border:0;background:#245a41;color:#fff;font-weight:600;font-size:0.8125rem;padding:0.65rem 1.05rem;"
+    : "display:inline-flex;align-items:center;justify-content:center;border:1px solid #d6ddd8;background:#fff;color:#121816;font-weight:600;font-size:0.8125rem;padding:0.65rem 0.9rem;";
+  return disabled ? `${base}cursor:not-allowed;opacity:0.5;` : `${base}cursor:pointer;`;
+}
+
+function showWhatsappPdfModal({ kind, count, text, pdf, failed, reused, refNo, blobUrl, uploading }) {
+  if (typeof document === "undefined") return;
+  closeWhatsappCopiedModal();
+  const zh = String(document.documentElement.lang || "").startsWith("zh");
+  const refLabel = waRefLabel(kind, zh);
+  const hasBlob = Boolean(blobUrl);
+  const waitForPdfLink = Boolean(uploading && !hasBlob && !failed);
+  const copy = zh
+    ? {
+        title: failed
+          ? "未能產生 PDF"
+          : uploading
+            ? "正在上傳 PDF…"
+            : reused
+              ? "請用同一份 PDF"
+              : pdf
+                ? hasBlob
+                  ? "PDF 連結已準備"
+                  : "報價清單 PDF 已準備"
+                : "正在產生 PDF…",
+        alert: reused
+          ? `清單未變，重用同一份 PDF 連結。今次 WhatsApp 會用新${refLabel} ${refNo || ""}。`
+          : "",
+        ref: refNo ? `${refLabel}：${refNo}` : "",
+        body: failed
+          ? "清單已複製。開啟 WhatsApp 後貼上即可。"
+          : uploading
+            ? "正在把 PDF 同產品圖片上傳到 Vercel Blob，之後會把連結寫入 WhatsApp。"
+            : pdf
+              ? hasBlob
+                ? `共 ${count} 項。WhatsApp 訊息會帶 PDF 連結同產品圖片。`
+                : `共 ${count} 項。WhatsApp 連結加唔到檔案，請先下載 PDF，再開對話用附件傳送。`
+              : "正在把貨名、貨號、數量、單價同產品圖整成 PDF。",
+        preview: "PDF 預覽",
+        download: reused ? "再次下載同一份 PDF" : "下載 PDF",
+        share: "分享 PDF",
+        open: "開啟 WhatsApp",
+        close: "關閉",
+      }
+    : {
+        title: failed
+          ? "Could not create PDF"
+          : uploading
+            ? "Uploading PDF…"
+            : reused
+              ? "Use the same PDF"
+              : pdf
+                ? hasBlob
+                  ? "PDF link is ready"
+                  : "Quote PDF is ready"
+                : "Preparing PDF…",
+        alert: reused
+          ? `This list has not changed — reusing the same PDF link. WhatsApp will use a new ${refLabel} ${refNo || ""}.`
+          : "",
+        ref: refNo ? `${refLabel}: ${refNo}` : "",
+        body: failed
+          ? "The list is copied. Open WhatsApp, then paste to send."
+          : uploading
+            ? "Uploading the PDF and product images to Vercel Blob, then putting the links in WhatsApp."
+            : pdf
+              ? hasBlob
+                ? `${count} item(s). WhatsApp will include the PDF link and product images.`
+                : `${count} item(s). WhatsApp links cannot attach files — download the PDF, then attach it in the chat.`
+              : "Creating a PDF with name, SKU, qty, unit price, and product images.",
+        preview: "PDF preview",
+        download: reused ? "Download the same PDF again" : "Download PDF",
+        share: "Share PDF",
+        open: "Open WhatsApp",
+        close: "Close",
+      };
+
+  const overlay = document.createElement("div");
+  overlay.dataset.waCopyModal = "1";
+  if (pdf?.url) overlay.dataset.waPdfUrl = pdf.url;
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+  overlay.setAttribute("aria-labelledby", "wa-copy-title");
+  overlay.style.cssText =
+    "position:fixed;inset:0;z-index:90;display:flex;align-items:center;justify-content:center;padding:1.25rem;background:rgba(16,21,19,0.55);";
+
+  const card = document.createElement("div");
+  card.style.cssText =
+    "width:min(34rem,100%);max-height:min(40rem,calc(100vh - 2.5rem));overflow:auto;background:#fff;border:1px solid #d6ddd8;border-radius:0.75rem;box-shadow:0 18px 40px rgba(0,0,0,0.22);padding:1.25rem 1.35rem 1.15rem;";
+
+  const title = document.createElement("h2");
+  title.id = "wa-copy-title";
+  title.textContent = copy.title;
+  title.style.cssText = "margin:0;font-size:1.15rem;font-weight:700;color:#143528;";
+
+  const body = document.createElement("p");
+  body.textContent = copy.body;
+  body.style.cssText = "margin:0.55rem 0 0;font-size:0.875rem;line-height:1.45;color:#5b6660;";
+
+  const actions = document.createElement("div");
+  actions.style.cssText = "display:flex;flex-wrap:wrap;justify-content:flex-end;gap:0.5rem;margin-top:1rem;";
+
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.textContent = copy.close;
+  closeBtn.style.cssText = modalButtonStyle(false);
+
+  function onKey(event) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      document.removeEventListener("keydown", onKey);
+      closeWhatsappCopiedModal();
+    }
+  }
+
+  overlay.addEventListener("click", (event) => {
+    if (event.target === overlay) closeWhatsappCopiedModal();
+  });
+  closeBtn.addEventListener("click", () => {
+    document.removeEventListener("keydown", onKey);
+    closeWhatsappCopiedModal();
+  });
+
+  card.append(title);
+
+  if (copy.ref) {
+    const refEl = document.createElement("p");
+    refEl.textContent = copy.ref;
+    refEl.style.cssText =
+      "margin:0.45rem 0 0;font-size:0.8125rem;font-weight:700;color:#143528;letter-spacing:0.02em;";
+    card.append(refEl);
+  }
+
+  if (copy.alert) {
+    const alertEl = document.createElement("p");
+    alertEl.setAttribute("role", "alert");
+    alertEl.textContent = copy.alert;
+    alertEl.style.cssText =
+      "margin:0.7rem 0 0;padding:0.65rem 0.75rem;border:1px solid #ead7a0;background:#fff8e8;color:#6a4f08;font-size:0.8125rem;line-height:1.45;border-radius:0.5rem;";
+    card.append(alertEl);
+  }
+
+  card.append(body);
+
+  if (blobUrl) {
+    const linkWrap = document.createElement("p");
+    linkWrap.style.cssText = "margin:0.7rem 0 0;font-size:0.8125rem;line-height:1.45;word-break:break-all;";
+    const link = document.createElement("a");
+    link.href = blobUrl;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = blobUrl;
+    link.style.cssText = "color:#245a41;font-weight:600;";
+    linkWrap.append(link);
+    card.append(linkWrap);
+  }
+
+  if (pdf?.url) {
+    const previewLabel = document.createElement("p");
+    previewLabel.textContent = copy.preview;
+    previewLabel.style.cssText =
+      "margin:1rem 0 0.4rem;font-size:0.7rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#5b6660;";
+    const frame = document.createElement("iframe");
+    frame.title = copy.preview;
+    frame.src = pdf.url;
+    frame.style.cssText =
+      "display:block;width:100%;height:16rem;border:1px solid #d6ddd8;border-radius:0.5rem;background:#f6f7f5;";
+    card.append(previewLabel, frame);
+
+    const downloadBtn = document.createElement("button");
+    downloadBtn.type = "button";
+    downloadBtn.textContent = copy.download;
+    downloadBtn.style.cssText = modalButtonStyle(false);
+    downloadBtn.addEventListener("click", () => downloadBlob(pdf.blob, pdf.filename));
+
+    const openBtn = document.createElement("button");
+    openBtn.type = "button";
+    openBtn.textContent = copy.open;
+    openBtn.disabled = waitForPdfLink;
+    openBtn.setAttribute("aria-busy", waitForPdfLink ? "true" : "false");
+    openBtn.style.cssText = modalButtonStyle(true, waitForPdfLink);
+    if (waitForPdfLink) {
+      openBtn.title = zh ? "PDF 連結上載中，請稍候" : "PDF link is still uploading";
+    }
+    openBtn.addEventListener("click", () => {
+      if (openBtn.disabled) return;
+      if (!reused && !blobUrl) downloadBlob(pdf.blob, pdf.filename);
+      copyPlainText(text);
+      openWhatsappChat(text);
+      document.removeEventListener("keydown", onKey);
+      closeWhatsappCopiedModal();
+    });
+
+    if (canSharePdfFile(pdf.file)) {
+      const shareBtn = document.createElement("button");
+      shareBtn.type = "button";
+      shareBtn.textContent = copy.share;
+      shareBtn.style.cssText = modalButtonStyle(true);
+      shareBtn.addEventListener("click", async () => {
+        const shared = await sharePdfFile(pdf.file, text);
+        if (shared) {
+          document.removeEventListener("keydown", onKey);
+          closeWhatsappCopiedModal();
+        }
+      });
+      actions.append(closeBtn, downloadBtn, shareBtn, openBtn);
+    } else {
+      actions.append(closeBtn, downloadBtn, openBtn);
+    }
+    card.append(actions);
+    overlay.append(card);
+    document.body.appendChild(overlay);
+    document.body.style.overflow = "hidden";
+    document.addEventListener("keydown", onKey);
+    if (waitForPdfLink) closeBtn.focus();
+    else openBtn.focus();
+    return;
+  }
+
+  if (failed) {
+    const openBtn = document.createElement("button");
+    openBtn.type = "button";
+    openBtn.textContent = copy.open;
+    openBtn.style.cssText = modalButtonStyle(true);
+    openBtn.addEventListener("click", () => {
+      copyPlainText(text);
+      openWhatsappChat(text.replace("請睇附件 PDF（產品清單）。", "（清單已複製，請喺呢度貼上）"));
+      document.removeEventListener("keydown", onKey);
+      closeWhatsappCopiedModal();
+    });
+    actions.append(closeBtn, openBtn);
+  } else {
+    actions.append(closeBtn);
+  }
+  card.append(actions);
+  overlay.append(card);
+  document.body.appendChild(overlay);
+  document.body.style.overflow = "hidden";
+  document.addEventListener("keydown", onKey);
+}
+
+function firstImageAttachmentUrl(files) {
+  const list = Array.isArray(files) ? files : [];
+  const found = list.find((file) => {
+    const type = String(file?.type || "");
+    const url = String(file?.url || "");
+    return file?.kind === "image" || type.startsWith("image/") || url.startsWith("data:image/");
+  });
+  return found?.url || "";
+}
+
+function quotePdfItems(rows) {
+  return rows.map((line, i) => {
+    const isCustom = Boolean(line.custom);
+    const attachments = Array.isArray(line.attachments) ? line.attachments : [];
+    return {
+      index: i + 1,
+      name: String(line.name || (isCustom ? "自訂產品" : line.productId) || "-").trim(),
+      sku: line.productNo || (isCustom ? "自訂" : line.productId) || "-",
+      qty: `${line.qty}${line.unit ? ` ${line.unit}` : ""}`,
+      price: line.unitPrice != null ? formatPrice(line.unitPrice) : "待報價",
+      spec: isCustom ? flattenWaSpec(line.description) : "",
+      attachments: waAttachmentNames(attachments),
+      image: line.image || firstImageAttachmentUrl(attachments) || "",
+    };
+  });
+}
+
+function whatsappDraftText(lines, kind, refNo) {
+  const rows = (Array.isArray(lines) ? lines : []).map(enrichCartLine).filter(Boolean);
+  return whatsappWrapList(rows.map((line, i) => whatsappItemBlock(line, i)).join("\n\n"), kind, refNo);
+}
+
+function whatsappDraftUrl() {
+  return whatsappChatHref();
+}
+
+function quotePdfFingerprint(kind, items, refNo) {
+  return JSON.stringify({
+    kind: kind === "buy" ? "buy" : "quote",
+    refNo: String(refNo || "").trim(),
+    items: (Array.isArray(items) ? items : []).map((item) => [
+      item.name,
+      item.sku,
+      item.qty,
+      item.price,
+      item.spec || "",
+      item.attachments || "",
+      item.image || "",
+    ]),
+  });
+}
+
+let whatsappPdfGeneration = 0;
+let waPdfCache = null;
+let waPdfInflight = null;
+let waPublishInflight = null;
+
+function rememberWaPdf(fingerprint, pdf, extra = {}) {
+  if (waPdfCache?.pdf?.url && waPdfCache.pdf.url !== pdf?.url && String(waPdfCache.pdf.url).startsWith("blob:")) {
+    URL.revokeObjectURL(waPdfCache.pdf.url);
+  }
+  waPdfCache = pdf
+    ? {
+        fingerprint,
+        pdf,
+        blobUrl: extra.blobUrl || (waPdfCache?.fingerprint === fingerprint ? waPdfCache.blobUrl : "") || "",
+        imageUrls: extra.imageUrls || (waPdfCache?.fingerprint === fingerprint ? waPdfCache.imageUrls : []) || [],
+        attachmentUrls: extra.attachmentUrls || (waPdfCache?.fingerprint === fingerprint ? waPdfCache.attachmentUrls : []) || [],
+      }
+    : null;
+}
+
+async function publishRfqAssets(pdf, rows, refNo, fingerprint) {
+  if (waPdfCache?.fingerprint === fingerprint && waPdfCache.blobUrl) {
+    return { blobUrl: waPdfCache.blobUrl, imageUrls: waPdfCache.imageUrls || [], attachmentUrls: waPdfCache.attachmentUrls || [] };
+  }
+  if (waPublishInflight?.fingerprint === fingerprint) return waPublishInflight.promise;
+  const promise = publishRfqPdf(pdf, rows, refNo).then((published) => {
+    rememberWaPdf(fingerprint, pdf, published);
+    return published;
+  });
+  waPublishInflight = { fingerprint, promise };
+  try {
+    return await promise;
+  } finally {
+    if (waPublishInflight?.fingerprint === fingerprint) waPublishInflight = null;
+  }
+}
+
+function buildWhatsappShareText(kind, refNo, rows, blobUrl, imageUrls, attachmentUrls) {
+  const withImages = fitWhatsappUrls(whatsappPdfHintText(kind, refNo, blobUrl), imageUrls, "產品圖片：");
+  const extra = (Array.isArray(attachmentUrls) ? attachmentUrls : []).filter((url) => !(imageUrls || []).includes(url));
+  const fitted = fitWhatsappUrls(withImages.text, extra, "規格附件：");
+  const fallback = whatsappWrapList(rows.map((line, i) => whatsappItemBlock(line, i)).join("\n\n"), kind, refNo);
+  return blobUrl ? fitted.text : fallback;
+}
+
+async function publishRfqPdf(pdf, rows, refNo) {
+  const blobUrl = await uploadRfqPdf(pdf.file, refNo);
+  const imageUrls = await collectProductImageUrls(rows, refNo);
+  const attachmentUrls = await collectAttachmentUrls(rows, refNo);
+  return { blobUrl, imageUrls, attachmentUrls };
+}
+
+function openWhatsappDraft(lines, kind, options = {}) {
+  const rows = (Array.isArray(lines) ? lines : []).map(enrichCartLine).filter(Boolean);
+  const items = quotePdfItems(rows);
+  const refNo = String(options?.refNo || "").trim() || nextRfqId();
+  const fingerprint = quotePdfFingerprint(kind, items, refNo);
+  const fallbackText = whatsappWrapList(rows.map((line, i) => whatsappItemBlock(line, i)).join("\n\n"), kind, refNo);
+  const url = whatsappChatHref(whatsappPdfHintText(kind, refNo));
+  if (typeof window === "undefined") return { url, truncated: false, copied: true, count: rows.length, refNo };
+  copyPlainText(fallbackText);
+
+  const cached = waPdfCache?.fingerprint === fingerprint ? waPdfCache : null;
+  if (cached?.pdf && cached.blobUrl) {
+    const text = buildWhatsappShareText(kind, refNo, rows, cached.blobUrl, cached.imageUrls, cached.attachmentUrls);
+    copyPlainText(text);
+    showWhatsappPdfModal({
+      kind,
+      count: rows.length,
+      text,
+      pdf: cached.pdf,
+      reused: true,
+      refNo,
+      blobUrl: cached.blobUrl,
+    });
+    return { url: whatsappChatHref(text), truncated: false, copied: true, count: rows.length, refNo, reused: true };
+  }
+
+  const generation = ++whatsappPdfGeneration;
+  showWhatsappPdfModal({ kind, count: rows.length, text: fallbackText, refNo });
+  const pending =
+    waPdfInflight?.fingerprint === fingerprint
+      ? waPdfInflight.promise
+      : buildQuotePdf({ kind, items, refNo }).then((pdf) => {
+          rememberWaPdf(fingerprint, pdf);
+          return pdf;
+        });
+  waPdfInflight = { fingerprint, promise: pending };
+  pending
+    .then(async (pdf) => {
+      if (generation !== whatsappPdfGeneration) return;
+      if (!document.querySelector("[data-wa-copy-modal]")) return;
+      showWhatsappPdfModal({ kind, count: rows.length, text: fallbackText, pdf, refNo, uploading: true });
+      try {
+        const published = await publishRfqAssets(pdf, rows, refNo, fingerprint);
+        const text = buildWhatsappShareText(kind, refNo, rows, published.blobUrl, published.imageUrls, published.attachmentUrls);
+        copyPlainText(text);
+        if (generation !== whatsappPdfGeneration) return;
+        if (!document.querySelector("[data-wa-copy-modal]")) return;
+        showWhatsappPdfModal({
+          kind,
+          count: rows.length,
+          text,
+          pdf,
+          refNo,
+          blobUrl: published.blobUrl,
+        });
+      } catch {
+        if (generation !== whatsappPdfGeneration) return;
+        if (!document.querySelector("[data-wa-copy-modal]")) return;
+        showWhatsappPdfModal({ kind, count: rows.length, text: fallbackText, pdf, refNo });
+      }
+    })
+    .catch(() => {
+      if (generation !== whatsappPdfGeneration) return;
+      if (!document.querySelector("[data-wa-copy-modal]")) return;
+      if (waPdfInflight?.fingerprint === fingerprint) waPdfInflight = null;
+      showWhatsappPdfModal({ kind, count: rows.length, text: fallbackText, failed: true, refNo });
+    });
+  return { url, truncated: false, copied: true, count: rows.length, refNo };
+}
+
+function whatsappNow(productId, { qty, kind, lang = "zh" } = {}) {
+  const product = getProduct(productId);
+  if (!product || isDiscontinued(product)) return { ok: false, error: "discontinued" };
+  const intent = kind === "buy" ? "buy" : "quote";
+  addToCart(productId, { intent, qty });
+  const line = getDraft().lines.find((l) => String(l.productId) === String(productId) && !l.custom);
+  if (!line) return { ok: false };
+  return { ok: true, ...openWhatsappDraft([line], intent) };
+}
+
+function whatsappUrl() {
+  return whatsappChatHref();
 }
 
 function rfqProjectName(rfq) {
@@ -1487,13 +2416,19 @@ export {
   CATEGORY_DEFS,
   getCategoryDefs,
   getCategories,
+  getCategoryBySlug,
+  getCategoryByName,
+  catalogPathForCategory,
   getTopProducts,
   getGreenProducts,
+  getSalesProducts,
   getProductsByCategory,
   searchProducts,
   searchProductsUnion,
   supplierSlug,
   supplierPath,
+  supplierDisplayName,
+  isMattexSupplier,
   getSuppliers,
   getSupplier,
   supplierBrand,
@@ -1506,10 +2441,18 @@ export {
   SAMPLE_PROJECTS,
   rfqProjectName,
   getProduct,
+  getProductRemarks,
   getProductRating,
+  hydrateStore,
+  isSupabaseConfigured,
   canDirectBuy,
+  isDiscontinued,
+  suggestCatalogMatch,
+  getProductsByIds,
   getEffectivePrice,
+  isHitProduct,
   formatQuoteDate,
+  formatQuoteDateShort,
   stockStatusKey,
   isLoggedIn,
   getUser,
@@ -1524,6 +2467,7 @@ export {
   setLineIntent,
   setLineRequestedPrice,
   removeLine,
+  removeLines,
   setDraftNote,
   setDraftResponseDate,
   setDraftAddress,
@@ -1537,7 +2481,14 @@ export {
   draftTotals,
   getRfqs,
   submitRfq,
+  sendImmediateQuote,
+  sendWhatsappQuote,
+  whatsappNow,
+  enrichCartLine,
+  whatsappDraftUrl,
+  openWhatsappDraft,
   getRfq,
+  saveRfq,
   reorderRfq,
   loginUser,
   registerUser,
@@ -1553,7 +2504,11 @@ export {
   emptyDraft,
   PENDING_CART_KEY,
   PENDING_WA_RFQ_KEY,
-  WHATSAPP_NUMBER
+  WHATSAPP_NUMBER,
+  WHATSAPP_DISPLAY,
+  WHATSAPP_HREF,
+  MATTEX_CHAIN_URL,
+  MATTEX_SITE_URL,
 };
 
 refreshStoreSnapshot();

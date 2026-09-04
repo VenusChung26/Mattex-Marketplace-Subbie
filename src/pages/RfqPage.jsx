@@ -1,13 +1,16 @@
 /**
  * RFQ draft — select products, then confirm logistics on the next page.
  */
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useStore } from "../hooks/useStore";
 import {
   addCustomLine,
+  getProduct,
+  isDiscontinued,
   draftTotals,
   formatPrice,
   removeLine,
+  removeLines,
   setDraftAddress,
   setDraftProject,
   setDraftNote,
@@ -22,20 +25,22 @@ import {
   setLineIntent,
   setLineRequestedPrice,
   submitRfq,
-  setPendingWhatsappOrder,
+  openWhatsappDraft,
   updateCustomLine,
 } from "../lib/store";
 import { useEffect, useMemo, useState } from "react";
 import SiteHeader from "../components/SiteHeader";
 import CustomProductForm from "../components/CustomProductForm";
 import { useLanguage } from "../i18n";
+import { allProductsTo, withLocale } from "../lib/locale";
+import Seo from "../components/Seo";
 import { VariantA, ConfirmRfqView, RFQ_PROTOTYPE_VARIANTS, CUSTOM_PLACEMENT } from "./rfq-prototype/RfqDraftVariants";
 import PrototypeSwitcher from "../components/PrototypeSwitcher";
+import { SHOW_RFQ } from "../lib/flags";
 
 export default function RfqPage() {
   const { user, draft } = useStore();
-  const { t } = useLanguage();
-  const navigate = useNavigate();
+  const { t, lang } = useLanguage();
   const [params] = useSearchParams();
   const variant = String(params.get("variant") || "A").toUpperCase();
   const customPlacement = CUSTOM_PLACEMENT[variant] || "inline";
@@ -62,6 +67,19 @@ export default function RfqPage() {
   const [editingId, setEditingId] = useState(null);
   const [showAddCustom, setShowAddCustom] = useState(false);
   const [confirmKind, setConfirmKind] = useState(null);
+
+  const selectableLineIds = totals.lines
+    .filter((line) => line.custom || !isDiscontinued(getProduct(line.productId)))
+    .map((line) => String(line.productId));
+
+  useEffect(() => {
+    const allowed = new Set(selectableLineIds);
+    setSelectedIds((prev) => {
+      const next = prev.filter((id) => allowed.has(id));
+      if (next.length === prev.length && next.every((id, i) => id === prev[i])) return prev;
+      return next;
+    });
+  }, [selectableLineIds.join("|")]);
 
   useEffect(() => {
     setNote(totals.note || "");
@@ -131,7 +149,8 @@ export default function RfqPage() {
   );
 
   const allSelected =
-    totals.lines.length > 0 && selectedIds.length === totals.lines.length;
+    selectableLineIds.length > 0 && selectedIds.length === selectableLineIds.length &&
+    selectableLineIds.every((id) => selectedIds.includes(id));
 
   function handleAddCustom(payload) {
     const result = addCustomLine(payload);
@@ -151,27 +170,6 @@ export default function RfqPage() {
     }
     setEditingId(null);
     setFormError("");
-  }
-
-  if (!user) {
-    return (
-      <Shell>
-        <div className="max-w-3xl mx-auto px-4 py-10">
-          <div className="bg-white border border-line rounded-xl p-6">
-            <h2 className="text-lg font-bold text-brand-800">{t("loginRequired")}</h2>
-            <p className="mt-2 text-sm text-mute">{t("loginRequiredRfq")}</p>
-            <div className="mt-5 flex flex-wrap gap-2">
-              <Link to="/login" className="btn-primary">
-                {t("login")}
-              </Link>
-              <Link to="/signup" className="btn-soft !border-brand-600 !text-brand-600">
-                {t("createAccount")}
-              </Link>
-            </div>
-          </div>
-        </div>
-      </Shell>
-    );
   }
 
   if (success) {
@@ -208,12 +206,14 @@ export default function RfqPage() {
                   {t("continueRemainingDraft")}
                 </button>
               ) : null}
-              <Link to="/#products" className={remainingCount > 0 ? "btn-soft !border-brand-600 !text-brand-600" : "btn-primary"}>
+              <Link to={allProductsTo(lang)} className={remainingCount > 0 ? "btn-soft !border-brand-600 !text-brand-600" : "btn-primary"}>
                 {t("keepShopping")}
               </Link>
-              <Link to="/rfqs" className="btn-soft !border-brand-600 !text-brand-600">
+              {SHOW_RFQ ? (
+              <Link to={withLocale(lang, "/rfqs")} className="btn-soft !border-brand-600 !text-brand-600">
                 {t("viewMyRfqs")}
               </Link>
+              ) : null}
             </div>
           </div>
         </div>
@@ -228,12 +228,19 @@ export default function RfqPage() {
           <div className="bg-white border border-line rounded-xl p-8 text-center">
             <p className="text-lg font-semibold text-brand-800">{t("emptyDraft")}</p>
             <p className="mt-2 text-sm text-mute">{t("emptyDraftHint")}</p>
-            <Link to="/#products" className="btn-primary mt-5 inline-flex">
-              {t("browseCatalog")}
-            </Link>
+            <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+              <Link to={allProductsTo(lang)} className="btn-soft">
+                {t("browseCatalog")}
+              </Link>
+              <a href="#add-custom-product" className="btn-primary">
+                + {t("noProductsCustomCta")}
+              </a>
+            </div>
             <p className="mt-4 text-sm text-mute">{t("emptyDraftCustomHint")}</p>
           </div>
-          <CustomProductForm onSubmit={handleAddCustom} />
+          <div id="add-custom-product">
+            <CustomProductForm onSubmit={handleAddCustom} />
+          </div>
         </div>
       </Shell>
     );
@@ -241,6 +248,11 @@ export default function RfqPage() {
 
   function toggleId(id) {
     const key = String(id);
+    if (!selectableLineIds.includes(key) && !selectedIds.includes(key)) return;
+    if (!selectableLineIds.includes(key)) {
+      setSelectedIds((prev) => prev.filter((x) => x !== key));
+      return;
+    }
     setSelectedIds((prev) => (prev.includes(key) ? prev.filter((x) => x !== key) : [...prev, key]));
     setFormError("");
     setFormErrorKind("");
@@ -248,13 +260,13 @@ export default function RfqPage() {
 
   function toggleAll() {
     if (allSelected) setSelectedIds([]);
-    else setSelectedIds(totals.lines.map((l) => String(l.productId)));
+    else setSelectedIds(selectableLineIds);
     setFormError("");
     setFormErrorKind("");
   }
 
   function toggleSection(ids) {
-    const keys = ids.map(String);
+    const keys = ids.map(String).filter((id) => selectableLineIds.includes(id));
     const allOn = keys.length > 0 && keys.every((id) => selectedIds.includes(id));
     setSelectedIds((prev) =>
       allOn ? prev.filter((id) => !keys.includes(id)) : [...new Set([...prev, ...keys])]
@@ -263,7 +275,7 @@ export default function RfqPage() {
     setFormErrorKind("");
   }
 
-  function onContinueKind(kind) {
+  function onContinueKind(kind, channel = "whatsapp") {
     const ids = totals.lines
       .filter((line) => (kind === "buy" ? line.intent === "buy" : line.intent !== "buy"))
       .map((line) => String(line.productId))
@@ -273,9 +285,18 @@ export default function RfqPage() {
       setFormError(t("noneSelected"));
       return;
     }
+    const blocked = ids.filter((id) => {
+      const line = totals.lines.find((row) => String(row.productId) === id);
+      return line && !line.custom && isDiscontinued(getProduct(id));
+    });
+    if (blocked.length) {
+      setFormErrorKind(kind);
+      setFormError(t("discontinuedSubmitError"));
+      return;
+    }
     setFormError("");
     setFormErrorKind("");
-    if (kind === "buy") {
+    if (kind === "buy" || kind === "quote") {
       setDraftNote(note);
       setDraftResponseDate(responseDate);
       setDraftDeliveryDate(deliveryDate);
@@ -285,14 +306,20 @@ export default function RfqPage() {
       setDraftAddress(address);
       setDraftCanonicalCategory(canonicalCategory);
       setDraftAcceptSubstitutes(acceptSubstitutes);
-      const result = submitRfq(ids, { kind: "buy", skipLogistics: true, channel: "whatsapp" });
+      const result = submitRfq(ids, { kind, skipLogistics: true, channel: "whatsapp" });
       if (!result.ok) {
-        setFormErrorKind("buy");
-        setFormError(result.error === "not_logged_in" ? t("loginRequiredRfq") : t("submitFailed"));
+        setFormErrorKind(kind);
+        setFormError(
+          result.error === "not_logged_in"
+            ? t("loginRequiredRfq")
+            : result.error === "discontinued"
+              ? t("discontinuedSubmitError")
+              : t("submitFailed")
+        );
         return;
       }
-      setPendingWhatsappOrder(result.rfq);
-      navigate(`/whatsapp-chat/${encodeURIComponent(result.rfq.id)}`);
+      const lines = totals.lines.filter((line) => ids.includes(String(line.productId)));
+      openWhatsappDraft(lines, kind, { refNo: result.rfq.id });
       return;
     }
     setConfirmKind(kind);
@@ -321,18 +348,17 @@ export default function RfqPage() {
       else if (result.error === "delivery_lots") setFormError(t("deliveryLotsRequired"));
       else if (result.error === "address") setFormError(kind === "buy" ? t("buyNeedsAddress") : t("addressRequired"));
       else if (result.error === "none_selected") setFormError(t("noneSelected"));
+      else if (result.error === "discontinued") setFormError(t("discontinuedSubmitError"));
       else setFormError(t("submitFailed"));
       return;
     }
     setFormError("");
     setFormErrorKind("");
     setConfirmKind(null);
-    if (kind === "buy") {
-      navigate(`/whatsapp-chat/${encodeURIComponent(result.rfq.id)}`);
-      return;
+    const lines = result.rfq?.lines || [];
+    if (kind === "buy" || kind === "quote") {
+      openWhatsappDraft(lines, kind, { refNo: result.rfq.id });
     }
-    setSuccessKind(kind);
-    setSuccess(result.rfq);
   }
 
   function onSubmit() {
@@ -366,6 +392,7 @@ export default function RfqPage() {
     setLineIntent,
     setLineRequestedPrice,
     removeLine,
+    removeLines,
     setNote,
     setResponseDate,
     setDeliveryDate,
@@ -404,14 +431,16 @@ export default function RfqPage() {
       ) : (
         <VariantA {...variantProps} />
       )}
-      <PrototypeSwitcher variants={RFQ_PROTOTYPE_VARIANTS} current={variant} />
+      {SHOW_RFQ ? <PrototypeSwitcher variants={RFQ_PROTOTYPE_VARIANTS} current={variant} /> : null}
     </Shell>
   );
 }
 
 function Shell({ children }) {
+  const { t, lang } = useLanguage();
   return (
     <div className="bg-paper min-h-screen">
+      <Seo lang={lang} path={withLocale(lang, "/rfq")} title={`${t("rfqDraftTitle")} | Mattex Marketplace`} description={t("reviewQuoteHint")} noindex />
       <SiteHeader />
       {children}
     </div>

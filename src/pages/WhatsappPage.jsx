@@ -1,12 +1,16 @@
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import SiteHeader from "../components/SiteHeader";
+import Seo from "../components/Seo";
 import { useLanguage } from "../i18n";
+import { allProductsTo, withLocale } from "../lib/locale";
 import {
   addToCart,
   formatPrice,
+  getEffectivePrice,
   getProduct,
   isLoggedIn,
+  openWhatsappDraft,
   setPendingWhatsappRfq,
   whatsappUrl,
 } from "../lib/store";
@@ -15,9 +19,9 @@ export default function WhatsappPage() {
   const { id } = useParams();
   const product = id ? getProduct(id) : null;
   const navigate = useNavigate();
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
   const [addToRfq, setAddToRfq] = useState(false);
-  const href = whatsappUrl(product || null);
+  const href = whatsappUrl(product || null, lang);
 
   if (id && !product) {
     return (
@@ -27,7 +31,7 @@ export default function WhatsappPage() {
           <div className="bg-white border border-line rounded-xl p-6 sm:p-8 text-center">
             <h1 className="reveal text-xl font-bold text-brand-800">{t("productNotFound")}</h1>
             <p className="mt-2 text-sm text-mute">{t("productNotFoundHint")}</p>
-            <Link to={{ pathname: "/", hash: "products" }} className="btn-primary mt-5 inline-flex">
+            <Link to={allProductsTo(lang)} className="btn-primary mt-5 inline-flex">
               {t("browseCatalog")}
             </Link>
           </div>
@@ -37,22 +41,38 @@ export default function WhatsappPage() {
   }
 
   function onContinue() {
-    if (!addToRfq) {
-      window.location.href = href;
-      return;
+    if (addToRfq) {
+      if (!isLoggedIn()) {
+        setPendingWhatsappRfq(product.id);
+        navigate(withLocale(lang, "/login"));
+        return;
+      }
+      addToCart(product.id, { intent: "quote" });
     }
-    if (!isLoggedIn()) {
-      setPendingWhatsappRfq(product.id);
-      navigate("/login");
-      return;
+    if (product) {
+      openWhatsappDraft(
+        [
+          {
+            productId: product.id,
+            name: product.name,
+            productNo: product.productNo,
+            qty: product.moq || 1,
+            unit: product.unit,
+            unitPrice: getEffectivePrice(product).displayPrice,
+            supplier: product.supplier,
+          },
+        ],
+        "quote"
+      );
+    } else {
+      window.open(href, "_blank", "noopener,noreferrer");
     }
-    addToCart(product.id, { intent: "quote" });
-    window.open(href, "_blank", "noopener,noreferrer");
-    navigate("/rfq");
+    if (addToRfq) navigate(withLocale(lang, "/rfq"));
   }
 
   return (
     <div className="bg-paper min-h-screen">
+      <Seo lang={lang} path={withLocale(lang, id ? `/whatsapp/${id}` : "/whatsapp")} title={`${t("whatsappTitle")} | Mattex Marketplace`} description={t("whatsappHint")} noindex />
       <SiteHeader />
       <main className="max-w-md mx-auto px-4 py-12">
         <div className="bg-white border border-line rounded-xl p-6 sm:p-8">
@@ -87,7 +107,7 @@ export default function WhatsappPage() {
           >
             {t("continueWhatsapp")}
           </button>
-          <Link to="/" className="btn-soft mt-3 w-full !py-2.5">
+          <Link to={withLocale(lang, "/")} className="btn-soft mt-3 w-full !py-2.5">
             {t("stayOnStorefront")}
           </Link>
         </div>

@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { formatPrice } from "../../lib/store";
+import { SHOW_RFQ } from "../../lib/flags";
 import { useLanguage } from "../../i18n";
 
 export const WA_CHAT_VARIANTS = [
@@ -31,32 +32,76 @@ function Ticks({ outgoing }) {
   );
 }
 
-function OrderCards({ lines, t }) {
+function OrderCards({ lines, t, editable, onChangeLine, onRemoveLine }) {
   return (
     <div className="space-y-1.5">
       {(lines || []).map((line) => (
-        <div key={line.productId} className="flex gap-2 overflow-hidden rounded-lg bg-black/5">
-          {line.image ? (
-            <img src={line.image} alt="" className="h-14 w-14 shrink-0 object-cover" />
-          ) : (
-            <div className="h-14 w-14 shrink-0 bg-[#dfe5dc]" />
-          )}
-          <div className="min-w-0 py-1.5 pr-2">
-            <p className="truncate text-[13px] font-semibold leading-snug text-[#111b21]">{line.name}</p>
-            <p className="text-[11px] text-[#667781]">
-              {t("waQty", { n: line.qty })}
-              {line.unitPrice != null ? ` · ${formatPrice(line.unitPrice)}` : ""}
-            </p>
-            {line.supplier ? <p className="truncate text-[10px] text-[#8696a0]">{line.supplier}</p> : null}
+        <div key={line.productId} className="overflow-hidden rounded-lg bg-black/5">
+          <div className="flex gap-2">
+            {line.image ? (
+              <img src={line.image} alt="" className="h-14 w-14 shrink-0 object-cover" />
+            ) : (
+              <div className="h-14 w-14 shrink-0 bg-[#dfe5dc]" />
+            )}
+            <div className="min-w-0 flex-1 py-1.5 pr-2">
+              <p className="truncate text-[13px] font-semibold leading-snug text-[#111b21]">{line.name}</p>
+              {line.unitPrice != null ? (
+                <p className="text-[11px] text-[#667781]">{formatPrice(line.unitPrice)}</p>
+              ) : null}
+              {line.supplier ? <p className="truncate text-[10px] text-[#8696a0]">{line.supplier}</p> : null}
+              {editable ? (
+                <div className="mt-1 flex items-center gap-2">
+                  <label className="flex items-center gap-1 text-[11px] text-[#667781]">
+                    {t("qty")}
+                    <input
+                      type="number"
+                      min={1}
+                      value={line.qty}
+                      onChange={(e) => {
+                        const next = Math.max(1, Math.floor(Number(e.target.value)) || 1);
+                        onChangeLine?.(line.productId, { qty: next });
+                      }}
+                      className="w-12 rounded border border-black/10 bg-white px-1 py-0.5 text-[12px] text-[#111b21]"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => onRemoveLine?.(line.productId)}
+                    className="text-[11px] font-semibold text-[#b3261e] hover:underline"
+                  >
+                    {t("waRemoveLine")}
+                  </button>
+                </div>
+              ) : (
+                <p className="text-[11px] text-[#667781]">{t("waQty", { n: line.qty })}</p>
+              )}
+            </div>
           </div>
+          {editable ? (
+            <div className="border-t border-black/5 px-2 py-1.5">
+              <label className="block text-[10px] font-semibold uppercase tracking-wide text-[#667781]">
+                {t("waRemark")}
+                <input
+                  type="text"
+                  value={line.remark || ""}
+                  placeholder={t("waRemarkPlaceholder")}
+                  onChange={(e) => onChangeLine?.(line.productId, { remark: e.target.value })}
+                  className="mt-0.5 w-full rounded border border-black/10 bg-white px-1.5 py-1 text-[12px] text-[#111b21] placeholder:text-[#8696a0]"
+                />
+              </label>
+            </div>
+          ) : line.remark ? (
+            <p className="border-t border-black/5 px-2 py-1 text-[11px] text-[#54656f]">{line.remark}</p>
+          ) : null}
         </div>
       ))}
     </div>
   );
 }
 
-function Bubble({ msg, t }) {
+function Bubble({ msg, t, onChangeLine, onRemoveLine }) {
   const mine = msg.from === "me";
+  const quote = msg.askKind === "quote";
   return (
     <div className={`flex ${mine ? "justify-end" : "justify-start"}`}>
       <div
@@ -66,9 +111,17 @@ function Bubble({ msg, t }) {
       >
         {msg.kind === "order" ? (
           <div className="min-w-[14rem]">
-            <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-[#075e54]">{t("waOrderCard")}</p>
+            <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-[#075e54]">
+              {quote ? t("waQuoteCard") : t("waOrderCard")}
+            </p>
             <p className="mb-2 whitespace-pre-wrap text-[14.2px] leading-[19px] text-[#111b21]">{msg.text}</p>
-            <OrderCards lines={msg.lines} t={t} />
+            <OrderCards
+              lines={msg.lines}
+              t={t}
+              editable={mine}
+              onChangeLine={onChangeLine}
+              onRemoveLine={onRemoveLine}
+            />
           </div>
         ) : (
           <p className="whitespace-pre-wrap text-[14.2px] leading-[19px] text-[#111b21]">{msg.text}</p>
@@ -148,7 +201,7 @@ function ChatWallpaper({ children, className = "" }) {
   );
 }
 
-function MessageList({ messages, typing, t }) {
+function MessageList({ messages, typing, t, onChangeLine, onRemoveLine }) {
   const endRef = useRef(null);
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -161,7 +214,7 @@ function MessageList({ messages, typing, t }) {
         </span>
       </div>
       {messages.map((msg) => (
-        <Bubble key={msg.id} msg={msg} t={t} />
+        <Bubble key={msg.id} msg={msg} t={t} onChangeLine={onChangeLine} onRemoveLine={onRemoveLine} />
       ))}
       {typing ? <TypingDots /> : null}
       <div ref={endRef} />
@@ -189,7 +242,21 @@ function MobileHeader({ thread, t, onBack }) {
   );
 }
 
-export function VariantA({ threads, activeSlug, setActiveSlug, messages, typing, draftText, setDraftText, onSend, isDemo, rfq }) {
+export function VariantA({
+  threads,
+  activeSlug,
+  setActiveSlug,
+  messages,
+  typing,
+  draftText,
+  setDraftText,
+  onSend,
+  isDemo,
+  rfq,
+  askPreview,
+  onChangeLine,
+  onRemoveLine,
+}) {
   const { t } = useLanguage();
   const thread = threads.find((x) => x.slug === activeSlug) || threads[0];
   const showList = threads.length > 1 && !activeSlug;
@@ -217,7 +284,7 @@ export function VariantA({ threads, activeSlug, setActiveSlug, messages, typing,
                     <span className="min-w-0">
                       <span className="block truncate font-semibold text-[#e9edef]">{item.supplier}</span>
                       <span className="block truncate text-xs text-[#8696a0]">
-                        {t("waWantToBuy")} · {item.lines.length}
+                        {askPreview} · {item.lines.length}
                       </span>
                     </span>
                   </button>
@@ -233,7 +300,13 @@ export function VariantA({ threads, activeSlug, setActiveSlug, messages, typing,
               onBack={threads.length > 1 ? () => setActiveSlug("") : undefined}
             />
             <ChatWallpaper className="flex-1">
-              <MessageList messages={messages} typing={typing} t={t} />
+              <MessageList
+                messages={messages}
+                typing={typing}
+                t={t}
+                onChangeLine={onChangeLine}
+                onRemoveLine={onRemoveLine}
+              />
             </ChatWallpaper>
             <Composer value={draftText} onChange={setDraftText} onSend={onSend} t={t} />
           </>
@@ -246,7 +319,19 @@ export function VariantA({ threads, activeSlug, setActiveSlug, messages, typing,
   );
 }
 
-export function VariantB({ threads, activeSlug, setActiveSlug, messages, typing, draftText, setDraftText, onSend }) {
+export function VariantB({
+  threads,
+  activeSlug,
+  setActiveSlug,
+  messages,
+  typing,
+  draftText,
+  setDraftText,
+  onSend,
+  askPreview,
+  onChangeLine,
+  onRemoveLine,
+}) {
   const { t } = useLanguage();
   const thread = threads.find((x) => x.slug === activeSlug) || threads[0];
 
@@ -282,7 +367,7 @@ export function VariantB({ threads, activeSlug, setActiveSlug, messages, typing,
                         <span className="shrink-0 text-[11px] text-[#8696a0]">{item.previewTime}</span>
                       </span>
                       <span className="mt-0.5 block truncate text-[13px] text-[#8696a0]">
-                        {t("waYou")}: {t("waWantToBuy")}
+                        {t("waYou")}: {askPreview}
                       </span>
                     </span>
                   </button>
@@ -302,7 +387,13 @@ export function VariantB({ threads, activeSlug, setActiveSlug, messages, typing,
             </div>
           </header>
           <ChatWallpaper className="flex-1">
-            <MessageList messages={messages} typing={typing} t={t} />
+            <MessageList
+              messages={messages}
+              typing={typing}
+              t={t}
+              onChangeLine={onChangeLine}
+              onRemoveLine={onRemoveLine}
+            />
           </ChatWallpaper>
           <Composer value={draftText} onChange={setDraftText} onSend={onSend} t={t} dark />
         </section>
@@ -311,7 +402,20 @@ export function VariantB({ threads, activeSlug, setActiveSlug, messages, typing,
   );
 }
 
-export function VariantC({ threads, activeSlug, setActiveSlug, messages, typing, draftText, setDraftText, onSend, rfq, isDemo }) {
+export function VariantC({
+  threads,
+  activeSlug,
+  setActiveSlug,
+  messages,
+  typing,
+  draftText,
+  setDraftText,
+  onSend,
+  rfq,
+  isDemo,
+  onChangeLine,
+  onRemoveLine,
+}) {
   const { t } = useLanguage();
   const thread = threads.find((x) => x.slug === activeSlug) || threads[0];
 
@@ -319,7 +423,9 @@ export function VariantC({ threads, activeSlug, setActiveSlug, messages, typing,
     <div className="mx-auto grid max-w-6xl gap-4 px-4 py-6 lg:grid-cols-[20rem_minmax(0,1fr)]">
       <aside className="space-y-3">
         <div className="border border-line bg-white p-4">
-          <p className="text-xs font-semibold uppercase tracking-wide text-brand-600">{t("waOrderCard")}</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-brand-600">
+            {rfq?.askKind === "quote" ? t("waQuoteCard") : t("waOrderCard")}
+          </p>
           <h2 className="mt-1 text-lg font-bold text-brand-800">{rfq?.id || "DEMO"}</h2>
           {isDemo ? <p className="mt-2 text-xs text-mute">{t("waDemoHint")}</p> : null}
           {rfq?.project ? <p className="mt-2 text-sm text-ink">{rfq.project}</p> : null}
@@ -349,9 +455,11 @@ export function VariantC({ threads, activeSlug, setActiveSlug, messages, typing,
           </ul>
         </div>
         <div className="flex flex-wrap gap-2">
+          {SHOW_RFQ ? (
           <Link to="/rfqs" className="btn-primary !py-2 !px-3 text-sm">
             {t("waViewRfqs")}
           </Link>
+          ) : null}
           <Link to="/rfq" className="btn-soft !py-2 !px-3 text-sm">
             {t("waBackDraft")}
           </Link>
@@ -360,7 +468,13 @@ export function VariantC({ threads, activeSlug, setActiveSlug, messages, typing,
       <div className="flex min-h-[32rem] flex-col overflow-hidden border border-line bg-white">
         <MobileHeader thread={thread} t={t} />
         <ChatWallpaper className="flex-1">
-          <MessageList messages={messages} typing={typing} t={t} />
+          <MessageList
+            messages={messages}
+            typing={typing}
+            t={t}
+            onChangeLine={onChangeLine}
+            onRemoveLine={onRemoveLine}
+          />
         </ChatWallpaper>
         <Composer value={draftText} onChange={setDraftText} onSend={onSend} t={t} />
       </div>

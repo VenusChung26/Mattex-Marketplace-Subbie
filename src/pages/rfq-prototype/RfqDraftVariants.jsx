@@ -4,10 +4,10 @@
  * A Inline in list · B Modal overlay · C Right drawer
  */
 import { Link } from "react-router-dom";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { draftTotals, formatPrice, getCategoryDefs, SAMPLE_PROJECTS } from "../../lib/store";
+import { useEffect, useRef, useState } from "react";
+import { draftTotals, formatPrice, getEffectivePrice, getProduct, isDiscontinued, SAMPLE_PROJECTS } from "../../lib/store";
 import CustomProductForm from "../../components/CustomProductForm";
-import AiSpecExtractModal from "../../components/AiSpecExtractModal";
+import CustomProductModal from "../../components/CustomProductModal";
 import AttachmentLinks from "../../components/AttachmentLinks";
 import { useLanguage } from "../../i18n";
 
@@ -79,6 +79,21 @@ function selectedFor(lines, selectedIds) {
   return (selectedIds || []).filter((id) => set.has(String(id)));
 }
 
+function customLineProps(props) {
+  return {
+    editingId: props.editingId,
+    setEditingId: props.setEditingId,
+    showAddCustom: props.showAddCustom,
+    setShowAddCustom: props.setShowAddCustom,
+    onAddCustom: props.onAddCustom,
+    onUpdateCustom: props.onUpdateCustom,
+  };
+}
+
+function canBuyFromStock(line) {
+  return Boolean(line) && !line.custom && line.unitPrice != null;
+}
+
 function hasLowerAsk(line) {
   return (
     line?.unitPrice != null &&
@@ -89,6 +104,17 @@ function hasLowerAsk(line) {
 }
 
 function LineMoney({ line, t, compact = false }) {
+  const product = line.custom ? null : getProduct(line.productId);
+  const priced = product ? getEffectivePrice(product) : {};
+  const quoted = priced.status === "quoted";
+  const listPrice = priced.quote?.listPrice;
+  const showListStrike =
+    quoted && listPrice != null && line.unitPrice != null && Number(listPrice) !== Number(line.unitPrice);
+  const badge = quoted ? (
+    <span className="ml-1 align-middle text-[10px] font-bold uppercase tracking-wide text-brand-800 bg-brand-50 border border-brand-200 px-1 py-0.5">
+      {t("quotedPriceLabel")}
+    </span>
+  ) : null;
   if (line.unitPrice == null) return compact ? "—" : <span className="text-mute">—</span>;
   if (hasLowerAsk(line)) {
     return (
@@ -97,11 +123,40 @@ function LineMoney({ line, t, compact = false }) {
           {formatPrice(line.unitPrice * line.qty)}
         </span>
         <span className="font-semibold text-brand-700">{formatPrice(line.requestedUnitPrice * line.qty)}</span>
+        {badge}
         {!compact ? <span className="block text-[10px] font-medium text-mute">{t("requestedTotal")}</span> : null}
       </span>
     );
   }
-  return compact ? formatPrice(line.unitPrice * line.qty) : formatPrice(line.unitPrice * line.qty);
+  return (
+    <span className={compact ? "text-right" : "text-right"}>
+      {showListStrike ? (
+        <span className="mr-1.5 text-xs font-medium text-mute line-through">{formatPrice(listPrice * line.qty)}</span>
+      ) : null}
+      {formatPrice(line.unitPrice * line.qty)}
+      {badge}
+    </span>
+  );
+}
+
+function DropLane({ visible, active, invalid, label, invalidLabel }) {
+  if (!visible) return null;
+  const text = invalid ? invalidLabel : label;
+  return (
+    <div
+      className={`px-4 py-2.5 text-center text-sm font-semibold border-b shrink-0 sticky top-0 z-10 ${
+        invalid
+          ? active
+            ? "bg-amber-600 text-white"
+            : "bg-amber-50 text-amber-900"
+          : active
+            ? "bg-brand-700 text-white"
+            : "bg-brand-50 text-brand-800 border-dashed border-brand-200"
+      }`}
+    >
+      {text}
+    </div>
+  );
 }
 
 function IntentDraftSections(props) {
@@ -111,50 +166,319 @@ function IntentDraftSections(props) {
     toggleId,
     toggleSection,
     setLineQty,
+    setLineIntent,
     removeLine,
+    removeLines,
     onContinueKind,
     formError,
     formErrorKind,
+    embedded = false,
     showActions = true,
+    customPlacement = "inline",
+    showAddCustom,
+    setShowAddCustom,
+    onAddCustom,
   } = props;
   const { t } = useLanguage();
-  const { buyLines } = splitDraftLines(lines);
+  const { buyLines, quoteLines } = splitDraftLines(lines);
   const buySelected = selectedFor(buyLines, selectedIds);
+  const quoteSelected = selectedFor(quoteLines, selectedIds);
   const buyTotals = draftTotals({ lines: buyLines }, buySelected);
+  const quoteTotals = draftTotals({ lines: quoteLines }, quoteSelected);
   const buyAll = buyLines.length > 0 && buySelected.length === buyLines.length;
+  const quoteAll = quoteLines.length > 0 && quoteSelected.length === quoteLines.length;
+  const showBuySection = buyLines.length > 0;
+  const [dragging, setDragging] = useState(null);
+  const [overSection, setOverSection] = useState(null);
+  const [dropError, setDropError] = useState("");
+  const [leavePrompt, setLeavePrompt] = useState(null);
+  const dragSession = useRef(null);
+
+  useEffect(() => {
+    if (!dropError) return undefined;
+    const timer = window.setTimeout(() => setDropError(""), 4500);
+    return () => window.clearTimeout(timer);
+  }, [dropError]);
+
+  function hitDropTarget(x, y) {
+    let found = null;
+    for (const el of document.querySelectorAll("[data-drop-target]")) {
+      const r = el.getBoundingClientRect();
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+        found = el.getAttribute("data-drop-target");
+      }
+    }
+    return found;
+  }
+
+  function moveLine(productId, intent) {
+    if (!setLineIntent) return;
+    const result = setLineIntent(productId, intent);
+    if (!result?.ok && result?.reason === "unpriced") {
+      setDropError(t("cannotMoveToStock"));
+    }
+  }
+
+  function finishDrop(payload, target) {
+    if (!payload || !target || payload.from === target) return;
+    if (target === "buy" && !payload.canBuy) {
+      setDropError(t("cannotMoveToStock"));
+      return;
+    }
+    if (payload.from === "buy" && target === "quote") {
+      setLeavePrompt({ productId: payload.productId, name: payload.name });
+      return;
+    }
+    moveLine(payload.productId, target);
+  }
+
+  function beginDrag(line, from, event) {
+    if (event.button != null && event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setDropError("");
+    const payload = {
+      productId: String(line.productId),
+      name: line.name,
+      from,
+      canBuy: canBuyFromStock(line),
+    };
+    const origin = { x: event.clientX, y: event.clientY };
+    dragSession.current = { payload, origin, active: false };
+
+    function onMove(ev) {
+      const session = dragSession.current;
+      if (!session) return;
+      const dx = ev.clientX - session.origin.x;
+      const dy = ev.clientY - session.origin.y;
+      if (!session.active && dx * dx + dy * dy < 36) return;
+      session.active = true;
+      setDragging({ ...session.payload, x: ev.clientX, y: ev.clientY });
+      setOverSection(hitDropTarget(ev.clientX, ev.clientY));
+      const edge = 80;
+      if (ev.clientY < edge) window.scrollBy(0, -22);
+      else if (ev.clientY > window.innerHeight - edge) window.scrollBy(0, 22);
+    }
+
+    function onUp(ev) {
+      window.removeEventListener("pointermove", onMove, true);
+      window.removeEventListener("pointerup", onUp, true);
+      window.removeEventListener("pointercancel", onUp, true);
+      window.removeEventListener("blur", onUp);
+      const session = dragSession.current;
+      dragSession.current = null;
+      const target = ev?.clientX != null ? hitDropTarget(ev.clientX, ev.clientY) : null;
+      if (session?.active) finishDrop(session.payload, target);
+      setDragging(null);
+      setOverSection(null);
+    }
+
+    window.addEventListener("pointermove", onMove, { capture: true, passive: true });
+    window.addEventListener("pointerup", onUp, true);
+    window.addEventListener("pointercancel", onUp, true);
+    window.addEventListener("blur", onUp);
+  }
+
+  const listProps = {
+    toggleId,
+    setLineQty,
+    removeLine,
+    removeLines,
+    embedded: true,
+    showIntent: false,
+    dragging,
+    overSection,
+    onDragLineStart: showBuySection ? beginDrag : undefined,
+  };
+
+  function sectionClass(target) {
+    const invalid = target === "buy" && dragging && !dragging.canBuy;
+    return `relative bg-white border rounded-xl overflow-hidden transition-shadow flex flex-col min-h-[14rem] lg:max-h-[calc(100vh-12.5rem)] ${
+      dragging
+        ? overSection === target
+          ? invalid
+            ? "border-amber-600 ring-2 ring-amber-500/40 bg-amber-50/40"
+            : "border-brand-600 ring-2 ring-brand-600/40 bg-brand-50/50"
+          : "border-dashed border-brand-300"
+        : "border-line"
+    }`;
+  }
+
+  const gridClass = showBuySection
+    ? embedded
+      ? "space-y-4 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-5 lg:items-stretch"
+      : "space-y-5 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-5 lg:items-stretch"
+    : embedded
+      ? "space-y-4"
+      : "space-y-5";
 
   return (
-    <section className="relative bg-white border border-line rounded-xl overflow-hidden flex flex-col min-h-[14rem]">
-      <LinesList
-        toggleId={toggleId}
-        setLineQty={setLineQty}
-        removeLine={removeLine}
-        embedded
-        showIntent={false}
-        lines={buyLines}
-        selectedIds={buySelected}
-        allSelected={buyAll}
-        toggleAll={() => toggleSection(buyLines.map((l) => String(l.productId)))}
-        title={t("sectionBuy")}
-        subtitle={t("sectionBuyHint")}
-        selectAllLabel={t("selectAllBuy")}
-        allowCustom={false}
-        tone="buy"
-        emptyMessage={t("emptyBuySection")}
-      />
-      {showActions && buyLines.length ? (
-        <div className="mt-auto px-4 sm:px-5 py-4 border-t border-line bg-brand-50/40 shrink-0">
-          <SubmitBar
-            bare
-            selectedIds={buySelected}
-            selectedTotals={buyTotals}
-            formError={formErrorKind === "buy" ? formError : ""}
-            onSubmit={() => onContinueKind("buy")}
-            submitLabel={t("createOrder")}
-          />
+    <div className={gridClass}>
+      {dropError ? (
+        <p className={`${showBuySection ? "lg:col-span-2 " : ""}text-sm text-amber-950 bg-amber-50 border border-amber-200 px-3.5 py-2.5 flex items-start justify-between gap-3`}>
+          <span>{dropError}</span>
+          <button type="button" className="text-xs font-semibold text-amber-900 hover:underline shrink-0" onClick={() => setDropError("")}>
+            {t("dismiss")}
+          </button>
+        </p>
+      ) : null}
+
+      {showBuySection ? (
+      <section data-drop-target="buy" className={sectionClass("buy")}>
+        <DropLane
+          visible={Boolean(dragging)}
+          active={overSection === "buy"}
+          invalid={Boolean(dragging) && !dragging.canBuy}
+          label={t("dropToBuy")}
+          invalidLabel={t("dropInvalidStock")}
+        />
+        <LinesList
+          {...listProps}
+          lines={buyLines}
+          selectedIds={buySelected}
+          allSelected={buyAll}
+          toggleAll={() => toggleSection(buyLines.map((l) => String(l.productId)))}
+          title={t("sectionBuy")}
+          subtitle={t("sectionBuyHint")}
+          selectAllLabel={t("selectAllBuy")}
+          allowCustom={false}
+          tone="buy"
+          dropIntent="buy"
+          emptyMessage={t("emptyBuySection")}
+        />
+        {showActions && buyLines.length ? (
+          <div className="mt-auto px-4 sm:px-5 py-4 border-t border-line bg-brand-50/40 shrink-0">
+            <SubmitBar
+              bare
+              selectedIds={buySelected}
+              selectedTotals={buyTotals}
+              formError={formErrorKind === "buy" ? formError : ""}
+              onSubmit={() => onContinueKind("buy")}
+              onSubmitChannel={(channel) => onContinueKind("buy", channel)}
+              submitLabel={t("createOrder")}
+            />
+          </div>
+        ) : null}
+      </section>
+      ) : null}
+
+      <section data-drop-target="quote" className={sectionClass("quote")}>
+        <DropLane
+          visible={Boolean(dragging)}
+          active={overSection === "quote"}
+          invalid={false}
+          label={t("dropToQuote")}
+          invalidLabel=""
+        />
+        <LinesList
+          {...listProps}
+          lines={quoteLines}
+          selectedIds={quoteSelected}
+          allSelected={quoteAll}
+          toggleAll={() => toggleSection(quoteLines.map((l) => String(l.productId)))}
+          title={t("sectionQuote")}
+          subtitle={showBuySection ? t("sectionQuoteHint") : t("sectionQuoteHintOnly")}
+          selectAllLabel={t("selectAllQuote")}
+          allowCustom
+          tone="quote"
+          dropIntent="quote"
+          emptyMessage={t("emptyQuoteSection")}
+          customPlacement={customPlacement}
+          {...customLineProps(props)}
+        />
+        {showActions && quoteLines.length ? (
+          <div className="mt-auto px-4 sm:px-5 py-4 border-t border-line shrink-0">
+            <SubmitBar
+              bare
+              selectedIds={quoteSelected}
+              selectedTotals={quoteTotals}
+              formError={formErrorKind === "quote" ? formError : ""}
+              onSubmit={() => onContinueKind("quote")}
+              onSubmitChannel={(channel) => onContinueKind("quote", channel)}
+              submitLabel={t("requestQuoteCta")}
+            />
+          </div>
+        ) : null}
+      </section>
+
+      {customPlacement === "modal" ? (
+        <CustomProductModal
+          open={Boolean(showAddCustom)}
+          onClose={() => setShowAddCustom?.(false)}
+          onSubmit={(payload) => onAddCustom?.(payload)}
+        />
+      ) : null}
+
+      {dragging ? (
+        <>
+          <div
+            className="fixed z-[90] pointer-events-none max-w-[16rem] truncate px-3 py-2 bg-white border border-brand-600 text-sm font-semibold text-ink shadow-[0_12px_28px_rgba(16,21,19,0.18)]"
+            style={{ left: dragging.x + 12, top: dragging.y + 12 }}
+          >
+            {dragging.name}
+          </div>
+          <div className="fixed inset-x-0 bottom-6 z-[70] flex justify-center px-4 pointer-events-none lg:hidden">
+            <div className={`w-full max-w-xl grid gap-2 ${showBuySection ? "grid-cols-2" : "grid-cols-1"}`}>
+              {(showBuySection ? ["buy", "quote"] : ["quote"]).map((target) => {
+                const invalid = target === "buy" && !dragging.canBuy;
+                const active = overSection === target;
+                return (
+                  <div
+                    key={target}
+                    data-drop-target={target}
+                    className={`pointer-events-auto px-3 py-3 text-center text-xs sm:text-sm font-semibold border shadow-[0_12px_28px_rgba(16,21,19,0.18)] ${
+                      invalid
+                        ? active
+                          ? "bg-amber-600 text-white border-amber-600"
+                          : "bg-amber-50 text-amber-900 border-amber-300"
+                        : active
+                          ? "bg-brand-700 text-white border-brand-700"
+                          : "bg-white text-brand-800 border-brand-300"
+                    }`}
+                  >
+                    {invalid ? t("dropInvalidStock") : target === "buy" ? t("dropToBuy") : t("dropToQuote")}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </>
+      ) : null}
+
+      {leavePrompt ? (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4" role="presentation">
+          <div className="absolute inset-0 bg-charcoal/50" onClick={() => setLeavePrompt(null)} />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="leave-stock-title"
+            className="relative bg-white border border-line max-w-md w-full p-6 shadow-[0_24px_60px_rgba(16,21,19,0.25)]"
+          >
+            <h3 id="leave-stock-title" className="text-lg font-bold text-brand-800">
+              {t("dragLeaveStockTitle")}
+            </h3>
+            <p className="mt-2 text-sm text-mute leading-relaxed">
+              {t("dragLeaveStockBody", { name: leavePrompt.name })}
+            </p>
+            <div className="mt-5 flex flex-wrap justify-end gap-2">
+              <button type="button" className="btn-soft !px-4 !py-2" onClick={() => setLeavePrompt(null)}>
+                {t("cancel")}
+              </button>
+              <button
+                type="button"
+                className="btn-primary !px-4 !py-2"
+                onClick={() => {
+                  moveLine(leavePrompt.productId, "quote");
+                  setLeavePrompt(null);
+                }}
+              >
+                {t("dragLeaveStockConfirm")}
+              </button>
+            </div>
+          </div>
         </div>
       ) : null}
-    </section>
+    </div>
   );
 }
 
@@ -233,12 +557,13 @@ export function ConfirmRfqView(props) {
 
 export function VariantA(props) {
   const { t } = useLanguage();
+  const hasBuy = (props.lines || []).some((line) => line.intent === "buy");
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8 sm:py-10 pb-28">
       <p className="text-xs font-semibold uppercase tracking-wide text-brand-600">{t("rfqDraft")}</p>
       <h1 className="reveal mt-1 text-2xl sm:text-3xl font-bold text-brand-800">{t("reviewQuote")}</h1>
-      <p className="mt-2 text-sm text-mute">{t("reviewQuoteHint")}</p>
+      <p className="mt-2 text-sm text-mute">{hasBuy ? t("reviewQuoteHint") : t("reviewQuoteHintQuoteOnly")}</p>
       <div className="mt-6">
         <IntentDraftSections {...props} />
       </div>
@@ -256,9 +581,11 @@ export function VariantB(props) {
     onContinueKind,
   } = props;
   const { t } = useLanguage();
-  const { buyLines } = splitDraftLines(lines);
+  const { buyLines, quoteLines } = splitDraftLines(lines);
   const buySelected = selectedFor(buyLines, selectedIds);
   const buyTotals = draftTotals({ lines: buyLines }, buySelected);
+  const quoteSelected = selectedFor(quoteLines, selectedIds);
+  const quoteTotals = draftTotals({ lines: quoteLines }, quoteSelected);
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8 sm:py-10 pb-28">
@@ -279,20 +606,41 @@ export function VariantB(props) {
           <h2 className="font-display text-xl font-semibold text-brand-800">{t("confirmPageTitle")}</h2>
           <p className="text-sm text-mute">{t("reviewQuoteHint")}</p>
           <div className="pt-3 border-t border-line space-y-4">
+            {buyLines.length ? (
             <div>
               <p className="text-xs text-mute uppercase tracking-wide">{t("sectionBuy")}</p>
               <p className="text-xl font-bold text-brand-600 mt-1">{formatPrice(buyTotals.pricedSubtotal)}</p>
               {formErrorKind === "buy" && formError ? (
                 <p className="mt-2 text-sm text-red-700 font-medium">{formError}</p>
               ) : null}
-              <button
-                type="button"
-                onClick={() => onContinueKind("buy")}
-                disabled={buySelected.length === 0}
-                className="btn-primary w-full !py-3 mt-3 disabled:opacity-45"
-              >
-                {t("createOrder")}
-              </button>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => onContinueKind("buy", "whatsapp")}
+                  disabled={buySelected.length === 0}
+                  className="btn-primary flex-1 !py-3 disabled:opacity-45"
+                >
+                  {t("sendViaWhatsapp")}
+                </button>
+              </div>
+            </div>
+            ) : null}
+            <div>
+              <p className="text-xs text-mute uppercase tracking-wide">{t("sectionQuote")}</p>
+              <p className="text-xl font-bold text-brand-600 mt-1">{formatPrice(quoteTotals.pricedSubtotal)}</p>
+              {formErrorKind === "quote" && formError ? (
+                <p className="mt-2 text-sm text-red-700 font-medium">{formError}</p>
+              ) : null}
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => onContinueKind("quote", "whatsapp")}
+                  disabled={quoteSelected.length === 0}
+                  className="btn-primary flex-1 !py-3 disabled:opacity-45"
+                >
+                  {t("sendViaWhatsapp")}
+                </button>
+              </div>
             </div>
             <Link to="/#products" className="btn-soft w-full !py-2.5">
               {t("keepShopping")}
@@ -584,6 +932,7 @@ function LinesList({
   toggleAll,
   setLineQty,
   removeLine,
+  removeLines,
   embedded = false,
   editingId,
   setEditingId,
@@ -604,11 +953,7 @@ function LinesList({
   customPlacement = "inline",
 }) {
   const { t } = useLanguage();
-  const specFileInputRef = useRef(null);
   const bodyRef = useRef(null);
-  const [extractOpen, setExtractOpen] = useState(false);
-  const [extractFiles, setExtractFiles] = useState([]);
-  const categories = useMemo(() => getCategoryDefs(), []);
 
   useEffect(() => {
     if (showAddCustom) bodyRef.current?.scrollTo({ top: 0 });
@@ -617,7 +962,6 @@ function LinesList({
     tone === "buy" ? "bg-brand-50" : tone === "quote" ? "bg-[#f3f4f3]" : "bg-brand-50/50";
 
   return (
-    <>
     <div className={embedded ? "flex flex-col flex-1 min-h-0" : "bg-white border border-line rounded-xl overflow-hidden"}>
       <div className={`px-4 sm:px-5 py-3.5 border-b border-line shrink-0 ${headerBg}`}>
         {title ? (
@@ -646,55 +990,47 @@ function LinesList({
           </div>
         ) : null}
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <label className="inline-flex items-center gap-2 text-sm font-medium text-ink cursor-pointer">
-            <input
-              type="checkbox"
-              checked={allSelected}
-              onChange={toggleAll}
-              disabled={!lines.length}
-              className="h-4 w-4 accent-brand-600"
-            />
-            {selectAllLabel || t("selectAll")}
-          </label>
+          <div className="inline-flex flex-wrap items-center gap-x-3 gap-y-1">
+            <label className="inline-flex items-center gap-2 text-sm font-medium text-ink cursor-pointer">
+              <input
+                type="checkbox"
+                checked={allSelected}
+                onChange={toggleAll}
+                disabled={!lines.length}
+                className="h-4 w-4 accent-brand-600"
+              />
+              {selectAllLabel || t("selectAll")}
+            </label>
+            {lines.length ? (
+              <button
+                type="button"
+                onClick={() => {
+                  const ids = lines.map((l) => l.productId);
+                  if (removeLines) removeLines(ids);
+                  else ids.forEach((id) => removeLine(id));
+                }}
+                className="text-xs font-semibold text-mute/80 hover:text-[#8a2b2b]"
+              >
+                {t("removeAllItems")}
+              </button>
+            ) : null}
+          </div>
           <div className="flex flex-wrap items-center gap-2 sm:gap-3">
             {allowCustom ? (
-              <>
-                <input
-                  ref={specFileInputRef}
-                  type="file"
-                  multiple
-                  accept=".pdf,.txt,.csv,.doc,.docx,image/*"
-                  className="sr-only"
-                  onChange={(e) => {
-                    const next = Array.from(e.target.files || []).slice(0, 8);
-                    e.target.value = "";
-                    if (!next.length) return;
-                    setExtractFiles(next);
-                    setExtractOpen(true);
-                  }}
-                />
-                <button
-                  type="button"
-                  onClick={() => specFileInputRef.current?.click()}
-                  className="btn-soft !px-3 !py-2 !text-sm"
-                >
-                  {t("uploadSpec")}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEditingId?.(null);
-                    setShowAddCustom?.((v) => !v);
-                  }}
-                  className={
-                    showAddCustom
-                      ? "btn-soft !px-3 !py-2 !text-sm"
-                      : "btn-primary !px-3 !py-2 !text-sm"
-                  }
-                >
-                  {showAddCustom ? t("cancel") : `+ ${t("addCustomProduct")}`}
-                </button>
-              </>
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingId?.(null);
+                  setShowAddCustom?.((v) => !v);
+                }}
+                className={
+                  showAddCustom
+                    ? "btn-soft !px-3 !py-2 !text-sm"
+                    : "btn-primary !px-3 !py-2 !text-sm"
+                }
+              >
+                {showAddCustom ? t("cancel") : `+ ${t("addCustomProduct")}`}
+              </button>
             ) : null}
             <p className="text-xs text-mute tabular-nums">
               {t("selectedCountShort", { selected: selectedIds.length, total: lines.length })}
@@ -720,6 +1056,8 @@ function LinesList({
             const id = String(l.productId);
             const checked = selectedIds.includes(id);
             const isEditing = editingId === id;
+            const catalog = l.custom ? null : getProduct(l.productId);
+            const discontinued = Boolean(catalog && isDiscontinued(catalog));
             const meta = [l.productNo, l.category, l.supplier].filter(Boolean).join(" · ");
             const unpriced = l.unitPrice == null && !l.custom;
             return (
@@ -727,10 +1065,16 @@ function LinesList({
                 key={l.productId}
                 className={`px-3 py-3 flex gap-2 sm:gap-2.5 items-center ${
                   checked ? "bg-white" : "bg-paper/50"
-                } ${dragging?.productId === id ? "opacity-45" : ""}`}
+                } ${dragging?.productId === id ? "opacity-45" : ""} ${discontinued ? "opacity-80" : ""}`}
               >
-                <label className="shrink-0 cursor-pointer">
-                  <input type="checkbox" checked={checked} onChange={() => toggleId(id)} className="h-4 w-4 accent-brand-600" />
+                <label className={`shrink-0 ${discontinued ? "cursor-not-allowed" : "cursor-pointer"}`}>
+                  <input
+                    type="checkbox"
+                    checked={checked && !discontinued}
+                    disabled={discontinued}
+                    onChange={() => toggleId(id)}
+                    className="h-4 w-4 accent-brand-600"
+                  />
                 </label>
                 {!isEditing && onDragLineStart ? (
                   <DragGrip
@@ -776,8 +1120,19 @@ function LinesList({
                             {t("customItem")}
                           </span>
                         ) : null}
+                        {discontinued ? (
+                          <span className="text-[10px] font-bold uppercase tracking-wide text-[#8a2b2b] bg-[#f8e8e8] px-1.5 py-0.5 shrink-0">
+                            {t("discontinuedUnavailable")}
+                          </span>
+                        ) : null}
                       </div>
                       {meta ? <p className="mt-0.5 text-[11px] text-mute truncate">{meta}</p> : null}
+                      {l.custom && l.description ? (
+                        <p className="mt-0.5 text-[11px] text-mute whitespace-pre-wrap break-words line-clamp-3">
+                          <span className="font-medium text-ink/80">{t("customProductDesc")}: </span>
+                          {l.description}
+                        </p>
+                      ) : null}
                       {unpriced ? (
                         <p className="mt-1 inline-flex text-[10px] font-semibold uppercase tracking-wide text-amber-800 bg-amber-50 px-1.5 py-0.5">
                           {t("noListedPrice")}
@@ -834,31 +1189,6 @@ function LinesList({
         ) : null}
       </div>
     </div>
-    {allowCustom ? (
-      <AiSpecExtractModal
-        open={extractOpen}
-        onClose={() => {
-          setExtractOpen(false);
-          setExtractFiles([]);
-        }}
-        categories={categories}
-        initialFiles={extractFiles}
-        confirmLabel={t("addExtractedToDraft")}
-        reviewHint={t("reviewExtractedDraftHint")}
-        onSearch={({ items, attachments }) => {
-          for (const item of items) {
-            onAddCustom?.({
-              name: item.name,
-              description: [item.category, item.spec].filter(Boolean).join(" · "),
-              category: item.category,
-              qty: 1,
-              attachments,
-            });
-          }
-        }}
-      />
-    ) : null}
-    </>
   );
 }
 
@@ -1142,6 +1472,7 @@ function SubmitBar({
   selectedTotals,
   formError,
   onSubmit,
+  onSubmitChannel,
   submitLabel,
   bare = false,
   showKeepShopping = true,
@@ -1171,14 +1502,25 @@ function SubmitBar({
               {t("keepShopping")}
             </Link>
           ) : null}
-          <button
-            type="button"
-            onClick={onSubmit}
-            disabled={selectedIds.length === 0}
-            className="btn-primary !px-5 !py-2.5 disabled:opacity-45"
-          >
-            {submitLabel || t("submitRfq")}
-          </button>
+          {onSubmitChannel ? (
+            <button
+              type="button"
+              onClick={() => onSubmitChannel("whatsapp")}
+              disabled={selectedIds.length === 0}
+              className="btn-primary !px-5 !py-2.5 disabled:opacity-45"
+            >
+              {t("sendViaWhatsapp")}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={onSubmit}
+              disabled={selectedIds.length === 0}
+              className="btn-primary !px-5 !py-2.5 disabled:opacity-45"
+            >
+              {submitLabel || t("submitRfq")}
+            </button>
+          )}
         </div>
       </div>
       {formError ? <p className="mt-3 text-sm text-red-700 font-medium">{formError}</p> : null}

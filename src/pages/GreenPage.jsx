@@ -1,17 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import ProductCard from "../components/ProductCard";
-import AuthModal from "../components/AuthModal";
 import SiteFooter from "../components/SiteFooter";
 import SiteHeader from "../components/SiteHeader";
+import Seo, { breadcrumbJsonLd, orgJsonLd } from "../components/Seo";
 import { useLanguage } from "../i18n";
-import { addToCart, getGreenProducts, isLoggedIn, searchProducts, setPendingCart } from "../lib/store";
+import { allProductsTo, siteOrigin, withLocale } from "../lib/locale";
+import { seoCopy } from "../lib/seoCopy";
+import { addToCart, getGreenProducts, searchProducts, whatsappNow } from "../lib/store";
 
 export default function GreenPage() {
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
   const [searchQuery, setSearchQuery] = useState("");
-  const [authOpen, setAuthOpen] = useState(false);
   const [toast, setToast] = useState("");
+  const [catalogShown, setCatalogShown] = useState(24);
 
   useEffect(() => {
     if (!toast) return;
@@ -25,10 +27,13 @@ export default function GreenPage() {
     return list;
   }, [searchQuery]);
 
+  useEffect(() => {
+    setCatalogShown(24);
+  }, [searchQuery]);
+
   function handleAdd(productId, intent = "quote") {
-    if (!isLoggedIn()) {
-      setPendingCart(productId, intent);
-      setAuthOpen(true);
+    if (intent === "buy-now" || intent === "quote-now") {
+      whatsappNow(productId, { kind: intent === "buy-now" ? "buy" : "quote", lang });
       return;
     }
     addToCart(productId, { intent });
@@ -40,6 +45,19 @@ export default function GreenPage() {
 
   return (
     <div className="bg-paper min-h-screen">
+      <Seo
+        lang={lang}
+        path={withLocale(lang, "/green")}
+        title={seoCopy(lang).greenTitle}
+        description={seoCopy(lang).greenDesc}
+        jsonLd={[
+          orgJsonLd(siteOrigin()),
+          breadcrumbJsonLd(siteOrigin(), [
+            { name: "Mattex Marketplace", path: withLocale(lang, "/") },
+            { name: t("green"), path: withLocale(lang, "/green") },
+          ]),
+        ]}
+      />
       <SiteHeader />
 
       <section className="relative overflow-hidden bg-brand-800 text-white">
@@ -81,11 +99,24 @@ export default function GreenPage() {
         </div>
 
         {products.length ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {products.map((p) => (
-              <ProductCard key={p.id} product={p} onAdd={handleAdd} />
-            ))}
-          </div>
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {products.slice(0, catalogShown).map((p) => (
+                <ProductCard key={p.id} product={p} onAdd={handleAdd} />
+              ))}
+            </div>
+            {catalogShown < products.length ? (
+              <div className="mt-6 flex justify-center">
+                <button
+                  type="button"
+                  onClick={() => setCatalogShown((n) => n + 24)}
+                  className="btn-soft !px-5 !py-2.5"
+                >
+                  {t("showMore")} ({products.length - catalogShown})
+                </button>
+              </div>
+            ) : null}
+          </>
         ) : (
           <div className="bg-white border border-line rounded-xl p-8 text-center">
             <p className="text-lg font-semibold text-brand-800">{t("greenNoMatches")}</p>
@@ -94,7 +125,7 @@ export default function GreenPage() {
               <button type="button" className="btn-soft" onClick={() => setSearchQuery("")}>
                 {t("clearFilters")}
               </button>
-              <Link to={{ pathname: "/", hash: "products" }} className="btn-primary">
+              <Link to={allProductsTo(lang)} className="btn-primary">
                 {t("browseCatalog")}
               </Link>
             </div>
@@ -103,7 +134,6 @@ export default function GreenPage() {
       </main>
 
       <SiteFooter />
-      <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} />
       {toast ? (
         <div
           className="fixed bottom-24 right-6 z-50 max-w-sm border border-brand-700 bg-charcoal text-white px-4 py-3 text-sm toast shadow-lg"

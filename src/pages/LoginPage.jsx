@@ -1,8 +1,12 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import SiteHeader from "../components/SiteHeader";
+import MattexChainInvite from "../components/MattexChainInvite";
+import Seo from "../components/Seo";
 import { useStore } from "../hooks/useStore";
 import { useLanguage } from "../i18n";
+import { withLocale } from "../lib/locale";
+import { SHOW_RFQ } from "../lib/flags";
 import { consumePendingAfterAuth, loginUser, logoutUser, SAMPLE_PROJECTS, updateUserProfile } from "../lib/store";
 
 function profileFromUser(user) {
@@ -20,7 +24,7 @@ function profileFromUser(user) {
 
 export default function LoginPage() {
   const { user } = useStore();
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -40,7 +44,7 @@ export default function LoginPage() {
       setError(result.error === "password" ? t("loginErrorPassword") : t("loginErrorGeneric"));
       return;
     }
-    navigate(consumePendingAfterAuth());
+    navigate(withLocale(lang, consumePendingAfterAuth()));
   }
 
   function onSaveProfile(e) {
@@ -62,6 +66,7 @@ export default function LoginPage() {
 
   return (
     <div className="bg-paper min-h-screen">
+      <Seo lang={lang} path={withLocale(lang, "/login")} title={`${t("login")} | Mattex Marketplace`} description={t("loginRequiredRfq")} noindex />
       <SiteHeader />
       <main className="max-w-md mx-auto px-4 py-12">
         <div className="bg-white border border-line rounded-xl p-6 sm:p-8">
@@ -255,13 +260,15 @@ export default function LoginPage() {
                     ) : null}
                   </div>
                   <div className="grid gap-2">
-                    <Link to="/rfq" className="btn-primary !py-2.5">
+                    <Link to={withLocale(lang, "/rfq")} className="btn-primary !py-2.5">
                       {t("openRfqDraft")}
                     </Link>
-                    <Link to="/rfqs" className="btn-soft !py-2.5 !border-brand-600 !text-brand-600">
+                    {SHOW_RFQ ? (
+                    <Link to={withLocale(lang, "/rfqs")} className="btn-soft !py-2.5 !border-brand-600 !text-brand-600">
                       {t("myRfqs")}
                     </Link>
-                    <Link to="/" className="btn-soft !py-2.5">
+                    ) : null}
+                    <Link to={withLocale(lang, "/")} className="btn-soft !py-2.5">
                       {t("continueShopping")}
                     </Link>
                     <button
@@ -314,12 +321,10 @@ export default function LoginPage() {
                   {t("login")}
                 </button>
               </form>
-              <p className="mt-5 text-sm text-mute">
-                {t("noAccount")}{" "}
-                <Link to="/signup" className="font-semibold text-brand-600 hover:underline">
-                  {t("createAccount")}
-                </Link>
-              </p>
+              <div className="mt-8 pt-6 border-t border-line">
+                <p className="text-sm font-semibold text-ink">{t("noAccount")}</p>
+                <MattexChainInvite className="mt-3" />
+              </div>
             </>
           )}
         </div>

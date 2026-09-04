@@ -1,20 +1,27 @@
-import { useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
-import AuthModal from "../components/AuthModal";
+import { useState, useEffect } from "react";
+import { Link, useParams } from "react-router-dom";
+import CopyLinkButton from "../components/CopyLinkButton";
 import SiteHeader from "../components/SiteHeader";
 import SiteFooter from "../components/SiteFooter";
+import Seo, { breadcrumbJsonLd, orgJsonLd, productJsonLd } from "../components/Seo";
 import ProductPrice from "../components/ProductPrice";
 import ProductRating from "../components/ProductRating";
+import { ActionChoiceButton, ProductBadges, ProductImage } from "../components/ProductCard";
 import { useLanguage } from "../i18n";
+import { useStore } from "../hooks/useStore";
+import { allProductsTo, siteOrigin, withLocale } from "../lib/locale";
+import { seoCopy } from "../lib/seoCopy";
 import {
   addToCart,
   canDirectBuy,
+  catalogPathForCategory,
   getEffectivePrice,
   getProduct,
-  isLoggedIn,
-  setPendingCart,
+  getProductRemarks,
   stockStatusKey,
+  supplierDisplayName,
   supplierPath,
+  whatsappNow,
 } from "../lib/store";
 
 const STOCK_TONE = {
@@ -27,15 +34,12 @@ const STOCK_TONE = {
 export default function DetailsPage() {
   const { id } = useParams();
   const product = getProduct(id);
-  const navigate = useNavigate();
-  const { t } = useLanguage();
-  const [authOpen, setAuthOpen] = useState(false);
-  const [addedFlash, setAddedFlash] = useState("");
+  const { t, lang } = useLanguage();
+  const { draft } = useStore();
   const [qty, setQty] = useState(1);
 
   useEffect(() => {
     setQty(product?.moq || 1);
-    setAddedFlash("");
   }, [product?.id, product?.moq]);
 
   if (!product) {
@@ -46,7 +50,7 @@ export default function DetailsPage() {
           <div className="bg-white border border-line rounded-xl p-8 text-center">
             <h1 className="reveal text-xl font-bold text-brand-800">{t("productNotFound")}</h1>
             <p className="mt-2 text-sm text-mute">{t("productNotFoundHint")}</p>
-            <Link to={{ pathname: "/", hash: "products" }} className="btn-primary mt-5 inline-flex">
+            <Link to={allProductsTo(lang)} className="btn-primary mt-5 inline-flex">
               {t("browseCatalog")}
             </Link>
           </div>
@@ -55,7 +59,8 @@ export default function DetailsPage() {
     );
   }
 
-  const priced = canDirectBuy(product);
+  const discontinued = Boolean(product.discontinued);
+  const priced = !discontinued && canDirectBuy(product);
   const priceStatus = getEffectivePrice(product).status;
   const priceHint =
     priceStatus === "quoted"
@@ -75,74 +80,92 @@ export default function DetailsPage() {
     { label: t("productNo"), value: product.productNo || product.id.toUpperCase() },
     {
       label: t("stockStatus"),
-      value: t(stockStatusKey(product.stockStatus)),
+      value: discontinued ? t("discontinued") : t(stockStatusKey(product.stockStatus)),
       pill: true,
-      tone: STOCK_TONE[product.stockStatus] || STOCK_TONE.in_stock,
+      tone: discontinued ? "bg-[#f8e8e8] text-[#8a2b2b]" : STOCK_TONE[product.stockStatus] || STOCK_TONE.in_stock,
     },
     { label: t("moq"), value: `${product.moq} ${product.unit}` },
     { label: t("leadTime"), value: t("leadTimeValue", { time: leadTime }) },
     { label: t("standard"), value: product.standard },
   ];
 
+  const cartLine = (draft?.lines || []).find((line) => String(line.productId) === String(product.id) && !line.custom);
+  const buyCount = cartLine?.intent === "buy" ? cartLine.qty : 0;
+  const quoteCount = cartLine && cartLine.intent !== "buy" ? cartLine.qty : 0;
+  const remarks = getProductRemarks(product);
+
   function goToRfq(intent) {
     const nextQty = Math.max(minQty, Math.floor(Number(qty)) || minQty);
-    if (!isLoggedIn()) {
-      setPendingCart(product.id, intent, nextQty);
-      setAuthOpen(true);
+    if (intent === "buy-now" || intent === "quote-now") {
+      whatsappNow(product.id, {
+        qty: nextQty,
+        kind: intent === "buy-now" ? "buy" : "quote",
+        lang,
+      });
       return;
     }
     addToCart(product.id, { intent, qty: nextQty });
-    setAddedFlash(intent);
-    setTimeout(() => navigate("/rfq"), 450);
   }
 
-  const flashLabel =
-    addedFlash === "buy"
-      ? t("addedBuyOpeningRfq")
-      : addedFlash === "quote"
-        ? t("addedQuoteOpeningRfq")
-        : "";
+  const origin = siteOrigin();
+  const copy = seoCopy(lang);
+  const path = withLocale(lang, `/details/${product.id}`);
 
   return (
     <div className="bg-paper min-h-screen pb-28 lg:pb-0">
+      <Seo
+        lang={lang}
+        path={path}
+        title={copy.productTitle(product.name)}
+        description={copy.productDesc(product)}
+        image={product.image || "/og-default.jpg"}
+        ogType="product"
+        jsonLd={[
+          orgJsonLd(origin),
+          productJsonLd(origin, product, lang),
+          breadcrumbJsonLd(origin, [
+            { name: "Mattex Marketplace", path: withLocale(lang, "/") },
+            { name: t("catalog"), path: withLocale(lang, "/") },
+            { name: product.name, path },
+          ]),
+        ]}
+      />
       <SiteHeader />
 
       <main className="max-w-7xl mx-auto px-4 py-8 sm:py-10">
         <nav className="mb-5 text-sm text-mute">
-          <Link to={{ pathname: "/", hash: "products" }} className="hover:text-brand-600">
+          <Link to={allProductsTo(lang)} className="hover:text-brand-600">
             {t("catalog")}
           </Link>
           <span className="mx-2 text-line">/</span>
-          <span className="text-ink">{product.category}</span>
+          <Link to={withLocale(lang, catalogPathForCategory(product.category))} className="hover:text-brand-600">
+            {product.category}
+          </Link>
         </nav>
 
         <div className="grid lg:grid-cols-2 gap-8 lg:gap-12">
           <div className="relative overflow-hidden bg-brand-50 border border-line rounded-xl self-start w-full">
-            {product.green ? (
-              <span className="absolute top-3 left-3 z-10 inline-flex items-center gap-1 bg-[#1f8a45] text-white text-[10px] font-bold px-2 py-1 tracking-[0.08em]">
-                <svg
-                  viewBox="0 0 24 24"
-                  className="h-3.5 w-3.5 shrink-0"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden
-                >
-                  <path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z" />
-                  <path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12" />
-                </svg>
-                {t("greenBadge")}
-              </span>
-            ) : null}
-            <img src={product.image} alt={product.name} className="block w-full h-auto" />
+            <ProductBadges product={product} />
+            <ProductImage
+              src={product.image}
+              alt={product.name}
+              className="block w-full"
+              imgClassName="block w-full h-auto"
+            />
+            <p className="px-3 py-2 text-[11px] leading-snug text-mute bg-white border-t border-line">
+              {t("specSubjectToQuote")}
+            </p>
           </div>
 
           <div className="reveal">
-            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-600">
-              {product.category}
-            </p>
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-600">
+                <Link to={withLocale(lang, catalogPathForCategory(product.category))} className="hover:underline">
+                  {product.category}
+                </Link>
+              </p>
+              <CopyLinkButton path={path} />
+            </div>
             <h1 className="mt-2 font-display text-3xl sm:text-4xl font-semibold text-brand-800 leading-tight">
               {product.name}
             </h1>
@@ -150,10 +173,10 @@ export default function DetailsPage() {
               {t("supplierLabel")}:{" "}
               {product.supplier ? (
                 <Link
-                  to={supplierPath(product.supplier)}
+                  to={withLocale(lang, supplierPath(product.supplier))}
                   className="text-brand-600 hover:underline font-medium"
                 >
-                  {product.supplier}
+                  {supplierDisplayName(product.supplier)}
                 </Link>
               ) : (
                 t("subbiePartner")
@@ -203,35 +226,76 @@ export default function DetailsPage() {
             </div>
 
             <p className="mt-5 text-xs text-mute leading-relaxed max-w-prose">
-              {priceHint}
+              {discontinued ? t("discontinuedHint") : priceHint}
             </p>
 
             <div className="mt-4 hidden lg:flex flex-wrap gap-2.5">
-              {priced ? (
-                <button type="button" onClick={() => goToRfq("buy")} className="btn-primary !px-5 !py-3">
-                  {addedFlash === "buy" ? flashLabel : t("buyNow")}
-                </button>
-              ) : null}
-              <button
-                type="button"
-                onClick={() => goToRfq("quote")}
-                className={priced ? "btn-soft !px-5 !py-3 !border-brand-600 !text-brand-700" : "btn-primary !px-5 !py-3"}
-              >
-                {addedFlash === "quote" ? flashLabel : t("requestQuote")}
-              </button>
-              <Link to={{ pathname: "/", hash: "products" }} className="btn-soft !px-5 !py-3">
+              {discontinued ? (
+                <span className="inline-flex items-center bg-[#f8e8e8] text-[#8a2b2b] text-xs font-bold uppercase tracking-wide px-3 py-2">
+                  {t("discontinued")}
+                </span>
+              ) : (
+                <>
+                  {priced ? (
+                    <ActionChoiceButton
+                      block={false}
+                      count={buyCount}
+                      triggerLabel={t("buyNow")}
+                      nowLabel={t("buyNowAction")}
+                      addLabel={t("addToCart")}
+                      onNow={() => goToRfq("buy-now")}
+                      onAdd={() => goToRfq("buy")}
+                      className="btn-primary !px-5 !py-3"
+                    />
+                  ) : null}
+                  <ActionChoiceButton
+                    block={false}
+                    count={quoteCount}
+                    triggerLabel={t("requestQuoteCta")}
+                    nowLabel={t("requestNow")}
+                    addLabel={t("addToCart")}
+                    onNow={() => goToRfq("quote-now")}
+                    onAdd={() => goToRfq("quote")}
+                    className={priced ? "btn-soft !px-5 !py-3 !border-brand-600 !text-brand-700" : "btn-primary !px-5 !py-3"}
+                  />
+                </>
+              )}
+              <Link to={allProductsTo(lang)} className="btn-soft !px-5 !py-3">
                 {t("backToCatalog")}
               </Link>
             </div>
 
             <h2 className="mt-8 text-sm font-semibold text-ink">{t("specifications")}</h2>
             <ul className="mt-3 divide-y divide-line border-y border-line">
-              {product.specs.map((s) => (
+              {(product.specs || []).map((s) => (
                 <li key={s} className="py-2.5 text-sm text-mute">
                   {s}
                 </li>
               ))}
             </ul>
+
+            {remarks.length ? (
+              <>
+                <h2 className="mt-8 text-sm font-semibold text-ink">{t("productRemarks")}</h2>
+                <p className="mt-1 text-xs text-mute leading-relaxed">{t("productRemarksHint")}</p>
+                <ul className="mt-3 flex flex-wrap gap-1.5">
+                  {remarks.map((term) => (
+                    <li key={term}>
+                      <Link
+                        to={withLocale(lang, {
+                          pathname: "/",
+                          search: `?q=${encodeURIComponent(term)}`,
+                          hash: "#products",
+                        })}
+                        className="inline-flex border border-line bg-paper px-2 py-1 text-xs text-ink hover:border-brand-600 hover:text-brand-700"
+                      >
+                        {term}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : null}
           </div>
         </div>
       </main>
@@ -241,23 +305,33 @@ export default function DetailsPage() {
       </div>
 
       <div className="lg:hidden fixed bottom-0 inset-x-0 z-40 border-t border-line bg-white/95 backdrop-blur p-3">
-        <div className={`max-w-7xl mx-auto grid gap-2 ${priced ? "grid-cols-2" : "grid-cols-1"}`}>
-          {priced ? (
-            <button type="button" onClick={() => goToRfq("buy")} className="btn-primary !py-3">
-              {addedFlash === "buy" ? t("addedShort") : t("buyNow")}
-            </button>
-          ) : null}
-          <button
-            type="button"
-            onClick={() => goToRfq("quote")}
-            className={priced ? "btn-soft !py-3 !border-brand-600 !text-brand-700" : "btn-primary !py-3"}
-          >
-            {addedFlash === "quote" ? t("addedShort") : t("requestQuote")}
-          </button>
-        </div>
+        {discontinued ? (
+          <p className="max-w-7xl mx-auto text-center text-xs font-semibold text-[#8a2b2b]">{t("discontinuedUnavailable")}</p>
+        ) : (
+          <div className={`max-w-7xl mx-auto grid gap-2 ${priced ? "grid-cols-2" : "grid-cols-1"}`}>
+            {priced ? (
+              <ActionChoiceButton
+                count={buyCount}
+                triggerLabel={t("buyNow")}
+                nowLabel={t("buyNowAction")}
+                addLabel={t("addToCart")}
+                onNow={() => goToRfq("buy-now")}
+                onAdd={() => goToRfq("buy")}
+                className="btn-primary !py-3"
+              />
+            ) : null}
+            <ActionChoiceButton
+              count={quoteCount}
+              triggerLabel={t("requestQuoteCta")}
+              nowLabel={t("requestNow")}
+              addLabel={t("addToCart")}
+              onNow={() => goToRfq("quote-now")}
+              onAdd={() => goToRfq("quote")}
+              className={priced ? "btn-soft !py-3 !border-brand-600 !text-brand-700 w-full" : "btn-primary !py-3 w-full"}
+            />
+          </div>
+        )}
       </div>
-
-      <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} />
     </div>
   );
 }

@@ -1,8 +1,10 @@
 import { Link } from "react-router-dom";
 import { useLanguage } from "../i18n";
+import { withLocale } from "../lib/locale";
+import MattexChainInvite from "./MattexChainInvite";
 
 export default function AuthModal({ open, onClose }) {
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="presentation">
@@ -26,14 +28,13 @@ export default function AuthModal({ open, onClose }) {
           {t("signInToBuild")}
         </h3>
         <p className="mt-3 text-sm text-mute leading-relaxed">{t("authModalBody")}</p>
-        <div className="mt-7 grid grid-cols-1 gap-2.5">
-          <Link to="/signup" className="btn-primary !py-3">
-            {t("createAccount")}
-          </Link>
-          <Link to="/login" className="btn-soft !py-3 !border-brand-600 !text-brand-700">
+        <MattexChainInvite className="mt-6" />
+        <p className="mt-5 text-sm text-mute">
+          {t("alreadyAccount")}{" "}
+          <Link to={withLocale(lang, "/login")} className="font-semibold text-brand-600 hover:underline">
             {t("login")}
           </Link>
-        </div>
+        </p>
       </div>
     </div>
   );

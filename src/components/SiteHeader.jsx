@@ -4,7 +4,27 @@ import AccountMenu from "./AccountMenu";
 import LangToggle from "./LangToggle";
 import { useStore } from "../hooks/useStore";
 import { useLanguage } from "../i18n";
-import { getCategoryDefs, isLoggedIn, logoutUser } from "../lib/store";
+import { stripLocale, withLocale } from "../lib/locale";
+import { getCategoryByName, getCategoryDefs, isLoggedIn, logoutUser, MATTEX_CHAIN_URL } from "../lib/store";
+
+function CartIcon({ className = "h-4 w-4" }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className={`shrink-0 ${className}`}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <circle cx="9" cy="20" r="1.4" fill="currentColor" stroke="none" />
+      <circle cx="18" cy="20" r="1.4" fill="currentColor" stroke="none" />
+      <path d="M3 4h2l2.2 11.2a1.5 1.5 0 0 0 1.5 1.2h9.4a1.5 1.5 0 0 0 1.5-1.2L21.5 8H7" />
+    </svg>
+  );
+}
 
 export default function SiteHeader({
   overlay = false,
@@ -20,14 +40,15 @@ export default function SiteHeader({
   onDraftClick,
 } = {}) {
   const { user, cartCount } = useStore();
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
   const navigate = useNavigate();
   const location = useLocation();
   const categories = getCategoryDefs();
   const [menuOpen, setMenuOpen] = useState(false);
   const [navSolid, setNavSolid] = useState(!overlay);
   const [query, setQuery] = useState(searchValue || "");
-  const isHome = location.pathname === "/";
+  const isHome = stripLocale(location.pathname) === "/";
+  const lp = (path) => withLocale(lang, path);
 
   useEffect(() => {
     if (searchValue != null) setQuery(searchValue);
@@ -53,11 +74,11 @@ export default function SiteHeader({
 
   const width = fluid ? "w-full max-w-none" : wide ? "max-w-[100rem]" : "max-w-7xl";
   const navLinks = [
-    { hash: "green", label: t("green") },
+    { to: lp("/green"), label: t("green") },
     { hash: "top", label: t("topProducts") },
     { hash: "suppliers", label: t("suppliers") },
     { hash: "support", label: t("howItWorks") },
-    { hash: "products", label: t("catalog") },
+    { to: { pathname: lp("/"), hash: "products" }, label: t("catalog"), allProducts: true },
   ];
 
   function closeMenu() {
@@ -74,9 +95,27 @@ export default function SiteHeader({
     if (extra.cat) next.set("cat", extra.cat);
     const search = next.toString();
     return {
-      pathname: "/",
+      pathname: lp("/"),
       search: search ? `?${search}` : "",
       hash,
+    };
+  }
+
+  function catalogTo(extra = {}) {
+    const cat = extra.cat ? getCategoryByName(extra.cat) : null;
+    const next = new URLSearchParams();
+    if (extra.q) next.set("q", extra.q);
+    const search = next.toString();
+    if (cat) {
+      return {
+        pathname: lp(`/catalog/${cat.id}`),
+        search: search ? `?${search}` : "",
+      };
+    }
+    return {
+      pathname: lp("/"),
+      search: search ? `?${search}` : "",
+      hash: search ? "" : "products",
     };
   }
 
@@ -91,22 +130,22 @@ export default function SiteHeader({
       onSearchSubmit(null, extra.q);
       return;
     }
-    if (isHome && extra.cat && onSelectCategory) {
-      onSelectCategory(extra.cat);
+    if (isHome && extra.cat) {
+      navigate(catalogTo(extra));
       return;
     }
-    if (isHome && onCatalogClick) {
+    if (isHome && onCatalogClick && !extra.cat && !extra.q) {
       onCatalogClick();
       return;
     }
-    navigate(homeTo("products", extra));
+    navigate(catalogTo(extra));
   }
 
   function submitSearch(event) {
     event?.preventDefault();
     const next = String(query || "").trim();
     closeMenu();
-    if (isHome && onSearchSubmit) {
+    if (onSearchSubmit) {
       onSearchSubmit(event, next);
       return;
     }
@@ -115,11 +154,16 @@ export default function SiteHeader({
 
   function pickCategory(name) {
     closeMenu();
-    if (isHome && onSelectCategory) {
+    if (onSelectCategory) {
       onSelectCategory(name);
       return;
     }
-    goCatalog({ cat: name });
+    const found = getCategoryByName(name);
+    if (found) {
+      navigate({ pathname: lp("/"), search: `?filter=${found.id}`, hash: "products" });
+      return;
+    }
+    navigate(catalogTo({ cat: name }));
   }
 
   function clearAll() {
@@ -128,7 +172,7 @@ export default function SiteHeader({
       onClearFilters();
       return;
     }
-    navigate(homeTo("products"));
+    navigate(catalogTo());
   }
 
   function onRfqClick() {
@@ -136,11 +180,7 @@ export default function SiteHeader({
       onDraftClick();
       return;
     }
-    if (!isLoggedIn()) {
-      navigate("/login");
-      return;
-    }
-    navigate("/rfq");
+    navigate(lp("/rfq"));
   }
 
   function sectionTo(hash) {
@@ -148,10 +188,12 @@ export default function SiteHeader({
     return homeTo(hash);
   }
 
-  function onSectionClick(event, hash) {
-    if (hash === "products") {
+  function onSectionClick(event, link) {
+    if (!link?.allProducts) return;
+    if (isHome && onCatalogClick) {
       event.preventDefault();
-      goCatalog();
+      closeMenu();
+      onCatalogClick();
     }
   }
 
@@ -162,13 +204,16 @@ export default function SiteHeader({
     >
       <div className={`${width} mx-auto px-4 sm:px-6 lg:px-8`}>
         <div className="flex items-center gap-4 py-3">
-          <Link to="/" className="shrink-0 flex items-center gap-2.5 text-white">
-            <span className="inline-flex h-9 w-9 items-center justify-center bg-brand-600 text-white font-bold text-sm tracking-wide">
-              SB
-            </span>
-            <div className="leading-tight">
-              <span className="block text-lg font-semibold tracking-tight">Subbie</span>
-              <span className="block text-[11px] tracking-[0.14em] uppercase text-white/55">{t("brandSub")}</span>
+          <Link to={lp("/")} className="shrink-0 flex items-center gap-2.5 text-white min-w-0">
+            <img
+              src="/assets/mattex-logo.png"
+              alt=""
+              className="h-9 w-auto shrink-0 drop-shadow-[0_1px_2px_rgba(0,0,0,0.45)]"
+            />
+            <div className="leading-tight min-w-0">
+              <span className="block text-[15px] sm:text-lg font-semibold tracking-tight truncate">
+                {t("brandName")}
+              </span>
             </div>
           </Link>
 
@@ -197,8 +242,9 @@ export default function SiteHeader({
               type="button"
               onClick={onRfqClick}
               className="relative inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-white/85 hover:text-white hover:bg-white/10 transition-colors"
-              aria-label={`${t("rfqDraft")}, ${cartCount} items`}
+              aria-label={`${t("rfqDraft")}, ${t("cartCountAria", { n: cartCount })}`}
             >
+              <CartIcon />
               <span>{t("rfqDraft")}</span>
               {cartCount > 0 ? (
                 <span className="absolute -top-1.5 -right-1 min-w-[1.15rem] h-[1.15rem] px-1 bg-brand-400 text-charcoal text-[10px] font-bold flex items-center justify-center">
@@ -262,10 +308,20 @@ export default function SiteHeader({
           </div>
           {navLinks.map((l) => (
             <Link
-              key={l.hash}
-              to={l.hash === "green" ? "/green" : sectionTo(l.hash)}
-              className="hover:text-white hover:bg-white/10 transition-colors px-3 py-2"
-              onClick={(e) => onSectionClick(e, l.hash)}
+              key={l.to || l.hash}
+              to={l.to || sectionTo(l.hash)}
+              className={`hover:text-white hover:bg-white/10 transition-colors px-3 py-2 ${
+                l.allProducts
+                  ? isHome || stripLocale(location.pathname).startsWith("/catalog/")
+                    ? "text-white"
+                    : ""
+                  : l.to &&
+                      typeof l.to === "string" &&
+                      stripLocale(location.pathname).startsWith(stripLocale(l.to) || "—")
+                    ? "text-white"
+                    : ""
+              }`}
+              onClick={(e) => onSectionClick(e, l)}
             >
               {l.label}
             </Link>
@@ -306,24 +362,25 @@ export default function SiteHeader({
             </form>
             {navLinks.map((l) => (
               <Link
-                key={l.hash}
-                to={l.hash === "green" ? "/green" : sectionTo(l.hash)}
+                key={l.to || l.hash}
+                to={l.to || sectionTo(l.hash)}
                 className="py-2.5 hover:text-white"
                 onClick={(e) => {
                   closeMenu();
-                  onSectionClick(e, l.hash);
+                  onSectionClick(e, l);
                 }}
               >
                 {l.label}
               </Link>
             ))}
-            <Link to="/rfq" className="py-2.5 hover:text-white" onClick={closeMenu}>
+            <Link to={lp("/rfq")} className="py-2.5 hover:text-white inline-flex items-center gap-2" onClick={closeMenu}>
+              <CartIcon />
               {t("rfqDraft")}
             </Link>
             {user ? (
               <>
                 <p className="mt-2 pt-2 border-t border-white/15 text-xs text-white/60">{user.name}</p>
-                <Link to="/login" className="py-2.5 hover:text-white" onClick={closeMenu}>
+                <Link to={lp("/login")} className="py-2.5 hover:text-white" onClick={closeMenu}>
                   {t("profile")}
                 </Link>
                 <button
@@ -332,16 +389,33 @@ export default function SiteHeader({
                   onClick={() => {
                     closeMenu();
                     logoutUser();
-                    navigate("/");
+                    navigate(lp("/"));
                   }}
                 >
                   {t("logout")}
                 </button>
               </>
             ) : (
-              <Link to="/login" className="mt-2 btn-primary !py-2.5" onClick={closeMenu}>
-                {t("login")}
-              </Link>
+              <>
+                <a
+                  href={MATTEX_CHAIN_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="py-2.5 hover:text-white"
+                  onClick={closeMenu}
+                >
+                  {t("openMarketplaceAccount")}
+                </a>
+                <a
+                  href={MATTEX_CHAIN_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="py-2.5 hover:text-white"
+                  onClick={closeMenu}
+                >
+                  {t("becomeSupplier")}
+                </a>
+              </>
             )}
             <div className="py-2">
               <LangToggle light />

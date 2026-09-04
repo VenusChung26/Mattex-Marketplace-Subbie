@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { logoutUser } from "../lib/store";
 import { useLanguage } from "../i18n";
+import { withLocale } from "../lib/locale";
 
 export default function AccountMenu({ user, light = false }) {
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
@@ -24,24 +25,11 @@ export default function AccountMenu({ user, light = false }) {
     };
   }, []);
 
-  if (!user) {
-    return (
-      <Link
-        to="/login"
-        className={
-          light
-            ? "hidden sm:inline-flex items-center bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-500 transition-colors"
-            : "inline-flex items-center bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700"
-        }
-      >
-        {t("login")}
-      </Link>
-    );
-  }
-
   const triggerClass = light
     ? "hidden sm:inline-flex items-center gap-1.5 bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-500 transition-colors"
     : "inline-flex items-center gap-1.5 bg-brand-600 px-3 sm:px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700";
+
+  if (!user) return null;
 
   return (
     <div className={light ? "relative hidden sm:block" : "relative"} ref={ref}>
@@ -64,8 +52,8 @@ export default function AccountMenu({ user, light = false }) {
         >
           <Link
             role="menuitem"
-            to="/login"
-            className="block px-4 py-2.5 text-sm text-ink hover:bg-brand-50 hover:text-brand-700"
+            to={withLocale(lang, "/login")}
+            className="block w-full text-left px-4 py-2.5 text-sm text-ink hover:bg-brand-50 hover:text-brand-700"
             onClick={() => setOpen(false)}
           >
             {t("profile")}
@@ -77,7 +65,7 @@ export default function AccountMenu({ user, light = false }) {
             onClick={() => {
               setOpen(false);
               logoutUser();
-              navigate("/");
+              navigate(withLocale(lang, "/"));
             }}
           >
             {t("logout")}

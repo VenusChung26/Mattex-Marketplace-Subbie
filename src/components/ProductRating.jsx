@@ -32,7 +32,14 @@ function Stars({ value, size }) {
 
 export default function ProductRating({ product, size = "sm", className = "" }) {
   const { t } = useLanguage();
-  const { rating, reviews } = getProductRating(product);
+  const { rating, reviews, empty } = getProductRating(product);
+  if (empty || !reviews) {
+    return (
+      <p className={`text-mute ${size === "lg" ? "text-xs" : "text-[10px]"} ${className}`.trim()}>
+        {t("noRatingsYet")}
+      </p>
+    );
+  }
   const starSize = size === "lg" ? "h-4 w-4" : "h-3 w-3";
   const score = rating.toFixed(1);
 

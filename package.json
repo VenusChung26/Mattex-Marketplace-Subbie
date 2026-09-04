@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "supabase:seed": "node scripts/seed-supabase.mjs",
+    "build": "vite build && node scripts/prerender-seo.mjs",
     "lint": "oxlint",
     "preview": "vite preview",
     "prototype:rfq": "vite --open /rfq?variant=A",
@@ -15,6 +16,8 @@
     "prototype:logic": "python3 -m http.server 8766 --directory public"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.114.0",
+    "@vercel/blob": "^2.8.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-router-dom": "^7.18.2"

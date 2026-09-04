@@ -6,6 +6,53 @@ import { getCategoryDefs } from "../lib/store";
 
 const emptyForm = { name: "", description: "", qty: 1, image: "", category: "", attachments: [] };
 const IMAGE_MAX_BYTES = 800 * 1024;
+const IMAGE_MAX_SIDE = 1200;
+export const SHOW_CUSTOM_FILE_UPLOADS = true;
+export const SHOW_CUSTOM_IMAGE_UPLOAD = true;
+export const SPEC_FILE_ACCEPT = ".jpg,.jpeg,.png,.pdf,.doc,.docx,.xls,.xlsx";
+export const SPEC_FILE_EXT = /\.(jpe?g|png|pdf|docx?|xlsx?)$/i;
+
+export function isAllowedSpecFile(file) {
+  return SPEC_FILE_EXT.test(String(file?.name || ""));
+}
+
+function dataUrlBytes(dataUrl) {
+  const base64 = String(dataUrl || "").split(",")[1] || "";
+  return Math.floor((base64.length * 3) / 4);
+}
+
+function compressImageFile(file, maxBytes = IMAGE_MAX_BYTES) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const objectUrl = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      const scale = Math.min(1, IMAGE_MAX_SIDE / Math.max(img.width, img.height, 1));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(img.width * scale));
+      canvas.height = Math.max(1, Math.round(img.height * scale));
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        reject(new Error("bad_image"));
+        return;
+      }
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      let quality = 0.86;
+      let dataUrl = canvas.toDataURL("image/jpeg", quality);
+      while (dataUrlBytes(dataUrl) > maxBytes && quality > 0.4) {
+        quality -= 0.08;
+        dataUrl = canvas.toDataURL("image/jpeg", quality);
+      }
+      if (dataUrlBytes(dataUrl) > maxBytes) reject(new Error("too_large"));
+      else resolve(dataUrl);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("bad_image"));
+    };
+    img.src = objectUrl;
+  });
+}
 
 function detailsFromExtracted(items) {
   const rows = (items || []).filter((item) => item.name || item.spec || item.category);
@@ -56,25 +103,26 @@ export default function CustomProductForm({
     setError("");
   }, [initial.name, initial.description, initial.qty, initial.image, initial.category, mode]);
 
-  function handleImage(file) {
+  async function handleImage(file) {
     if (!file) return;
     if (!String(file.type || "").startsWith("image/")) return;
-    if (file.size > IMAGE_MAX_BYTES) {
-      setError(t("imageTooLarge"));
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      setImage(String(reader.result || ""));
+    try {
+      const dataUrl = await compressImageFile(file);
+      setImage(dataUrl);
       setError("");
-    };
-    reader.readAsDataURL(file);
+    } catch {
+      setError(t("imageTooLarge"));
+    }
   }
 
   async function handleSpecFiles(list) {
-    const files = Array.from(list || []).slice(0, 8);
+    const picked = Array.from(list || []).slice(0, 8);
+    const files = picked.filter(isAllowedSpecFile);
     setFilledFrom("");
-    if (!files.length) return;
+    if (!files.length) {
+      setError(t("specFileTypeError"));
+      return;
+    }
 
     const token = ++extractTokenRef.current;
     setExtracting(true);
@@ -163,7 +211,8 @@ export default function CustomProductForm({
         </div>
       ) : null}
 
-      <div className="rounded-lg border border-dashed border-brand-200 bg-brand-50/50 p-3">
+      {SHOW_CUSTOM_FILE_UPLOADS ? (
+      <div className="rounded-lg border border-dashed border-brand-200 bg-brand-50/50 p-3 space-y-2">
         <label className="block">
           <span className="block text-sm font-semibold text-ink mb-1">
             {t("uploadSpecForItem")}{" "}
@@ -172,7 +221,7 @@ export default function CustomProductForm({
           <input
             type="file"
             multiple
-            accept=".pdf,.txt,.csv,.doc,.docx,image/*"
+            accept={SPEC_FILE_ACCEPT}
             disabled={extracting}
             onChange={(e) => {
               handleSpecFiles(e.target.files);
@@ -181,15 +230,19 @@ export default function CustomProductForm({
             className="block w-full text-sm text-ink file:mr-3 file:border file:border-line file:bg-white file:px-3 file:py-1.5 file:text-sm"
           />
         </label>
-        <AttachmentLinks files={attachments} className="mt-1.5 text-xs text-brand-700" />
-        <p className="mt-1 text-xs text-brand-800">
-          {extracting
-            ? t("extracting")
-            : filledFrom
-              ? t("filledFromSpec", { name: filledFrom })
-              : t("specAiHint")}
+        <AttachmentLinks files={attachments} className="text-xs text-brand-700" />
+        <p className="text-xs text-brand-800">
+            {extracting
+              ? t("extracting")
+              : filledFrom
+                ? t("filledFromSpec", { name: filledFrom })
+                : t("specAiHint")}
+            {extracting || filledFrom ? null : (
+              <span className="mt-0.5 block text-mute">{t("specFileTypes")}</span>
+            )}
         </p>
       </div>
+      ) : null}
 
       <div className="grid grid-cols-1 sm:grid-cols-[1fr_6.5rem] gap-3">
         <label className="block min-w-0">
@@ -236,15 +289,16 @@ export default function CustomProductForm({
         <span className="mt-1 block text-xs text-mute">{t("customSpecHint")}</span>
       </label>
 
+      {SHOW_CUSTOM_IMAGE_UPLOAD ? (
       <div>
         <p className="text-sm font-medium text-ink">
           {t("uploadCustomImage")}{" "}
           <span className="font-normal text-mute">({t("optional")})</span>
         </p>
         <div
-          className={`mt-1 flex items-center gap-3 rounded-lg border border-dashed p-3 ${
-            imageOver ? "border-brand-600 bg-brand-50" : "border-line bg-paper/60"
-          }`}
+          className={`mt-1 flex items-center gap-3 rounded-lg border border-dashed ${
+            compact ? "p-2.5" : "p-3"
+          } ${imageOver ? "border-brand-600 bg-brand-50" : "border-line bg-paper/60"}`}
           onDragOver={(e) => {
             e.preventDefault();
             setImageOver(true);
@@ -259,7 +313,9 @@ export default function CustomProductForm({
           <button
             type="button"
             onClick={() => imageInputRef.current?.click()}
-            className="relative h-20 w-20 shrink-0 overflow-hidden border border-line bg-white"
+            className={`relative shrink-0 overflow-hidden border border-line bg-white ${
+              compact ? "h-14 w-14" : "h-20 w-20"
+            }`}
             aria-label={image ? t("replaceProductImage") : t("chooseProductImage")}
           >
             {image ? (
@@ -303,11 +359,12 @@ export default function CustomProductForm({
           />
         </div>
       </div>
+      ) : null}
 
       {error ? <p className="text-sm text-red-700 font-medium">{error}</p> : null}
       <div className="flex flex-wrap gap-2 pt-1">
         <button type="submit" className="btn-primary !px-4 !py-2.5" disabled={extracting}>
-          {extracting ? t("extracting") : mode === "edit" ? t("saveChanges") : t("addToDraft")}
+          {extracting ? t("extracting") : mode === "edit" ? t("saveChanges") : t("addToCart")}
         </button>
         {onCancel ? (
           <button type="button" className="btn-soft !px-4 !py-2.5" onClick={onCancel}>

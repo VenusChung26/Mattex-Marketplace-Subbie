@@ -6,7 +6,9 @@ import { useStore } from "../hooks/useStore";
 import { buildSupplierBankInfo, formatPrice, getRfq, rfqProjectName } from "../lib/store";
 import { useEffect, useMemo, useRef, useState } from "react";
 import SiteHeader from "../components/SiteHeader";
+import Seo from "../components/Seo";
 import { useLanguage } from "../i18n";
+import { withLocale } from "../lib/locale";
 import AttachmentLinks from "../components/AttachmentLinks";
 import { DEMO_QUOTED_RFQ, buildPrototypeQuotes } from "./rfqs-prototype/quoteMocks";
 import QuoteVariant from "./rfqs-prototype/QuoteCompareVariantA";
@@ -36,7 +38,7 @@ function canOpenDelivery(payment, acceptance, quotes, po) {
 function downloadRfq(rfq) {
   if (!rfq) return;
   const lines = [
-    `Subbie Storefront — RFQ`,
+    `Mattex Marketplace — RFQ`,
     `ID: ${rfq.id}`,
     `Status: ${rfq.status}`,
     `Submitted: ${new Date(rfq.submittedAt).toLocaleString()}`,
@@ -416,7 +418,7 @@ function RfqDocSwitcher({ list, selectedId, onSelect, acceptedByRfq, t }) {
 
 export default function RfqsPage() {
   const { user, rfqs } = useStore();
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
   const [params] = useSearchParams();
   const storedList = rfqs || [];
   const usingDemo = storedList.length === 0;
@@ -480,7 +482,9 @@ export default function RfqsPage() {
               ? "quoted"
               : selected?.status === "whatsapp_sent"
                 ? t("waSavedInSubbie")
-                : selected?.status || "";
+                : selected?.status === "email_sent"
+                  ? t("emailSavedInSubbie")
+                  : selected?.status || "";
 
   function setActiveStep(stepId) {
     if (!selected) return;
@@ -505,7 +509,7 @@ export default function RfqsPage() {
         <div className="bg-white border border-line rounded-xl p-6">
           <h2 className="text-lg font-bold text-brand-800">{t("loginRequired")}</h2>
           <p className="mt-2 text-sm text-mute">{t("loginRequiredRfq")}</p>
-          <Link to="/login" className="btn-primary mt-5 inline-flex">
+          <Link to={withLocale(lang, "/login")} className="btn-primary mt-5 inline-flex">
             {t("login")}
           </Link>
         </div>
@@ -724,9 +728,11 @@ export default function RfqsPage() {
 }
 
 function Shell({ children, wide = false, fluid = false }) {
+  const { t, lang } = useLanguage();
   const width = fluid ? "w-full max-w-none" : wide ? "max-w-[100rem]" : "max-w-3xl";
   return (
     <div className="bg-paper min-h-screen">
+      <Seo lang={lang} path={withLocale(lang, "/rfqs")} title={`${t("myRfqs")} | Mattex Marketplace`} description={t("loginRequiredRfq")} noindex />
       <SiteHeader fluid={fluid} wide={wide} />
       <main className={`${width} mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-10`}>{children}</main>
     </div>

@@ -15,7 +15,7 @@ body {
   outline: 2px solid #245a41;
   outline-offset: 2px;
 }
-#products, #categories, #top, #green, #support, #suppliers {
+#products, #categories, #top, #green, #sales, #support, #suppliers, #catalog-top, #add-custom-product {
   scroll-margin-top: 5.5rem;
 }
 

@@ -1,4 +1,4 @@
-import { formatPrice, formatQuoteDate, getEffectivePrice } from "../lib/store";
+import { formatPrice, formatQuoteDate, formatQuoteDateShort, getEffectivePrice } from "../lib/store";
 import { useLanguage } from "../i18n";
 
 function daysUntil(iso) {
@@ -31,6 +31,7 @@ export default function ProductPrice({ product, size = "card", className = "" })
   const { displayPrice, status, quote } = getEffectivePrice(product);
   const large = size === "detail";
   const date = quote?.validUntil ? formatQuoteDate(quote.validUntil, lang) : "";
+  const shortDate = quote?.validUntil ? formatQuoteDateShort(quote.validUntil, lang) : "";
   const urgency = status === "quoted" && quote?.validUntil ? quoteUrgency(quote.validUntil) : "ok";
 
   const showListStrike = status === "quoted" && quote?.listPrice != null && quote.listPrice !== displayPrice;
@@ -63,17 +64,23 @@ export default function ProductPrice({ product, size = "card", className = "" })
           <span className="ml-1.5">{t("quotedFromQuotation")}</span>
         </p>
       ) : null}
-      {status === "quoted" && date ? (
+      {status === "quoted" && (large ? date : shortDate) ? (
         <p
           className={`${chip} inline-block w-fit max-w-full leading-snug font-semibold border ${URGENCY_CHIP[urgency]}`}
         >
-          {t("quotedPriceValidUntil")}{" "}
-          <span className="whitespace-nowrap">
-            {date}
-            <span className={`ml-2.5 ${URGENCY_SUB[urgency]}`}>
-              {t("quotedPriceMonths", { n: quote.months || 3 })}
-            </span>
-          </span>
+          {large ? (
+            <>
+              {t("quotedPriceValidUntil")}{" "}
+              <span className="whitespace-nowrap">
+                {date}
+                <span className={`ml-2.5 ${URGENCY_SUB[urgency]}`}>
+                  {t("quotedPriceMonths", { n: quote.months || 3 })}
+                </span>
+              </span>
+            </>
+          ) : (
+            t("quotedPriceUntilShort", { date: shortDate })
+          )}
         </p>
       ) : null}
       {expired ? (

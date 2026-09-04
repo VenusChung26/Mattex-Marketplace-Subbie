@@ -1,13 +1,25 @@
 import { useEffect, useState } from "react";
 import { useLanguage } from "../i18n";
+import { SPEC_FILE_ACCEPT } from "./CustomProductForm";
 import { attachmentsFromFiles, extractSpecItems } from "../lib/extractSpec";
+import { suggestCatalogMatch } from "../lib/store";
 
-const emptyItem = () => ({
-  id: `ex-new-${Date.now().toString(36)}`,
-  name: "",
-  category: "",
-  spec: "",
-});
+function emptyItem() {
+  return {
+    id: `ex-new-${Date.now().toString(36)}`,
+    name: "",
+    category: "",
+    spec: "",
+    action: "custom",
+    match: null,
+  };
+}
+
+function enrichItem(item) {
+  const match = suggestCatalogMatch(item);
+  const action = item.action || (match ? "sku" : "custom");
+  return { ...item, match, action: match || action !== "sku" ? action : "custom" };
+}
 
 export default function AiSpecExtractModal({
   open,
@@ -46,7 +58,7 @@ export default function AiSpecExtractModal({
     extractSpecItems({ files: picked, text: "", categories })
       .then((extracted) => {
         if (cancelled) return;
-        setItems(extracted);
+        setItems(extracted.map(enrichItem));
         setBusy(false);
       })
       .catch(() => {
@@ -77,7 +89,7 @@ export default function AiSpecExtractModal({
     setError("");
     try {
       const extracted = await extractSpecItems({ files, text: pasteText, categories });
-      setItems(extracted);
+      setItems(extracted.map(enrichItem));
       setStep("review");
     } catch {
       setError(t("extractFailed"));
@@ -87,7 +99,22 @@ export default function AiSpecExtractModal({
   }
 
   function updateItem(id, patch) {
-    setItems((prev) => prev.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+    setItems((prev) =>
+      prev.map((item) => {
+        if (item.id !== id) return item;
+        const next = { ...item, ...patch };
+        if (patch.name != null || patch.spec != null || patch.category != null) {
+          const match = suggestCatalogMatch(next);
+          const keepAction = patch.action || next.action;
+          return {
+            ...next,
+            match,
+            action: keepAction === "sku" && !match ? "custom" : keepAction,
+          };
+        }
+        return next;
+      })
+    );
   }
 
   async function searchReviewed() {
@@ -100,13 +127,32 @@ export default function AiSpecExtractModal({
     setError("");
     try {
       const attachments = await attachmentsFromFiles(files, pasteText);
+      const skuIds = [];
+      const skuItems = [];
+      const customs = [];
+      for (const item of ready) {
+        const action = item.action || (item.match ? "sku" : "custom");
+        if (action === "skip") continue;
+        if (action === "sku" && item.match?.id) {
+          skuIds.push(item.match.id);
+          skuItems.push({
+            name: item.name.trim(),
+            category: item.category || item.match.category || "",
+            spec: String(item.spec || "").trim(),
+          });
+        } else {
+          customs.push({
+            name: item.name.trim(),
+            category: item.category || "",
+            spec: String(item.spec || "").trim(),
+          });
+        }
+      }
       onSearch({
-        items: ready.map((item) => ({
-          name: item.name.trim(),
-          category: item.category || "",
-          spec: String(item.spec || "").trim(),
-        })),
+        items: skuItems,
         attachments,
+        productIds: skuIds,
+        customs,
       });
       onClose();
     } catch (err) {
@@ -150,7 +196,7 @@ export default function AiSpecExtractModal({
               <input
                 type="file"
                 multiple
-                accept=".pdf,.txt,.csv,.doc,.docx,image/*"
+                accept={SPEC_FILE_ACCEPT}
                 onChange={(e) => onPickFiles(e.target.files)}
                 className="block w-full text-sm text-ink file:mr-3 file:border file:border-line file:bg-paper file:px-3 file:py-1.5 file:text-sm"
               />
@@ -235,19 +281,63 @@ export default function AiSpecExtractModal({
                     />
                   </label>
                 </div>
+                <div className="border border-line bg-paper/60 px-3 py-2 space-y-1.5">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-mute">
+                    {item.match ? t("extractSuggestedSku") : t("extractNoMatch")}
+                  </p>
+                  {item.match ? (
+                    <p className="text-sm font-semibold text-ink">
+                      {item.match.name}
+                      <span className="ml-2 text-xs font-medium text-mute">{item.match.productNo}</span>
+                    </p>
+                  ) : null}
+                  <div className="flex flex-wrap gap-3 pt-1">
+                    <label className={`inline-flex items-center gap-1.5 text-xs font-semibold ${item.match ? "text-ink" : "text-mute"}`}>
+                      <input
+                        type="radio"
+                        name={`extract-action-${item.id}`}
+                        checked={item.action === "sku"}
+                        disabled={!item.match}
+                        onChange={() => updateItem(item.id, { action: "sku" })}
+                        className="accent-brand-600"
+                      />
+                      {t("extractUseSku")}
+                    </label>
+                    <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-ink">
+                      <input
+                        type="radio"
+                        name={`extract-action-${item.id}`}
+                        checked={item.action === "custom"}
+                        onChange={() => updateItem(item.id, { action: "custom" })}
+                        className="accent-brand-600"
+                      />
+                      {t("extractAsCustom")}
+                    </label>
+                    <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-ink">
+                      <input
+                        type="radio"
+                        name={`extract-action-${item.id}`}
+                        checked={item.action === "skip"}
+                        onChange={() => updateItem(item.id, { action: "skip" })}
+                        className="accent-brand-600"
+                      />
+                      {t("extractSkip")}
+                    </label>
+                  </div>
+                </div>
               </div>
             ))}
             <button
               type="button"
               className="text-sm font-semibold text-brand-700"
-              onClick={() => setItems((prev) => [...prev, emptyItem()])}
+              onClick={() => setItems((prev) => [...prev, enrichItem(emptyItem())])}
             >
               + {t("addExtractedLine")}
             </button>
             {error ? <p className="text-sm text-red-700 font-medium">{error}</p> : null}
             <div className="flex flex-wrap gap-2 pt-2">
               <button type="button" className="btn-primary !px-5" onClick={searchReviewed}>
-                {confirmLabel || t("searchExtracted")}
+                {confirmLabel || t("applyExtracted")}
               </button>
               <button type="button" className="btn-soft !px-5" onClick={() => setStep("source")}>
                 {t("back")}

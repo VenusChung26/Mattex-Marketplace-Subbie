@@ -1,33 +1,36 @@
 import { useEffect, useId, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import ProductCard from "../components/ProductCard";
-import AuthModal from "../components/AuthModal";
 import SupplierLogo from "../components/SupplierLogo";
 import SiteFooter from "../components/SiteFooter";
 import SiteHeader from "../components/SiteHeader";
+import Seo, { breadcrumbJsonLd, orgJsonLd } from "../components/Seo";
 import { useLanguage } from "../i18n";
+import { allProductsTo, siteOrigin, withLocale } from "../lib/locale";
+import { seoCopy } from "../lib/seoCopy";
+import { SHOW_RFQ } from "../lib/flags";
 import {
   addToCart,
   getEffectivePrice,
   getProductsBySupplier,
   getSupplier,
   getTopProductsForSupplier,
-  isLoggedIn,
+  isHitProduct,
   searchSupplierProducts,
-  setPendingCart,
+  whatsappNow,
 } from "../lib/store";
 
 export default function SupplierPage() {
   const { slug } = useParams();
   const supplier = getSupplier(slug);
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("");
   const [priceFilter, setPriceFilter] = useState("all");
   const [stockFilter, setStockFilter] = useState("all");
   const [greenOnly, setGreenOnly] = useState(false);
-  const [authOpen, setAuthOpen] = useState(false);
   const [toast, setToast] = useState("");
+  const [catalogShown, setCatalogShown] = useState(24);
 
   useEffect(() => {
     if (!toast) return;
@@ -42,7 +45,12 @@ export default function SupplierPage() {
     setPriceFilter("all");
     setStockFilter("all");
     setGreenOnly(false);
+    setCatalogShown(24);
   }, [slug]);
+
+  useEffect(() => {
+    setCatalogShown(24);
+  }, [searchQuery, selectedCategory, priceFilter, stockFilter, greenOnly]);
 
   const top = useMemo(
     () => (supplier ? getTopProductsForSupplier(supplier.slug, 5) : []),
@@ -69,8 +77,8 @@ export default function SupplierPage() {
       ? searched.filter((p) => p.category === selectedCategory)
       : searched;
     if (greenOnly) list = list.filter((p) => p.green);
-    if (priceFilter === "priced") list = list.filter((p) => getEffectivePrice(p).displayPrice != null);
     if (priceFilter === "unpriced") list = list.filter((p) => getEffectivePrice(p).displayPrice == null);
+    if (priceFilter === "hot") list = list.filter((p) => isHitProduct(p));
     if (stockFilter !== "all") list = list.filter((p) => p.stockStatus === stockFilter);
     return list;
   }, [searched, selectedCategory, greenOnly, priceFilter, stockFilter]);
@@ -83,7 +91,7 @@ export default function SupplierPage() {
           <div className="bg-white border border-line rounded-xl p-8 text-center">
             <h1 className="reveal text-xl font-bold text-brand-800">{t("supplierNotFound")}</h1>
             <p className="mt-2 text-sm text-mute">{t("supplierNotFoundHint")}</p>
-            <Link to={{ pathname: "/", hash: "products" }} className="btn-primary mt-5 inline-flex">
+            <Link to={allProductsTo(lang)} className="btn-primary mt-5 inline-flex">
               {t("browseCatalog")}
             </Link>
           </div>
@@ -93,9 +101,8 @@ export default function SupplierPage() {
   }
 
   function handleAdd(productId, intent = "quote") {
-    if (!isLoggedIn()) {
-      setPendingCart(productId, intent);
-      setAuthOpen(true);
+    if (intent === "buy-now" || intent === "quote-now") {
+      whatsappNow(productId, { kind: intent === "buy-now" ? "buy" : "quote", lang });
       return;
     }
     addToCart(productId, { intent });
@@ -114,6 +121,20 @@ export default function SupplierPage() {
 
   return (
     <div className="bg-paper min-h-screen">
+      <Seo
+        lang={lang}
+        path={withLocale(lang, `/supplier/${supplier.slug}`)}
+        title={seoCopy(lang).supplierTitle(supplier.name)}
+        description={seoCopy(lang).supplierDesc(supplier.name)}
+        image="/og-default.jpg"
+        jsonLd={[
+          orgJsonLd(siteOrigin()),
+          breadcrumbJsonLd(siteOrigin(), [
+            { name: "Mattex Marketplace", path: withLocale(lang, "/") },
+            { name: supplier.name, path: withLocale(lang, `/supplier/${supplier.slug}`) },
+          ]),
+        ]}
+      />
       <SiteHeader />
 
       <section className="relative overflow-hidden bg-charcoal text-white min-h-[42vh] flex items-end">
@@ -224,8 +245,8 @@ export default function SupplierPage() {
                     className="field-input"
                   >
                     <option value="all">{t("priceFilterAll")}</option>
-                    <option value="priced">{t("priceFilterPriced")}</option>
                     <option value="unpriced">{t("priceFilterUnpriced")}</option>
+                    <option value="hot">{t("priceFilterHot")}</option>
                   </select>
                 </label>
                 <button
@@ -260,17 +281,30 @@ export default function SupplierPage() {
                     >
                       {t("clearFilters")}
                     </button>
-                    <Link to={{ pathname: "/", hash: "products" }} className="btn-primary !px-5">
+                    <Link to={allProductsTo(lang)} className="btn-primary !px-5">
                       {t("browseCatalog")}
                     </Link>
                   </div>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-                  {products.map((p) => (
-                    <ProductCard key={p.id} product={p} onAdd={handleAdd} />
-                  ))}
-                </div>
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                    {products.slice(0, catalogShown).map((p) => (
+                      <ProductCard key={p.id} product={p} onAdd={handleAdd} />
+                    ))}
+                  </div>
+                  {catalogShown < products.length ? (
+                    <div className="mt-6 flex justify-center">
+                      <button
+                        type="button"
+                        onClick={() => setCatalogShown((n) => n + 24)}
+                        className="btn-soft !px-5 !py-2.5"
+                      >
+                        {t("showMore")} ({products.length - catalogShown})
+                      </button>
+                    </div>
+                  ) : null}
+                </>
               )}
             </div>
           </div>
@@ -279,7 +313,6 @@ export default function SupplierPage() {
         <SiteFooter />
       </main>
 
-      <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} />
       {toast ? (
         <div className="toast fixed bottom-5 left-1/2 -translate-x-1/2 z-50 bg-charcoal text-white text-sm px-4 py-2.5 shadow-lg rounded-none">
           {toast}
@@ -472,6 +505,17 @@ function SectionLabel({ children }) {
 }
 
 function SupplierMetrics({ metrics, t }) {
+  if (metrics?.empty) {
+    return (
+      <article className="relative overflow-hidden rounded-2xl bg-white/90 backdrop-blur-md border border-white/80 shadow-[0_18px_48px_rgba(16,21,19,0.18)]">
+        <div className="relative px-6 py-10 text-center">
+          <SectionLabel>{t("supplierScorecard")}</SectionLabel>
+          <p className="mt-5 font-display text-3xl font-semibold text-ink">—</p>
+          <p className="mt-2 text-sm text-mute">{t("noPerformanceData")}</p>
+        </div>
+      </article>
+    );
+  }
   const demandMax = Math.max(metrics.searchCount, metrics.foundCount, metrics.rfqCount, 1);
   return (
     <article className="relative overflow-hidden rounded-2xl bg-white/90 backdrop-blur-md border border-white/80 shadow-[0_18px_48px_rgba(16,21,19,0.18)]">
@@ -514,14 +558,14 @@ function SupplierMetrics({ metrics, t }) {
           <div className="pt-4">
             <SectionLabel>{t("metricDemandHint")}</SectionLabel>
           </div>
-          <div className="grid sm:grid-cols-3">
+          <div className={`grid ${SHOW_RFQ ? "sm:grid-cols-3" : "sm:grid-cols-2"}`}>
             <CountStat
               value={metrics.searchCount}
               label={t("metricSearches")}
               icon={<SearchGlyph />}
               share={metrics.searchCount / demandMax}
             />
-            <div className="sm:border-x sm:border-line/80">
+            <div className={SHOW_RFQ ? "sm:border-x sm:border-line/80" : "sm:border-l sm:border-line/80"}>
               <CountStat
                 value={metrics.foundCount}
                 label={t("metricFound")}
@@ -529,12 +573,14 @@ function SupplierMetrics({ metrics, t }) {
                 share={metrics.foundCount / demandMax}
               />
             </div>
+            {SHOW_RFQ ? (
             <CountStat
               value={metrics.rfqCount}
               label={t("metricRfqsReceived")}
               icon={<RfqGlyph />}
               share={metrics.rfqCount / demandMax}
             />
+            ) : null}
           </div>
         </div>
       </div>

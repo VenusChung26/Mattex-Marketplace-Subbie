@@ -1,13 +1,13 @@
 import { useLanguage } from "../i18n";
 import { openUrlForAttachment } from "../lib/extractSpec";
 
-export default function AttachmentLinks({ files, className = "mt-0.5 text-xs text-brand-700" }) {
+export default function AttachmentLinks({ files, className = "mt-0.5 text-xs text-brand-700", label }) {
   const { t } = useLanguage();
   if (!files?.length) return null;
 
   return (
     <p className={className}>
-      {t("attachedDocument")}:{" "}
+      {label || t("uploadSpecForItem")}:{" "}
       {files.map((file, i) => {
         const href = openUrlForAttachment(file);
         return (

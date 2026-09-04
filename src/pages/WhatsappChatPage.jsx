@@ -6,7 +6,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import SiteHeader from "../components/SiteHeader";
 import PrototypeSwitcher from "../components/PrototypeSwitcher";
+import Seo from "../components/Seo";
 import { useLanguage } from "../i18n";
+import { withLocale } from "../lib/locale";
+import { SHOW_RFQ } from "../lib/flags";
 import {
   formatPrice,
   getEffectivePrice,
@@ -14,6 +17,7 @@ import {
   getProduct,
   getRfq,
   getTopProducts,
+  saveRfq,
   supplierSlug,
 } from "../lib/store";
 import {
@@ -56,6 +60,7 @@ function demoRfq() {
   }));
   return {
     id: "RFQ-DEMO-WA",
+    askKind: "buy",
     project: "Kai Tak Site A",
     pricedSubtotal: lines.reduce((sum, l) => sum + (Number(l.unitPrice) || 0) * l.qty, 0),
     lines,
@@ -71,20 +76,38 @@ function buildThreads(rfq, fallbackName) {
     if (!groups.has(slug)) groups.set(slug, { slug, supplier: name, lines: [] });
     groups.get(slug).lines.push(line);
   }
-  return Array.from(groups.values()).map((g) => ({
+  const threads = Array.from(groups.values()).map((g) => ({
     ...g,
     previewTime: clock(),
   }));
+  if (threads.length) return threads;
+  return [{ slug: "sales", supplier: fallbackName, lines: [], previewTime: clock() }];
+}
+
+function isQuoteAsk(rfq) {
+  return rfq?.askKind === "quote";
+}
+
+function askPreviewText(rfq, t) {
+  return isQuoteAsk(rfq) ? t("waWantQuote") : t("waWantToBuy");
 }
 
 function seedMessages(thread, t, rfq) {
-  const names = (thread.lines || []).map((l) => `• ${l.name} × ${l.qty}${l.unitPrice != null ? ` (${formatPrice(l.unitPrice)})` : ""}`).join("\n");
-  const text = `${t("waWantToBuy")}\n${t("waOrderIntro")}\n${names}${rfq?.id ? `\n${rfq.id}` : ""}`;
+  const names = (thread.lines || [])
+    .map((l) => {
+      const remark = l.remark ? ` — ${l.remark}` : "";
+      return `• ${l.name} × ${l.qty}${l.unitPrice != null ? ` (${formatPrice(l.unitPrice)})` : ""}${remark}`;
+    })
+    .join("\n");
+  const intro = isQuoteAsk(rfq) ? t("waWantQuote") : t("waWantToBuy");
+  const body = isQuoteAsk(rfq) ? t("waQuoteIntro") : t("waOrderIntro");
+  const text = `${intro}\n${body}\n${names}${rfq?.id ? `\n${rfq.id}` : ""}`;
   return [
     {
       id: "order-1",
       from: "me",
       kind: "order",
+      askKind: isQuoteAsk(rfq) ? "quote" : "buy",
       text,
       time: clock(),
       lines: thread.lines,
@@ -92,19 +115,33 @@ function seedMessages(thread, t, rfq) {
   ];
 }
 
+function linesFingerprint(lines) {
+  return (lines || []).map((l) => `${l.productId}:${l.qty}:${l.remark || ""}`).join("|");
+}
+
+function pricedTotal(lines) {
+  return (lines || []).reduce((sum, l) => sum + (Number(l.unitPrice) || 0) * (Number(l.qty) || 0), 0);
+}
+
 export default function WhatsappChatPage() {
   const { rfqId } = useParams();
   const [params] = useSearchParams();
   const variant = String(params.get("variant") || "A").toUpperCase();
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
   const stored = rfqId ? getRfq(decodeURIComponent(rfqId)) : null;
   const pending = stored ? null : getPendingWhatsappOrder();
+  const source = stored || pending || demoRfq();
   const isDemo = !stored && !pending;
-  const rfq = useMemo(() => stored || pending || demoRfq(), [stored?.id, pending?.id]);
+  const [rfq, setRfq] = useState(source);
 
+  useEffect(() => {
+    setRfq(source);
+  }, [source.id]);
+
+  const lineKey = linesFingerprint(rfq.lines);
   const threads = useMemo(
     () => buildThreads(rfq, t("waDemoSupplier")),
-    [rfq.id, rfq.lines?.length, t]
+    [rfq.id, lineKey, t]
   );
 
   const [activeSlug, setActiveSlug] = useState(() => (threads.length > 1 && variant === "A" ? "" : threads[0]?.slug || ""));
@@ -184,6 +221,46 @@ export default function WhatsappChatPage() {
     }, 900);
   }
 
+  function applyLines(nextLines) {
+    const nextRfq = {
+      ...rfq,
+      lines: nextLines,
+      pricedSubtotal: pricedTotal(nextLines),
+    };
+    setRfq(nextRfq);
+    if (!isDemo) saveRfq(nextRfq);
+    setInbox((prev) => {
+      const out = { ...prev };
+      const nextThreads = buildThreads(nextRfq, t("waDemoSupplier"));
+      const slugs = new Set(nextThreads.map((item) => item.slug));
+      for (const item of nextThreads) {
+        const current = out[item.slug] || [];
+        const seeded = seedMessages(item, t, nextRfq)[0];
+        out[item.slug] = current.map((m) =>
+          m.kind === "order"
+            ? { ...m, lines: item.lines, text: seeded.text, askKind: nextRfq.askKind === "quote" ? "quote" : "buy" }
+            : m
+        );
+      }
+      for (const slug of Object.keys(out)) {
+        if (!slugs.has(slug)) delete out[slug];
+      }
+      return out;
+    });
+  }
+
+  function onChangeLine(productId, patch) {
+    applyLines(
+      (rfq.lines || []).map((line) =>
+        String(line.productId) === String(productId) ? { ...line, ...patch } : line
+      )
+    );
+  }
+
+  function onRemoveLine(productId) {
+    applyLines((rfq.lines || []).filter((line) => String(line.productId) !== String(productId)));
+  }
+
   const shared = {
     threads,
     activeSlug,
@@ -195,24 +272,29 @@ export default function WhatsappChatPage() {
     onSend,
     rfq,
     isDemo,
+    askPreview: askPreviewText(rfq, t),
+    onChangeLine,
+    onRemoveLine,
   };
 
   return (
     <div className="min-h-screen bg-[#0b141a]">
+      <Seo lang={lang} path={withLocale(lang, "/whatsapp-chat")} title={`${t("whatsapp")} | Mattex Marketplace`} description={t("waChatDemoBanner")} noindex />
       <SiteHeader />
       <div className="border-b border-white/10 bg-[#111b21] px-4 py-2 text-center text-[11px] text-[#8696a0]">
         {t("waChatDemoBanner")}
-        {isDemo ? ` · ${t("waDemoHint")}` : ` · ${t("waSentOrder", { id: rfq.id })} · ${t("waSavedInSubbie")}`}
+        {isDemo ? ` · ${t("waDemoHint")}` : ` · ${t("waSentOrder", { id: rfq.id })}`}
+        {SHOW_RFQ && !isDemo ? ` · ${t("waSavedInSubbie")}` : ""}
         {" · "}
-        {!isDemo ? (
+        {SHOW_RFQ && !isDemo ? (
           <>
-            <Link to={`/rfqs?id=${encodeURIComponent(rfq.id)}`} className="text-[#00a884] hover:underline">
+            <Link to={withLocale(lang, `/rfqs?id=${encodeURIComponent(rfq.id)}`)} className="text-[#00a884] hover:underline">
               {t("waViewRfqs")}
             </Link>
             {" · "}
           </>
         ) : null}
-        <Link to="/rfq" className="text-[#00a884] hover:underline">
+        <Link to={withLocale(lang, "/rfq")} className="text-[#00a884] hover:underline">
           {t("waBackDraft")}
         </Link>
       </div>
