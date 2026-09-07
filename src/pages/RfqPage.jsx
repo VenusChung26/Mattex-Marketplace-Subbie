@@ -25,6 +25,7 @@ import {
   setLineIntent,
   setLineRequestedPrice,
   submitRfq,
+  saveRfq,
   openWhatsappDraft,
   updateCustomLine,
 } from "../lib/store";
@@ -37,6 +38,7 @@ import Seo from "../components/Seo";
 import { VariantA, ConfirmRfqView, RFQ_PROTOTYPE_VARIANTS, CUSTOM_PLACEMENT } from "./rfq-prototype/RfqDraftVariants";
 import PrototypeSwitcher from "../components/PrototypeSwitcher";
 import { SHOW_RFQ } from "../lib/flags";
+import { submitRfqToTms } from "../lib/tmsSubmit";
 
 export default function RfqPage() {
   const { user, draft } = useStore();
@@ -67,6 +69,7 @@ export default function RfqPage() {
   const [editingId, setEditingId] = useState(null);
   const [showAddCustom, setShowAddCustom] = useState(false);
   const [confirmKind, setConfirmKind] = useState(null);
+  const [channelStatus, setChannelStatus] = useState({});
 
   const selectableLineIds = totals.lines
     .filter((line) => line.custom || !isDiscontinued(getProduct(line.productId)))
@@ -275,7 +278,7 @@ export default function RfqPage() {
     setFormErrorKind("");
   }
 
-  function onContinueKind(kind, channel = "whatsapp") {
+  async function onContinueKind(kind, channel = "whatsapp") {
     const ids = totals.lines
       .filter((line) => (kind === "buy" ? line.intent === "buy" : line.intent !== "buy"))
       .map((line) => String(line.productId))
@@ -306,6 +309,47 @@ export default function RfqPage() {
       setDraftAddress(address);
       setDraftCanonicalCategory(canonicalCategory);
       setDraftAcceptSubstitutes(acceptSubstitutes);
+      const lines = totals.lines.filter((line) => ids.includes(String(line.productId)));
+      if (channel === "tms") {
+        setChannelStatus((prev) => ({ ...prev, [kind]: { state: "progress" } }));
+        const result = submitRfq(ids, { kind, skipLogistics: true, channel: "tms" });
+        if (!result.ok) {
+          setFormErrorKind(kind);
+          setFormError(
+            result.error === "not_logged_in"
+              ? t("loginRequiredRfq")
+              : result.error === "discontinued"
+                ? t("discontinuedSubmitError")
+                : t("submitFailed")
+          );
+          setChannelStatus((prev) => ({ ...prev, [kind]: null }));
+          return;
+        }
+        try {
+          const tms = await submitRfqToTms({ kind, rfq: result.rfq, lines });
+          saveRfq({
+            ...result.rfq,
+            tmsId: tms.id,
+            tmsDocumentNo: tms.documentNo,
+            tmsUrl: tms.url,
+          });
+          setChannelStatus((prev) => ({
+            ...prev,
+            [kind]: {
+              state: "success",
+              id: tms.id,
+              documentNo: tms.documentNo,
+              url: tms.url,
+            },
+          }));
+        } catch (error) {
+          setChannelStatus((prev) => ({
+            ...prev,
+            [kind]: { state: "error", message: error?.message || t("submitFailed") },
+          }));
+        }
+        return;
+      }
       const result = submitRfq(ids, { kind, skipLogistics: true, channel: "whatsapp" });
       if (!result.ok) {
         setFormErrorKind(kind);
@@ -318,7 +362,6 @@ export default function RfqPage() {
         );
         return;
       }
-      const lines = totals.lines.filter((line) => ids.includes(String(line.productId)));
       openWhatsappDraft(lines, kind, { refNo: result.rfq.id });
       return;
     }
@@ -381,6 +424,7 @@ export default function RfqPage() {
     acceptSubstitutes,
     formError,
     formErrorKind,
+    channelStatus,
     toggleId,
     toggleAll,
     toggleSection,

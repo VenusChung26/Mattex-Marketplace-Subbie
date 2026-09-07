@@ -1467,11 +1467,27 @@ function submitRfq(productIds, options = {}) {
 
   const totals = draftTotals({ ...draft, lines: selectedLines });
   const channel =
-    options.channel === "whatsapp" ? "whatsapp" : options.channel === "email" ? "email" : "rfq";
+    options.channel === "whatsapp"
+      ? "whatsapp"
+      : options.channel === "email"
+        ? "email"
+        : options.channel === "tms"
+          ? "tms"
+          : "rfq";
   const rfq = {
     id: nextRfqId(),
-    status: channel === "whatsapp" ? "whatsapp_sent" : channel === "email" ? "email_sent" : "submitted",
+    status:
+      channel === "whatsapp"
+        ? "whatsapp_sent"
+        : channel === "email"
+          ? "email_sent"
+          : channel === "tms"
+            ? "tms_sent"
+            : "submitted",
     channel,
+    tmsId: options.tms?.id || null,
+    tmsDocumentNo: options.tms?.documentNo || "",
+    tmsUrl: options.tms?.url || "",
     askKind: options.kind === "buy" ? "buy" : "quote",
     submittedAt: new Date().toISOString(),
     note: totals.note,

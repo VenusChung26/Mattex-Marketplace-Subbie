@@ -5,6 +5,7 @@
  */
 import { Link } from "react-router-dom";
 import { useEffect, useRef, useState } from "react";
+import { Loader2 } from "lucide-react";
 import { draftTotals, formatPrice, getEffectivePrice, getProduct, isDiscontinued, SAMPLE_PROJECTS } from "../../lib/store";
 import CustomProductForm from "../../components/CustomProductForm";
 import CustomProductModal from "../../components/CustomProductModal";
@@ -172,6 +173,7 @@ function IntentDraftSections(props) {
     onContinueKind,
     formError,
     formErrorKind,
+    channelStatus,
     embedded = false,
     showActions = true,
     customPlacement = "inline",
@@ -353,6 +355,7 @@ function IntentDraftSections(props) {
               selectedIds={buySelected}
               selectedTotals={buyTotals}
               formError={formErrorKind === "buy" ? formError : ""}
+              channelStatus={channelStatus?.buy}
               onSubmit={() => onContinueKind("buy")}
               onSubmitChannel={(channel) => onContinueKind("buy", channel)}
               submitLabel={t("createOrder")}
@@ -393,6 +396,7 @@ function IntentDraftSections(props) {
               selectedIds={quoteSelected}
               selectedTotals={quoteTotals}
               formError={formErrorKind === "quote" ? formError : ""}
+              channelStatus={channelStatus?.quote}
               onSubmit={() => onContinueKind("quote")}
               onSubmitChannel={(channel) => onContinueKind("quote", channel)}
               submitLabel={t("requestQuoteCta")}
@@ -613,14 +617,23 @@ export function VariantB(props) {
               {formErrorKind === "buy" && formError ? (
                 <p className="mt-2 text-sm text-red-700 font-medium">{formError}</p>
               ) : null}
+              <ChannelNotice status={props.channelStatus?.buy} />
               <div className="mt-3 flex flex-wrap gap-2">
                 <button
                   type="button"
                   onClick={() => onContinueKind("buy", "whatsapp")}
-                  disabled={buySelected.length === 0}
+                  disabled={buySelected.length === 0 || props.channelStatus?.buy?.state === "progress"}
                   className="btn-primary flex-1 !py-3 disabled:opacity-45"
                 >
                   {t("sendViaWhatsapp")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onContinueKind("buy", "tms")}
+                  disabled={buySelected.length === 0 || props.channelStatus?.buy?.state === "progress"}
+                  className="btn-soft flex-1 !py-3 disabled:opacity-45"
+                >
+                  {t("submitToTms")}
                 </button>
               </div>
             </div>
@@ -631,14 +644,23 @@ export function VariantB(props) {
               {formErrorKind === "quote" && formError ? (
                 <p className="mt-2 text-sm text-red-700 font-medium">{formError}</p>
               ) : null}
+              <ChannelNotice status={props.channelStatus?.quote} />
               <div className="mt-3 flex flex-wrap gap-2">
                 <button
                   type="button"
                   onClick={() => onContinueKind("quote", "whatsapp")}
-                  disabled={quoteSelected.length === 0}
+                  disabled={quoteSelected.length === 0 || props.channelStatus?.quote?.state === "progress"}
                   className="btn-primary flex-1 !py-3 disabled:opacity-45"
                 >
                   {t("sendViaWhatsapp")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onContinueKind("quote", "tms")}
+                  disabled={quoteSelected.length === 0 || props.channelStatus?.quote?.state === "progress"}
+                  className="btn-soft flex-1 !py-3 disabled:opacity-45"
+                >
+                  {t("submitToTms")}
                 </button>
               </div>
             </div>
@@ -1467,6 +1489,44 @@ function MetaForm({
   );
 }
 
+function ChannelNotice({ status }) {
+  const { t } = useLanguage();
+  if (!status?.state) {
+    return <p className="mt-2 text-[11px] text-mute">{t("tmsInDevelop")}</p>;
+  }
+  if (status.state === "progress") {
+    return (
+      <p className="mt-2 text-sm text-brand-800 font-medium inline-flex items-center gap-1.5">
+        <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" aria-hidden />
+        {t("tmsSubmitInProgress")}
+      </p>
+    );
+  }
+  if (status.state === "success") {
+    return (
+      <p className="mt-2 text-sm text-brand-800 font-medium">
+        {t("tmsSubmitSuccess", { id: status.documentNo || status.id })}
+        {status.url ? (
+          <>
+            {" "}
+            <a href={status.url} target="_blank" rel="noreferrer" className="underline">
+              {t("tmsOpenInbound")}
+            </a>
+          </>
+        ) : null}
+      </p>
+    );
+  }
+  if (status.state === "error") {
+    return (
+      <p className="mt-2 text-sm text-red-700 font-medium">
+        {t("tmsSubmitError", { message: status.message || "" })}
+      </p>
+    );
+  }
+  return <p className="mt-2 text-[11px] text-mute">{t("tmsInDevelop")}</p>;
+}
+
 function SubmitBar({
   selectedIds,
   selectedTotals,
@@ -1476,8 +1536,10 @@ function SubmitBar({
   submitLabel,
   bare = false,
   showKeepShopping = true,
+  channelStatus,
 }) {
   const { t } = useLanguage();
+  const busy = channelStatus?.state === "progress";
   return (
     <div className={bare ? "" : "bg-white border border-line rounded-xl p-4 sm:p-5"}>
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -1503,14 +1565,25 @@ function SubmitBar({
             </Link>
           ) : null}
           {onSubmitChannel ? (
-            <button
-              type="button"
-              onClick={() => onSubmitChannel("whatsapp")}
-              disabled={selectedIds.length === 0}
-              className="btn-primary !px-5 !py-2.5 disabled:opacity-45"
-            >
-              {t("sendViaWhatsapp")}
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => onSubmitChannel("whatsapp")}
+                disabled={selectedIds.length === 0 || busy}
+                className="btn-primary !px-5 !py-2.5 disabled:opacity-45"
+              >
+                {t("sendViaWhatsapp")}
+              </button>
+              <button
+                type="button"
+                onClick={() => onSubmitChannel("tms")}
+                disabled={selectedIds.length === 0 || busy}
+                className="btn-soft !px-5 !py-2.5 disabled:opacity-45 inline-flex items-center gap-1.5"
+              >
+                {busy ? <Loader2 className="h-4 w-4 animate-spin shrink-0" aria-hidden /> : null}
+                {t("submitToTms")}
+              </button>
+            </>
           ) : (
             <button
               type="button"
@@ -1523,6 +1596,7 @@ function SubmitBar({
           )}
         </div>
       </div>
+      {onSubmitChannel ? <ChannelNotice status={channelStatus} /> : null}
       {formError ? <p className="mt-3 text-sm text-red-700 font-medium">{formError}</p> : null}
     </div>
   );

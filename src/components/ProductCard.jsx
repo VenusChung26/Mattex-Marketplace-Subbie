@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
-import { canDirectBuy, catalogPathForCategory, isHitProduct, stockStatusKey, supplierDisplayName, supplierPath } from "../lib/store";
+import { createPortal } from "react-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { Check, CircleDollarSign, Minus, Plus, ShoppingCart } from "lucide-react";
+import { canDirectBuy, catalogPathForCategory, isHitProduct, removeLine, setLineQty, stockStatusKey, supplierDisplayName, supplierPath } from "../lib/store";
 import { useStore } from "../hooks/useStore";
 import { useLanguage } from "../i18n";
 import { withLocale } from "../lib/locale";
@@ -30,9 +32,6 @@ function leadTimeLabel(lead, t) {
   const time = lead.min === lead.max ? String(lead.min) : `${lead.min}–${lead.max}`;
   return t("leadTimeValue", { time });
 }
-
-const ACTION_BTN =
-  "w-full min-h-[2.5rem] !px-2 !py-2 !text-xs leading-tight text-center whitespace-normal";
 
 const TAG_PILL =
   "inline-flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 tracking-[0.08em] uppercase";
@@ -128,6 +127,238 @@ function canHoverMenu() {
 
 function cartLineFor(draft, productId) {
   return (draft?.lines || []).find((line) => String(line.productId) === String(productId) && !line.custom) || null;
+}
+
+function clampQty(value) {
+  const n = Math.floor(Number(value));
+  return Number.isFinite(n) && n >= 1 ? n : 1;
+}
+
+function tileAddIntent(product) {
+  return canDirectBuy(product) ? "buy" : "quote";
+}
+
+const TILE_ICON_BTN =
+  "inline-flex h-10 min-w-0 flex-1 items-center justify-center !px-0 !py-0";
+const TILE_STEPPER_BTN =
+  "inline-flex h-10 w-7 shrink-0 items-center justify-center text-mute hover:bg-paper hover:text-ink disabled:opacity-40";
+const ADD_FLASH_MS = 480;
+
+function ConfirmRemoveDialog({ title, cancelLabel, confirmLabel, onCancel, onConfirm }) {
+  useEffect(() => {
+    function onKey(event) {
+      if (event.key === "Escape") onCancel();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onCancel]);
+
+  return createPortal(
+    <div className="fixed inset-0 z-[80] flex items-center justify-center p-4" role="presentation">
+      <div className="absolute inset-0 bg-charcoal/50" onClick={onCancel} />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="remove-cart-title"
+        className="relative w-full max-w-sm border border-line bg-white p-5 shadow-[0_24px_60px_rgba(16,21,19,0.25)]"
+      >
+        <h3 id="remove-cart-title" className="text-base font-bold text-brand-800">
+          {title}
+        </h3>
+        <div className="mt-5 flex flex-wrap justify-end gap-2">
+          <button type="button" className="btn-soft !px-4 !py-2" onClick={onCancel}>
+            {cancelLabel}
+          </button>
+          <button type="button" className="btn-primary !px-4 !py-2" onClick={onConfirm}>
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+function TileActionIcon({ flash, children }) {
+  return flash ? <Check className="h-4 w-4 shrink-0 btn-added-check" aria-hidden /> : children;
+}
+
+export function ProductTileActions({ product, onAdd }) {
+  const { t, lang } = useLanguage();
+  const { draft } = useStore();
+  const navigate = useNavigate();
+  const [qtyDraft, setQtyDraft] = useState(null);
+  const [flash, setFlash] = useState("");
+  const [flashKey, setFlashKey] = useState(0);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const flashRef = useRef("");
+  const flashTimer = useRef(null);
+  const navTimer = useRef(null);
+  const line = cartLineFor(draft, product.id);
+  const inCart = Boolean(line);
+  const addIntent = tileAddIntent(product);
+  const minQty = Math.max(1, Number(product.moq) || 1);
+  const cartQty = inCart ? clampQty(line.qty) : minQty;
+  const shownQty = qtyDraft == null ? cartQty : qtyDraft;
+  const holdingAdd = flash === "add" || flashRef.current === "add";
+  const showStepper = inCart && !holdingAdd;
+
+  useEffect(() => {
+    setQtyDraft(null);
+  }, [inCart, line?.qty]);
+
+  useEffect(
+    () => () => {
+      if (flashTimer.current) window.clearTimeout(flashTimer.current);
+      if (navTimer.current) window.clearTimeout(navTimer.current);
+    },
+    []
+  );
+
+  function pulse(kind, ms = ADD_FLASH_MS) {
+    flashRef.current = kind;
+    setFlash(kind);
+    setFlashKey((key) => key + 1);
+    if (flashTimer.current) window.clearTimeout(flashTimer.current);
+    flashTimer.current = window.setTimeout(() => {
+      flashRef.current = "";
+      setFlash("");
+    }, ms);
+  }
+
+  function requestRemove() {
+    setQtyDraft(null);
+    setConfirmRemove(true);
+  }
+
+  function commitQty(next) {
+    const parsed = Math.floor(Number(next));
+    if (!Number.isFinite(parsed) || parsed < 1) {
+      requestRemove();
+      return;
+    }
+    setQtyDraft(null);
+    setLineQty(product.id, Math.max(minQty, parsed));
+  }
+
+  function handleAddToCart() {
+    if (holdingAdd || inCart) return;
+    pulse("add");
+    onAdd?.(product.id, addIntent, minQty);
+  }
+
+  function handlePurchaseNow() {
+    pulse("buy");
+    if (!inCart) onAdd?.(product.id, addIntent, minQty);
+    if (navTimer.current) window.clearTimeout(navTimer.current);
+    navTimer.current = window.setTimeout(() => {
+      navigate(withLocale(lang, "/rfq"));
+    }, 260);
+  }
+
+  function handleMinus() {
+    pulse("minus");
+    if (cartQty <= minQty) {
+      requestRemove();
+      return;
+    }
+    commitQty(cartQty - 1);
+  }
+
+  return (
+    <div className="flex w-full min-w-0 items-stretch gap-1.5">
+      {showStepper ? (
+        <div className="flex min-w-0 flex-1 items-stretch border border-line bg-white">
+          <button
+            type="button"
+            key={flash === "minus" ? `minus-${flashKey}` : "minus"}
+            className={`${TILE_STEPPER_BTN} ${flash === "minus" ? "btn-added" : ""}`}
+            aria-label={t("decreaseQty")}
+            title={t("decreaseQty")}
+            onClick={handleMinus}
+          >
+            <Minus className="h-3.5 w-3.5" aria-hidden />
+          </button>
+          <input
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            aria-label={t("qty")}
+            value={shownQty}
+            onChange={(e) => {
+              const raw = e.target.value.replace(/\D/g, "");
+              setQtyDraft(raw === "" ? "" : Math.floor(Number(raw)));
+            }}
+            onBlur={() => {
+              if (qtyDraft == null || qtyDraft === "") {
+                setQtyDraft(null);
+                return;
+              }
+              commitQty(qtyDraft);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") e.currentTarget.blur();
+            }}
+            className="min-w-[1.5rem] w-8 flex-1 bg-transparent text-center text-xs font-semibold tabular-nums text-ink outline-none"
+          />
+          <button
+            type="button"
+            key={flash === "plus" ? `plus-${flashKey}` : "plus"}
+            className={`${TILE_STEPPER_BTN} ${flash === "plus" ? "btn-added" : ""}`}
+            aria-label={t("increaseQty")}
+            title={t("increaseQty")}
+            onClick={() => {
+              pulse("plus");
+              commitQty(cartQty + 1);
+            }}
+          >
+            <Plus className="h-3.5 w-3.5" aria-hidden />
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          key={flash === "add" ? `add-${flashKey}` : "add"}
+          className={`btn-soft ${TILE_ICON_BTN} ${flash === "add" ? "btn-added" : ""}`}
+          aria-label={t("addToCart")}
+          title={t("addToCart")}
+          onClick={handleAddToCart}
+        >
+          <TileActionIcon flash={flash === "add"}>
+            <ShoppingCart className="h-4 w-4 shrink-0" aria-hidden />
+          </TileActionIcon>
+        </button>
+      )}
+      <button
+        type="button"
+        key={flash === "buy" ? `buy-${flashKey}` : "buy"}
+        className={`btn-primary ${showStepper ? "inline-flex h-10 w-10 shrink-0 items-center justify-center !px-0 !py-0" : TILE_ICON_BTN} ${flash === "buy" ? "btn-added" : ""}`}
+        aria-label={t("purchaseNow")}
+        title={t("purchaseNow")}
+        onClick={handlePurchaseNow}
+      >
+        <TileActionIcon flash={flash === "buy"}>
+          <CircleDollarSign className="h-4 w-4 shrink-0" aria-hidden />
+        </TileActionIcon>
+      </button>
+      {confirmRemove ? (
+        <ConfirmRemoveDialog
+          title={t("removeFromCartTitle")}
+          cancelLabel={t("cancel")}
+          confirmLabel={t("remove")}
+          onCancel={() => {
+            setQtyDraft(null);
+            setConfirmRemove(false);
+          }}
+          onConfirm={() => {
+            setConfirmRemove(false);
+            setQtyDraft(null);
+            removeLine(product.id);
+          }}
+        />
+      ) : null}
+    </div>
+  );
 }
 
 export function ActionChoiceButton({
@@ -258,19 +489,9 @@ export function QuoteChoiceButton(props) {
 
 export function ProductListRow({ product, onAdd }) {
   const { t, lang } = useLanguage();
-  const { draft } = useStore();
-  const priced = canDirectBuy(product);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const line = cartLineFor(draft, product.id);
-  const buyCount = line?.intent === "buy" ? line.qty : 0;
-  const quoteCount = line && line.intent !== "buy" ? line.qty : 0;
 
   return (
-    <article
-      className={`relative flex flex-col sm:flex-row sm:items-center gap-3 border border-line bg-white p-3 ${
-        menuOpen ? "z-20" : ""
-      }`}
-    >
+    <article className="relative flex flex-col sm:flex-row sm:items-center gap-3 border border-line bg-white p-3">
       <Link
         to={withLocale(lang, `/details/${product.id}`)}
         className="h-20 w-full sm:h-16 sm:w-24 shrink-0 overflow-hidden bg-brand-50"
@@ -306,31 +527,8 @@ export function ProductListRow({ product, onAdd }) {
       <div className="sm:w-36 shrink-0">
         <ProductPrice product={product} className="!mt-0" />
       </div>
-      <div className={`sm:w-56 shrink-0 grid gap-2 ${priced ? "grid-cols-2" : "grid-cols-1"}`}>
-        {priced ? (
-          <ActionChoiceButton
-            count={buyCount}
-            triggerLabel={t("buyNow")}
-            nowLabel={t("buyNowAction")}
-            addLabel={t("addToCart")}
-            onOpenChange={setMenuOpen}
-            onNow={() => onAdd?.(product.id, "buy-now")}
-            onAdd={() => onAdd?.(product.id, "buy")}
-            className={`btn-primary ${ACTION_BTN}`}
-          />
-        ) : null}
-        <ActionChoiceButton
-          count={quoteCount}
-          triggerLabel={t("requestQuoteCta")}
-          nowLabel={t("requestNow")}
-          addLabel={t("addToCart")}
-          onOpenChange={setMenuOpen}
-          onNow={() => onAdd?.(product.id, "quote-now")}
-          onAdd={() => onAdd?.(product.id, "quote")}
-          className={`${
-            priced ? "btn-soft !border-brand-600/50 !text-brand-700" : "btn-primary"
-          } ${ACTION_BTN}`}
-        />
+      <div className="sm:w-64 shrink-0">
+        <ProductTileActions product={product} onAdd={onAdd} />
       </div>
     </article>
   );
@@ -338,16 +536,10 @@ export function ProductListRow({ product, onAdd }) {
 
 export default function ProductCard({ product, onAdd, rank = null }) {
   const { t, lang } = useLanguage();
-  const { draft } = useStore();
-  const priced = canDirectBuy(product);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const line = cartLineFor(draft, product.id);
-  const buyCount = line?.intent === "buy" ? line.qty : 0;
-  const quoteCount = line && line.intent !== "buy" ? line.qty : 0;
   const supplierName = supplierDisplayName(product.supplier);
 
   return (
-    <article className={`product-tile relative flex flex-col overflow-visible h-full ${menuOpen ? "z-20" : ""}`}>
+    <article className="product-tile relative flex flex-col overflow-visible h-full">
       <ProductBadges product={product} rank={rank} />
       <Link
         to={withLocale(lang, `/details/${product.id}`)}
@@ -388,31 +580,8 @@ export default function ProductCard({ product, onAdd, rank = null }) {
         <ProductMetaChips product={product} className="mt-2.5" />
         <div className="mt-auto mt-4">
           <ProductPrice product={product} className="!mt-0" />
-          <div className={`mt-3 grid gap-2 ${priced ? "grid-cols-2" : "grid-cols-1"}`}>
-            {priced ? (
-              <ActionChoiceButton
-                count={buyCount}
-                triggerLabel={t("buyNow")}
-                nowLabel={t("buyNowAction")}
-                addLabel={t("addToCart")}
-                onOpenChange={setMenuOpen}
-                onNow={() => onAdd?.(product.id, "buy-now")}
-                onAdd={() => onAdd?.(product.id, "buy")}
-                className={`btn-primary ${ACTION_BTN}`}
-              />
-            ) : null}
-            <ActionChoiceButton
-              count={quoteCount}
-              triggerLabel={t("requestQuoteCta")}
-              nowLabel={t("requestNow")}
-              addLabel={t("addToCart")}
-              onOpenChange={setMenuOpen}
-              onNow={() => onAdd?.(product.id, "quote-now")}
-              onAdd={() => onAdd?.(product.id, "quote")}
-              className={`${
-                priced ? "btn-soft !border-brand-600/50 !text-brand-700" : "btn-primary"
-              } ${ACTION_BTN}`}
-            />
+          <div className="mt-3">
+            <ProductTileActions product={product} onAdd={onAdd} />
           </div>
         </div>
       </div>

@@ -249,12 +249,12 @@ export default function HomePage() {
     return () => window.clearTimeout(timer);
   }, [urlQ, urlCat, urlFilter, lang, navigate]);
 
-  function handleAdd(productId, intent = "quote") {
+  function handleAdd(productId, intent = "quote", qty) {
     if (intent === "buy-now" || intent === "quote-now") {
-      whatsappNow(productId, { kind: intent === "buy-now" ? "buy" : "quote", lang });
+      whatsappNow(productId, { kind: intent === "buy-now" ? "buy" : "quote", lang, qty });
       return;
     }
-    addToCart(productId, { intent });
+    addToCart(productId, { intent, qty });
     const product =
       products.find((p) => p.id === productId) ||
       top.find((p) => p.id === productId) ||
