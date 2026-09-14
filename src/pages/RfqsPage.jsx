@@ -3,16 +3,19 @@
  */
 import { Link, useSearchParams } from "react-router-dom";
 import { useStore } from "../hooks/useStore";
-import { buildSupplierBankInfo, formatPrice, getRfq, rfqProjectName } from "../lib/store";
+import { buildSupplierBankInfo, formatPrice, getProduct, getRfq, inboxStatus, requestRfqCancel, resubmitRfq, rfqDiscussEmailHref, rfqDiscussWhatsappText, openWhatsappChat, rfqProjectName, updateBuyerRfqDetails, buyerRfqDetailsLocked, lineMoq, createBuyerPurchaseOrder, quoteVersionList, quoteEffectiveVersionNo, getEffectiveQuoteVersion } from "../lib/store";
 import { useEffect, useMemo, useRef, useState } from "react";
 import SiteHeader from "../components/SiteHeader";
 import Seo from "../components/Seo";
 import { useLanguage } from "../i18n";
 import { withLocale } from "../lib/locale";
+import { SHOW_RFQ_QUOTES } from "../lib/flags";
 import AttachmentLinks from "../components/AttachmentLinks";
-import { DEMO_QUOTED_RFQ, buildPrototypeQuotes } from "./rfqs-prototype/quoteMocks";
+import { QtyStepper } from "../components/ProductCard";
+import { DEMO_QUOTED_RFQ, buildPrototypeQuotes, buildSalesQuote } from "./rfqs-prototype/quoteMocks";
 import QuoteVariant from "./rfqs-prototype/QuoteCompareVariantA";
-import RfqStepBar, { RFQ_LIFECYCLE_STEPS } from "./rfqs-prototype/RfqStepBar";
+import RfqStepBar, { RFQ_PHASE_STEPS } from "./rfqs-prototype/RfqStepBar";
+import QuoteVersionSelect from "../components/QuoteVersionSelect";
 
 function isCodPaymentTerm(value) {
   const raw = String(value || "").toLowerCase();
@@ -59,24 +62,25 @@ function downloadRfq(rfq) {
     "Line items",
     "---------",
     ...rfq.lines.map((l) => {
-      const price = l.unitPrice == null ? "Price Upon Request" : formatPrice(l.unitPrice);
+      const unit = lineQuoteUnit(l);
+      const price = unit == null ? "Price Upon Request" : formatPrice(unit);
       const asked =
-        l.requestedUnitPrice != null && l.unitPrice != null && Number(l.requestedUnitPrice) < Number(l.unitPrice)
+        l.requestedUnitPrice != null && unit != null && Number(l.requestedUnitPrice) < Number(unit)
           ? formatPrice(l.requestedUnitPrice)
           : null;
       const lineTotal =
-        l.unitPrice == null
+        unit == null
           ? "—"
           : asked
-            ? `${formatPrice(l.requestedUnitPrice * l.qty)} (listed ${formatPrice(l.unitPrice * l.qty)})`
-            : formatPrice(l.unitPrice * l.qty);
-      const tag = l.custom ? " [Custom]" : "";
+            ? `${formatPrice(l.requestedUnitPrice * l.qty)} (listed ${formatPrice(unit * l.qty)})`
+            : formatPrice(unit * l.qty);
+      const tag = l.custom ? " [Tailor Made Product]" : "";
       const intent = l.intent === "buy" ? " [Direct buy]" : " [Quote request]";
       const desc = l.description ? ` | Spec: ${l.description}` : "";
       return `${l.name}${tag}${intent} × ${l.qty}${l.supplier ? ` (${l.supplier})` : ""}${desc} | Unit: ${price}${asked ? ` | Asked: ${asked}` : ""} | Line: ${lineTotal}`;
     }),
     "",
-    `Priced subtotal: ${formatPrice(rfq.pricedSubtotal)}`,
+    `Priced subtotal: ${formatPrice(rfq.quotedSubtotal != null ? rfq.quotedSubtotal : rfq.pricedSubtotal)}`,
     rfq.unpricedCount ? `Unpriced lines: ${rfq.unpricedCount}` : "All lines priced",
   ]
     .filter((row) => row != null)
@@ -93,10 +97,180 @@ function downloadRfq(rfq) {
   URL.revokeObjectURL(url);
 }
 
+function lineQuoteUnit(l) {
+  if (l?.quotedUnitPrice != null && Number(l.quotedUnitPrice) > 0) return Number(l.quotedUnitPrice);
+  return l?.unitPrice;
+}
+
+function lineThumb(l) {
+  if (l?.image) return l.image;
+  if (l?.custom) return "";
+  return getProduct(l?.productId)?.image || "";
+}
+
+function RfqDetailsSummary({ rfq, t }) {
+  if (!rfq) return null;
+  const locked = buyerRfqDetailsLocked(rfq);
+  const canEdit = !locked && rfq.id !== DEMO_QUOTED_RFQ.id;
+
+  function setLineQty(productId, qty) {
+    updateBuyerRfqDetails(rfq.id, { lines: [{ productId, qty }] });
+  }
+
+  function removeLine(productId) {
+    if ((rfq.lines || []).length <= 1) return;
+    updateBuyerRfqDetails(rfq.id, { removeProductIds: [productId] });
+  }
+
+  return (
+    <details className="mt-3 rounded-lg border border-line bg-paper/50 px-3 py-2">
+      <summary className="cursor-pointer list-none flex items-center justify-between gap-3 py-1">
+        <span>
+          <span className="block text-sm font-semibold text-brand-800">{t("rfqRequestDetails")}</span>
+          <span className="mt-0.5 block text-xs text-mute">{t("rfqDetailsCollapseHint")}</span>
+        </span>
+        <span className="shrink-0 text-xs font-semibold text-brand-700">{t("rfqDetailsExpand")}</span>
+      </summary>
+      <div className="mt-3 border-t border-line pt-3 space-y-3">
+        {locked ? <p className="text-xs text-mute">{t("rfqDetailsLocked")}</p> : null}
+        <div className="space-y-1">
+          <p className="text-xs text-mute">Submitted {new Date(rfq.submittedAt).toLocaleString()}</p>
+          {rfq.responseDate ? (
+            <p className="text-sm text-ink">
+              <span className="text-mute">{t("quotationDeadlineLabel")}</span> {rfq.responseDate}
+            </p>
+          ) : null}
+          {rfq.deliveryDate ? (
+            <p className="text-sm text-ink">
+              <span className="text-mute">{t("deliveryDateLabel")}</span> {rfq.deliveryDate}
+            </p>
+          ) : null}
+          <p className="text-sm text-ink">
+            <span className="text-mute">{t("deliveryModeLabel")}</span>{" "}
+            {rfq.deliveryMode === "partial" ? t("deliveryModePartial") : t("deliveryModeOneTime")}
+          </p>
+          {rfq.deliveryMode === "partial" && Array.isArray(rfq.deliveryLots)
+            ? rfq.deliveryLots.map((lot, index) => (
+                <p key={`lot-${index}`} className="text-sm text-ink">
+                  <span className="text-mute">{t("deliveryLotLabel", { n: index + 1 })}</span> {lot.date || "—"}
+                  {lot.note ? ` · ${lot.note}` : ""}
+                </p>
+              ))
+            : null}
+          {rfq.canonicalCategory ? (
+            <p className="text-sm text-ink">
+              <span className="text-mute">{t("categoryLabel")}</span> {rfq.canonicalCategory}
+            </p>
+          ) : null}
+          <p className="text-sm text-ink">
+            <span className="text-mute">{t("projectLabel")}</span> {rfqProjectName(rfq) || t("filterProjectUnassigned")}
+          </p>
+          {rfq.address ? (
+            <p className="text-sm text-ink">
+              <span className="text-mute">{t("addressLabel")}</span> {rfq.address}
+            </p>
+          ) : null}
+          <p className="text-sm text-ink">
+            <span className="text-mute">{t("substitutesLabel")}</span>{" "}
+            {rfq.acceptSubstitutes ? t("substitutesAccepted") : t("substitutesNotAccepted")}
+          </p>
+          {rfq.note ? (
+            <p className="text-sm text-ink">
+              <span className="text-mute">{t("noteLabel")}</span> {rfq.note}
+            </p>
+          ) : null}
+        </div>
+
+        <ul className="divide-y divide-line border-y border-line">
+          {(rfq.lines || []).map((l) => {
+            const moq = lineMoq(l);
+            const belowMoq = !l.custom && Number(l.qty) < moq;
+            const thumb = lineThumb(l);
+            return (
+              <li key={String(l.productId)} className="flex flex-wrap items-start justify-between gap-3 py-2.5">
+                <span className="flex min-w-0 items-start gap-2.5 flex-1">
+                  {thumb ? (
+                    <img src={thumb} alt="" className="h-10 w-10 shrink-0 rounded-md border border-line object-cover bg-paper" />
+                  ) : (
+                    <span className="h-10 w-10 shrink-0 rounded-md border border-line bg-paper" />
+                  )}
+                  <span className="min-w-0">
+                    <span className="font-medium text-sm text-ink">{l.name}</span>
+                    {l.productNo ? <span className="block text-xs text-mute">{l.productNo}</span> : null}
+                    {belowMoq ? (
+                      <p className="mt-1 text-xs font-medium text-amber-800">{t("qtyBelowMoq", { n: moq })}</p>
+                    ) : null}
+                  </span>
+                </span>
+                {canEdit ? (
+                  <span className="w-[12.5rem] max-w-full shrink-0">
+                    <QtyStepper
+                      value={l.qty}
+                      min={moq}
+                      unit={l.unit || ""}
+                      onChange={(qty) => setLineQty(l.productId, qty)}
+                      size="row"
+                      t={t}
+                    />
+                    {(rfq.lines || []).length > 1 ? (
+                      <button
+                        type="button"
+                        className="mt-1 text-[11px] font-semibold text-mute/80 hover:text-[#8a2b2b]"
+                        onClick={() => removeLine(l.productId)}
+                      >
+                        {t("remove")}
+                      </button>
+                    ) : null}
+                  </span>
+                ) : (
+                  <span className="text-sm text-mute shrink-0">× {l.qty}</span>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+    </details>
+  );
+}
+
+function rfqListSubtotal(rfq) {
+  const effective = getEffectiveQuoteVersion(rfq);
+  if (effective?.quotedSubtotal != null) return effective.quotedSubtotal;
+  if (rfq?.quotedSubtotal != null) return rfq.quotedSubtotal;
+  const priced = (rfq?.lines || []).filter((line) => Number(line.quotedUnitPrice) > 0);
+  if (priced.length) {
+    return priced.reduce((sum, line) => sum + Number(line.quotedUnitPrice) * (Number(line.qty) || 0), 0);
+  }
+  return rfq?.pricedSubtotal;
+}
+
 function rfqDocStatus(rfq, acceptedByRfq) {
   if (!rfq) return "";
+  if (rfq.cancelStatus === "accepted" || rfq.reviewStatus === "cancelled") return "cancelled";
+  if (rfq.cancelStatus === "requested") return "cancel_requested";
   if (acceptedByRfq?.[rfq.id]) return "accepted";
+  if (rfq.id === DEMO_QUOTED_RFQ.id) return "quoted";
+  if (rfq.reviewStatus === "quoted") return "quoted";
+  if (rfq.reviewStatus === "accepted") return "accepted";
+  if (rfq.reviewStatus === "rejected" || rfq.reviewStatus === "no_offer") return "rejected";
+  if (rfq.reviewStatus === "returned") return "returned";
+  if (rfq.reviewStatus) return "submitted";
   return buildPrototypeQuotes(rfq).length ? "quoted" : rfq.status || "";
+}
+
+function rfqDocStatusLabel(status, t) {
+  if (status === "cancel_requested") return t("rfqCancelRequested");
+  if (status === "cancelled") return t("rfqCancelled");
+  if (status === "quoted") return SHOW_RFQ_QUOTES ? t("docFilterQuoted") : t("rfqStatusInReview");
+  if (status === "accepted") return SHOW_RFQ_QUOTES ? t("docFilterAccepted") : t("rfqStatusInReview");
+  if (status === "submitted") return t("docFilterSubmitted");
+  if (status === "rejected") return t("rfqStatusRejected");
+  return status;
+}
+
+function rfqShortId(id) {
+  return String(id || "").replace(/^RFQ-?/i, "");
 }
 
 function rfqLineSummary(rfq, t) {
@@ -132,7 +306,7 @@ function rfqMatchesQuery(rfq, query) {
 
 const UNASSIGNED_PROJECT = "__unassigned__";
 
-function RfqDocSwitcher({ list, selectedId, onSelect, acceptedByRfq, t }) {
+function RfqDocSwitcher({ list, selectedId, onSelect, onViewQuote, acceptedByRfq, t }) {
   const rootRef = useRef(null);
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
@@ -140,8 +314,6 @@ function RfqDocSwitcher({ list, selectedId, onSelect, acceptedByRfq, t }) {
   const [projectFilter, setProjectFilter] = useState("all");
 
   const selected = list.find((rfq) => rfq.id === selectedId) || list[0] || null;
-  const selectedStatus = rfqDocStatus(selected, acceptedByRfq);
-  const selectedProject = rfqProjectName(selected);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -210,74 +382,31 @@ function RfqDocSwitcher({ list, selectedId, onSelect, acceptedByRfq, t }) {
   }, [list, projectFilter]);
 
   function pick(id) {
+    const rfq = list.find((row) => row.id === id);
     onSelect(id);
+    if (SHOW_RFQ_QUOTES && rfq && rfqDocStatus(rfq, acceptedByRfq) === "quoted") onViewQuote?.(id);
     setQuery("");
     setOpen(false);
   }
 
   if (!list.length || !selected) return null;
 
+  const quotedRows = SHOW_RFQ_QUOTES ? list.filter((rfq) => rfqDocStatus(rfq, acceptedByRfq) === "quoted") : [];
   const filters = [
     { id: "all", label: t("docFilterAll"), count: counts.all },
-    { id: "quoted", label: t("docFilterQuoted"), count: counts.quoted },
+    ...(SHOW_RFQ_QUOTES ? [{ id: "quoted", label: t("docFilterQuoted"), count: counts.quoted }] : []),
     { id: "submitted", label: t("docFilterSubmitted"), count: counts.submitted },
-    { id: "accepted", label: t("docFilterAccepted"), count: counts.accepted },
+    { id: "accepted", label: SHOW_RFQ_QUOTES ? t("docFilterAccepted") : t("rfqStatusInReview"), count: counts.accepted },
   ];
   return (
-    <div ref={rootRef} className="relative mb-4">
-      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-mute mb-2">
-        {t("documents")} · {list.length}
-      </p>
-
-      <div className="bg-white border border-line rounded-xl px-4 py-3">
-        <div className="flex flex-col sm:flex-row sm:items-start gap-3">
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-              <p className="font-semibold text-brand-800">{selected.id}</p>
-              <p className="text-[10px] font-bold uppercase tracking-wide text-brand-600">{selectedStatus}</p>
-            </div>
-            <p className="mt-0.5 text-xs text-mute truncate">{rfqLineSummary(selected, t)}</p>
-            <p className="mt-0.5 text-xs text-mute">
-              {selectedProject || t("filterProjectUnassigned")}
-              {" · "}
-              {new Date(selected.submittedAt).toLocaleDateString()}
-              {" · "}
-              {selected.lines.length === 1
-                ? t("rfqLineCountOne")
-                : t("rfqLineCount", { n: selected.lines.length })}
-              {" · "}
-              {formatPrice(selected.pricedSubtotal)}
-            </p>
-          </div>
-
-          <div className="w-full sm:w-80 shrink-0">
-            <label className="sr-only" htmlFor="rfq-doc-search">
-              {t("searchRfqs")}
-            </label>
-            <input
-              id="rfq-doc-search"
-              type="search"
-              value={query}
-              onChange={(e) => {
-                setQuery(e.target.value);
-                setOpen(true);
-              }}
-              onFocus={() => setOpen(true)}
-              placeholder={t("searchRfqs")}
-              className="w-full border border-line bg-paper/60 px-3 py-2 text-sm text-ink"
-              aria-expanded={open}
-              aria-controls="rfq-doc-results"
-              autoComplete="off"
-            />
-          </div>
-        </div>
-
-        {list.length > 1 ? (
-          <div className="mt-2.5 pt-2.5 border-t border-line">
-            <div className="flex items-center gap-2 min-w-0">
-              <p className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.12em] text-mute">
-                {t("recentRfqs")}
-              </p>
+    <div ref={rootRef} className="relative mb-3">
+      <div className="bg-white border border-line rounded-xl px-3 py-2.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-mute mr-auto">
+            {t("switchRfq")} · {list.length}
+          </p>
+          {list.length > 1 ? (
+            <>
               <label className="sr-only" htmlFor="rfq-project-filter">
                 {t("filterProject")}
               </label>
@@ -298,7 +427,7 @@ function RfqDocSwitcher({ list, selectedId, onSelect, acceptedByRfq, t }) {
                     onSelect(scoped[0].id);
                   }
                 }}
-                className="shrink-0 max-w-[11rem] border border-line bg-paper/60 px-2 py-1 text-[11px] font-semibold text-ink"
+                className="min-w-[9rem] border border-line bg-paper/60 px-2 py-1.5 text-sm text-ink"
               >
                 <option value="all">{t("filterProjectAll")}</option>
                 {projects.names.map((name) => (
@@ -310,32 +439,60 @@ function RfqDocSwitcher({ list, selectedId, onSelect, acceptedByRfq, t }) {
                   <option value={UNASSIGNED_PROJECT}>{t("filterProjectUnassigned")}</option>
                 ) : null}
               </select>
-              <div className="flex gap-1.5 overflow-x-auto pb-0.5 min-w-0">
-                {recent.map((rfq) => {
-                  const active = rfq.id === selectedId;
-                  const itemStatus = rfqDocStatus(rfq, acceptedByRfq);
-                  const project = rfqProjectName(rfq);
-                  return (
-                    <button
-                      key={rfq.id}
-                      type="button"
-                      title={`${rfq.id} · ${itemStatus} · ${project || t("filterProjectUnassigned")} · ${rfqLineSummary(rfq, t)}`}
-                      onClick={() => pick(rfq.id)}
-                      className={`shrink-0 inline-flex items-center gap-1.5 border px-2.5 py-1 text-left ${
-                        active
-                          ? "border-brand-600 bg-brand-50 text-brand-800"
-                          : "border-line bg-white text-ink hover:border-brand-300"
-                      }`}
-                    >
-                      <span className="text-xs font-semibold">{rfq.id}</span>
-                      <span className="text-[10px] font-bold uppercase tracking-wide text-brand-600">
-                        {itemStatus}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
+            </>
+          ) : null}
+          <div className="w-full sm:w-72 shrink-0">
+            <label className="sr-only" htmlFor="rfq-doc-search">
+              {t("searchRfqs")}
+            </label>
+            <input
+              id="rfq-doc-search"
+              type="search"
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setOpen(true);
+              }}
+              onFocus={() => setOpen(true)}
+              placeholder={t("searchRfqs")}
+              className="w-full border border-line bg-paper/60 px-3 py-1.5 text-sm text-ink"
+              aria-expanded={open}
+              aria-controls="rfq-doc-results"
+              autoComplete="off"
+            />
+          </div>
+        </div>
+
+        {list.length > 1 ? (
+          <div className="mt-2 flex gap-1.5 overflow-x-auto pb-0.5">
+            {recent.map((rfq) => {
+              const active = rfq.id === selectedId;
+              const itemStatus = rfqDocStatus(rfq, acceptedByRfq);
+              const project = rfqProjectName(rfq);
+              return (
+                <button
+                  key={rfq.id}
+                  type="button"
+                  title={`${rfq.id} · ${rfqDocStatusLabel(itemStatus, t)} · ${project || t("filterProjectUnassigned")}`}
+                  onClick={() => pick(rfq.id)}
+                  className={`shrink-0 rounded-full border px-2.5 py-1 text-left transition-colors ${
+                    active
+                      ? "border-brand-600 bg-brand-50 text-brand-800"
+                      : "border-line bg-white text-ink hover:border-brand-300"
+                  }`}
+                >
+                  <span className="text-sm font-bold tabular-nums">{rfqShortId(rfq.id)}</span>
+                  <span className={`ml-1.5 text-[10px] font-semibold uppercase tracking-wide ${active ? "text-brand-700" : "text-mute"}`}>
+                    {rfqDocStatusLabel(itemStatus, t)}
+                  </span>
+                  {itemStatus === "quoted" ? (
+                    <span className="ml-1.5 text-[11px] font-semibold tabular-nums text-ink">
+                      {formatPrice(rfqListSubtotal(rfq))}
+                    </span>
+                  ) : null}
+                </button>
+              );
+            })}
           </div>
         ) : null}
       </div>
@@ -386,7 +543,7 @@ function RfqDocSwitcher({ list, selectedId, onSelect, acceptedByRfq, t }) {
                         <span className="flex items-center gap-2">
                           <span className="text-sm font-semibold text-brand-800">{rfq.id}</span>
                           <span className="text-[10px] font-bold uppercase tracking-wide text-brand-600">
-                            {rfqDocStatus(rfq, acceptedByRfq)}
+                            {rfqDocStatusLabel(rfqDocStatus(rfq, acceptedByRfq), t)}
                           </span>
                         </span>
                         <span className="mt-0.5 block text-xs text-mute truncate">{rfqLineSummary(rfq, t)}</span>
@@ -394,8 +551,15 @@ function RfqDocSwitcher({ list, selectedId, onSelect, acceptedByRfq, t }) {
                           {rfqProjectName(rfq) || t("filterProjectUnassigned")}
                         </span>
                       </span>
-                      <span className="text-sm font-semibold tabular-nums text-ink shrink-0">
-                        {formatPrice(rfq.pricedSubtotal)}
+                      <span className="shrink-0 text-right">
+                        <span className="block text-sm font-semibold tabular-nums text-ink">
+                          {formatPrice(rfqListSubtotal(rfq))}
+                        </span>
+                        {SHOW_RFQ_QUOTES && rfqDocStatus(rfq, acceptedByRfq) === "quoted" ? (
+                          <span className="mt-1 inline-flex rounded-lg bg-brand-600 px-2.5 py-1 text-[11px] font-semibold text-white">
+                            {t("viewQuote")}
+                          </span>
+                        ) : null}
                       </span>
                     </button>
                   );
@@ -412,6 +576,36 @@ function RfqDocSwitcher({ list, selectedId, onSelect, acceptedByRfq, t }) {
           )}
         </div>
       ) : null}
+      {quotedRows.length ? (
+        <ul className="mt-2 space-y-2">
+          {quotedRows.map((rfq) => {
+            const active = rfq.id === selectedId;
+            return (
+              <li key={`quoted-row-${rfq.id}`}>
+                <div
+                  className={`flex items-center justify-between gap-3 rounded-xl border px-3 py-2.5 ${
+                    active ? "border-brand-600 bg-brand-50" : "border-line bg-white"
+                  }`}
+                >
+                  <button type="button" className="min-w-0 text-left" onClick={() => pick(rfq.id)}>
+                    <p className="text-sm font-semibold text-brand-800">{rfq.id}</p>
+                    <p className="mt-0.5 text-xs text-mute">
+                      {t("quotedTotalLabel")} · {formatPrice(rfqListSubtotal(rfq))}
+                    </p>
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-primary !px-3 !py-1.5 !text-xs shrink-0"
+                    onClick={() => pick(rfq.id)}
+                  >
+                    {t("viewQuote")}
+                  </button>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
     </div>
   );
 }
@@ -421,7 +615,7 @@ export default function RfqsPage() {
   const { t, lang } = useLanguage();
   const [params] = useSearchParams();
   const storedList = rfqs || [];
-  const usingDemo = storedList.length === 0;
+  const usingDemo = SHOW_RFQ_QUOTES && storedList.length === 0;
   const list = sortRfqsNewestFirst(usingDemo ? [DEMO_QUOTED_RFQ] : storedList);
 
   const initial = params.get("id") || (list[0] && list[0].id) || null;
@@ -431,6 +625,12 @@ export default function RfqsPage() {
   const [poByRfq, setPoByRfq] = useState({});
   const [paymentByRfq, setPaymentByRfq] = useState({});
   const [deliveryByRfq, setDeliveryByRfq] = useState({});
+  const [focusQuoteId, setFocusQuoteId] = useState(null);
+  const [focusTick, setFocusTick] = useState(0);
+  const [confirmCancel, setConfirmCancel] = useState(false);
+  const [contactOpen, setContactOpen] = useState(false);
+  const [quoteViewVersion, setQuoteViewVersion] = useState("");
+  const contactRef = useRef(null);
 
   const selected = useMemo(() => {
     if (!selectedId) return null;
@@ -438,58 +638,100 @@ export default function RfqsPage() {
     return getRfq(selectedId);
   }, [selectedId, storedList]);
 
-  const quotes = useMemo(
-    () => (selected ? buildPrototypeQuotes(selected) : []),
-    [selected]
-  );
+  const quotes = useMemo(() => {
+    if (!SHOW_RFQ_QUOTES || !selected) return [];
+    if (selected.id === DEMO_QUOTED_RFQ.id) return buildPrototypeQuotes(selected);
+    const versions = quoteVersionList(selected);
+    if (versions.length) {
+      const effective = quoteEffectiveVersionNo(selected);
+      const viewNo = Number(quoteViewVersion) || effective;
+      return buildSalesQuote(selected, viewNo);
+    }
+    if (selected.reviewStatus === "quoted" || selected.reviewStatus === "accepted") {
+      return buildSalesQuote(selected);
+    }
+    if (selected.reviewStatus) return [];
+    return buildPrototypeQuotes(selected);
+  }, [selected, quoteViewVersion]);
+
+  const selectedVersions = selected ? quoteVersionList(selected) : [];
+  const selectedEffectiveNo = selected ? quoteEffectiveVersionNo(selected) : 0;
+  const viewingQuoteVersion = Number(quoteViewVersion) || selectedEffectiveNo;
+  const historicalQuoteView =
+    selectedVersions.length > 0 && Number(viewingQuoteVersion) !== Number(selectedEffectiveNo);
+
+  useEffect(() => {
+    setQuoteViewVersion(selectedEffectiveNo ? String(selectedEffectiveNo) : "");
+  }, [selected?.id, selectedEffectiveNo]);
 
   const acceptance = selected ? acceptedByRfq[selected.id] || null : null;
   const hasAccepted = Boolean(acceptance);
   const quoteSupplierAccepted = Boolean(acceptance?.quoteSupplierAccepted);
   const payment = selected ? paymentByRfq[selected.id] || null : null;
   const delivery = selected ? deliveryByRfq[selected.id] || null : null;
-  const po = selected ? poByRfq[selected.id] || null : null;
-  const poAccepted = Boolean(po?.supplierAccepted);
+  const po = selected ? poByRfq[selected.id] || selected.buyerPo || null : null;
+  const poCreated = Boolean(po?.id || po?.status === "created" || po?.confirmedAt);
   const paymentDone = Boolean(payment?.supplierAccepted);
-  const deliveryUnlocked = canOpenDelivery(payment, acceptance, quotes, po);
+  const deliveryUnlocked = false;
   const deliveryDone = Boolean(delivery?.buyerAccepted);
 
-  const progressId = deliveryDone
-    ? "delivery"
-    : deliveryUnlocked
-      ? "delivery"
-      : poAccepted
-        ? "payment"
-        : quoteSupplierAccepted
-          ? "purchaseOrder"
-          : quotes.length
-            ? "quotes"
-            : "submitted";
+  const progressIdRaw = !SHOW_RFQ_QUOTES
+    ? "submitted"
+    : poCreated
+    ? "purchaseOrder"
+    : quotes.length || inboxStatus(selected) === "quoted"
+      ? "quotes"
+      : "submitted";
+  const progressId = progressIdRaw;
 
-  const activeStep = (selected && stepByRfq[selected.id]) || "quotes";
+  const inbox = selected ? inboxStatus(selected) : "";
+  const awaitingSales = Boolean(selected?.reviewStatus && ["received", "reviewing"].includes(selected.reviewStatus));
+  const rawActive = (selected && stepByRfq[selected.id]) || (awaitingSales ? "submitted" : inbox === "quoted" ? "quotes" : "quotes");
+  const activeStep = !SHOW_RFQ_QUOTES
+    ? "submitted"
+    : rawActive === "purchaseOrder" || rawActive === "quotes" || rawActive === "submitted"
+      ? rawActive
+      : "quotes";
 
-  const displayStatus = deliveryDone
-    ? "delivered"
-    : paymentDone
-      ? "paid"
-      : poAccepted
-        ? "purchase order"
-        : quoteSupplierAccepted
-          ? "po pending"
-          : hasAccepted
-            ? "awaiting supplier"
-            : quotes.length
-              ? "quoted"
-              : selected?.status === "whatsapp_sent"
-                ? t("waSavedInSubbie")
-                : selected?.status === "email_sent"
-                  ? t("emailSavedInSubbie")
-                  : selected?.status || "";
+  const displayStatus = selected?.cancelStatus === "accepted" || inbox === "cancelled"
+    ? t("rfqCancelled")
+    : selected?.cancelStatus === "requested"
+      ? t("rfqCancelRequested")
+      : !SHOW_RFQ_QUOTES && inbox === "accepted"
+        ? t("rfqStatusInReview")
+        : !SHOW_RFQ_QUOTES && awaitingSales
+          ? t("rfqAwaitingSalesSlice")
+          : poCreated
+        ? t("poCreated")
+        : hasAccepted
+          ? t("createPurchaseOrder")
+          : inbox === "quoted"
+            ? t("rfqQuotedStatus")
+            : awaitingSales
+              ? t("rfqAwaitingSales")
+              : quotes.length
+                ? t("rfqQuotedStatus")
+                : selected?.status === "whatsapp_sent"
+                  ? t("waSavedInSubbie")
+                  : selected?.status === "email_sent"
+                    ? t("emailSavedInSubbie")
+                    : selected?.status || "";
 
   function setActiveStep(stepId) {
     if (!selected) return;
+    if (stepId !== "submitted" && stepId !== "quotes" && stepId !== "purchaseOrder") return;
     setStepByRfq((prev) => ({ ...prev, [selected.id]: stepId }));
   }
+
+  function viewQuote(id) {
+    setSelectedId(id);
+    setStepByRfq((prev) => ({ ...prev, [id]: "quotes" }));
+  }
+
+  useEffect(() => {
+    const id = params.get("id");
+    if (id) setSelectedId(id);
+  }, [params]);
 
   useEffect(() => {
     if (!selectedId && list[0]) setSelectedId(list[0].id);
@@ -499,9 +741,48 @@ export default function RfqsPage() {
     if (!selected) return;
     setStepByRfq((prev) => {
       if (prev[selected.id]) return prev;
-      return { ...prev, [selected.id]: "quotes" };
+      const inbox = inboxStatus(selected);
+      const initial =
+        inbox === "quoted" || selected.id === DEMO_QUOTED_RFQ.id
+          ? "quotes"
+          : selected.reviewStatus
+            ? "submitted"
+            : "quotes";
+      return { ...prev, [selected.id]: initial };
     });
   }, [selected?.id]);
+
+  useEffect(() => {
+    setFocusQuoteId(null);
+    setConfirmCancel(false);
+    setContactOpen(false);
+  }, [selected?.id]);
+
+  useEffect(() => {
+    if (!contactOpen) return undefined;
+    function onPointer(e) {
+      if (contactRef.current && !contactRef.current.contains(e.target)) setContactOpen(false);
+    }
+    function onKey(e) {
+      if (e.key === "Escape") setContactOpen(false);
+    }
+    document.addEventListener("mousedown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [contactOpen]);
+
+  useEffect(() => {
+    if (!focusQuoteId) return undefined;
+    function onDocClick(event) {
+      if (event.target.closest("[data-quote-jump]")) return;
+      setFocusQuoteId(null);
+    }
+    document.addEventListener("click", onDocClick);
+    return () => document.removeEventListener("click", onDocClick);
+  }, [focusQuoteId]);
 
   if (!user) {
     return (
@@ -519,109 +800,222 @@ export default function RfqsPage() {
 
   return (
     <Shell wide>
-      <div className="mb-6">
-        <p className="text-xs font-semibold uppercase tracking-wide text-brand-600">{t("history")}</p>
-        <h1 className="reveal mt-1 text-2xl sm:text-3xl font-bold text-brand-800">{t("myRfqsTitle")}</h1>
-        <p className="mt-2 text-sm text-mute">
-          {usingDemo
-            ? "Prototype demo RFQ loaded (no history yet). Compare supplier quotes below."
-            : t("myRfqsHint")}
-        </p>
+      <div className="mb-3">
+        <h1 className="reveal text-2xl font-bold text-brand-800">{t("myRfqsTitle")}</h1>
+        {usingDemo ? (
+          <p className="mt-1 text-sm text-mute">Prototype demo RFQ loaded (no history yet). Compare supplier quotes below.</p>
+        ) : null}
       </div>
 
       <RfqDocSwitcher
         list={list}
         selectedId={selectedId}
         onSelect={setSelectedId}
+        onViewQuote={viewQuote}
         acceptedByRfq={acceptedByRfq}
         t={t}
       />
 
-      <section className="bg-white border border-line rounded-xl p-5 sm:p-6 min-h-[24rem] pb-28">
+      <section className="bg-white border border-line rounded-xl p-4 sm:p-5 min-h-[24rem] pb-28">
           {selected ? (
             <>
-              <div className="flex flex-wrap items-start justify-between gap-3 pb-4 border-b border-line">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-brand-600">
-                    {displayStatus}
-                  </p>
-                  <h2 className="mt-1 text-xl sm:text-2xl font-bold text-brand-800">{selected.id}</h2>
-                  <p className="mt-1 text-xs text-mute">
-                    Submitted {new Date(selected.submittedAt).toLocaleString()}
-                  </p>
-                  {selected.responseDate ? (
-                    <p className="mt-2 text-sm text-ink">
-                      <span className="text-mute">{t("quotationDeadlineLabel")}</span> {selected.responseDate}
-                    </p>
-                  ) : null}
-                  {selected.deliveryDate ? (
-                    <p className="mt-1 text-sm text-ink">
-                      <span className="text-mute">{t("deliveryDateLabel")}</span> {selected.deliveryDate}
-                    </p>
-                  ) : null}
-                  <p className="mt-1 text-sm text-ink">
-                    <span className="text-mute">{t("deliveryModeLabel")}</span>{" "}
-                    {selected.deliveryMode === "partial" ? t("deliveryModePartial") : t("deliveryModeOneTime")}
-                  </p>
-                  {selected.deliveryMode === "partial" && Array.isArray(selected.deliveryLots)
-                    ? selected.deliveryLots.map((lot, index) => (
-                        <p key={`lot-${index}`} className="mt-1 text-sm text-ink">
-                          <span className="text-mute">{t("deliveryLotLabel", { n: index + 1 })}</span>{" "}
-                          {lot.date || "—"}
-                          {lot.note ? ` · ${lot.note}` : ""}
-                        </p>
-                      ))
-                    : null}
-                  {selected.canonicalCategory ? (
-                    <p className="mt-1 text-sm text-ink">
-                      <span className="text-mute">{t("categoryLabel")}</span> {selected.canonicalCategory}
-                    </p>
-                  ) : null}
-                  <p className="mt-1 text-sm text-ink">
-                    <span className="text-mute">{t("projectLabel")}</span>{" "}
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                    <h2 className="text-xl font-bold text-brand-800">{selected.id}</h2>
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-brand-600">{displayStatus}</p>
+                  </div>
+                  <p className="mt-0.5 text-xs text-mute">
                     {rfqProjectName(selected) || t("filterProjectUnassigned")}
-                  </p>
-                  {selected.address ? (
-                    <p className="mt-1 text-sm text-ink">
-                      <span className="text-mute">{t("addressLabel")}</span> {selected.address}
-                    </p>
-                  ) : null}
-                  <p className="mt-1 text-sm text-ink">
-                    <span className="text-mute">{t("substitutesLabel")}</span>{" "}
-                    {selected.acceptSubstitutes ? t("substitutesAccepted") : t("substitutesNotAccepted")}
+                    {" · "}
+                    {new Date(selected.submittedAt).toLocaleDateString()}
+                    {" · "}
+                    {selected.lines.length === 1
+                      ? t("rfqLineCountOne")
+                      : t("rfqLineCount", { n: selected.lines.length })}
+                    {" · "}
+                    {formatPrice(rfqListSubtotal(selected))}
                   </p>
                 </div>
-                <div className="flex flex-wrap gap-2 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => downloadRfq(selected)}
-                    className="btn-soft !px-4 !py-2.5 !border-brand-600 !text-brand-700"
-                  >
-                    {t("download")}
-                  </button>
+                  <div className="flex flex-col items-end gap-2 shrink-0">
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <div className="relative" ref={contactRef}>
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-1.5 border border-brand-600 bg-white px-4 py-2.5 text-sm font-semibold text-brand-800 hover:bg-brand-50"
+                        aria-expanded={contactOpen}
+                        aria-haspopup="menu"
+                        onClick={() => {
+                          setContactOpen((open) => !open);
+                          setConfirmCancel(false);
+                        }}
+                      >
+                        {t("rfqDiscuss")}
+                        <span className="text-[10px] text-mute" aria-hidden>
+                          ▾
+                        </span>
+                      </button>
+                      {contactOpen ? (
+                        <div
+                          role="menu"
+                          className="absolute right-0 z-40 mt-1 min-w-[11rem] border border-line bg-white py-1 shadow-[0_12px_28px_rgba(16,21,19,0.18)]"
+                        >
+                          <a
+                            role="menuitem"
+                            href={rfqDiscussEmailHref(selected, lang)}
+                            className="block px-4 py-2.5 text-sm text-ink hover:bg-brand-50 hover:text-brand-800"
+                            onClick={() => setContactOpen(false)}
+                          >
+                            {t("rfqDiscussEmail")}
+                          </a>
+                          <button
+                            role="menuitem"
+                            type="button"
+                            className="block w-full px-4 py-2.5 text-left text-sm text-ink hover:bg-brand-50 hover:text-brand-800"
+                            onClick={() => {
+                              setContactOpen(false);
+                              openWhatsappChat(rfqDiscussWhatsappText(selected, lang));
+                            }}
+                          >
+                            {t("rfqDiscussWhatsapp")}
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => downloadRfq(selected)}
+                      className="inline-flex items-center border border-brand-600 bg-white px-4 py-2.5 text-sm font-semibold text-brand-800 hover:bg-brand-50"
+                    >
+                      {t("rfqDownload")}
+                    </button>
+                    {selected.id !== DEMO_QUOTED_RFQ.id &&
+                    selected.cancelStatus !== "requested" &&
+                    selected.cancelStatus !== "accepted" &&
+                    inbox !== "cancelled" &&
+                    inbox !== "accepted" &&
+                    inbox !== "rejected" &&
+                    inbox !== "no_offer" ? (
+                      <button
+                        type="button"
+                        className="inline-flex items-center border border-red-300 bg-white px-4 py-2.5 text-sm font-semibold text-red-700 hover:bg-red-50"
+                        onClick={() => {
+                          setContactOpen(false);
+                          setConfirmCancel(true);
+                        }}
+                      >
+                        {t("rfqCancel")}
+                      </button>
+                    ) : null}
+                  </div>
+                  {confirmCancel &&
+                  selected.id !== DEMO_QUOTED_RFQ.id &&
+                  selected.cancelStatus !== "requested" &&
+                  selected.cancelStatus !== "accepted" &&
+                  inbox !== "cancelled" &&
+                  inbox !== "accepted" &&
+                  inbox !== "rejected" &&
+                  inbox !== "no_offer" ? (
+                    <div className="max-w-xs rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-right">
+                      <p className="text-xs text-amber-900">{t("rfqCancelHint")}</p>
+                      <div className="mt-2 flex justify-end gap-2">
+                        <button type="button" className="btn-soft !px-3 !py-1.5 !text-xs" onClick={() => setConfirmCancel(false)}>
+                          {t("rfqCancelBack")}
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-lg bg-red-700 px-3 py-1.5 text-xs font-semibold text-white"
+                          onClick={() => {
+                            requestRfqCancel(selected.id);
+                            setConfirmCancel(false);
+                          }}
+                        >
+                          {t("rfqCancelConfirm")}
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               </div>
 
-              <div className="mt-5">
+              {inboxStatus(selected) === "returned" ? (
+                <div className="mt-3 border border-amber-200 bg-amber-50 px-3 py-2 text-sm">
+                  <p className="font-semibold text-amber-900">{t("rfqReturnedTitle")}</p>
+                  {selected.reason ? <p className="mt-1 text-amber-800">{selected.reason}</p> : null}
+                  <button
+                    type="button"
+                    className="btn-primary mt-2 !py-1.5 !px-3 !text-xs"
+                    onClick={() => resubmitRfq(selected.id)}
+                  >
+                    {t("rfqResubmit")}
+                  </button>
+                </div>
+              ) : null}
+              {inboxStatus(selected) === "rejected" || inboxStatus(selected) === "no_offer" ? (
+                <div className="mt-3 border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                  <p className="font-semibold">{t("rfqRejectedTitle")}</p>
+                  {selected.reason ? <p className="mt-1">{selected.reason}</p> : null}
+                </div>
+              ) : null}
+              {inboxStatus(selected) === "accepted" ? (
+                <p className="mt-2 text-xs text-mute">{SHOW_RFQ_QUOTES ? t("rfqAcceptedLocked") : t("rfqInReviewHint")}</p>
+              ) : null}
+              {selected.cancelStatus === "requested" ? (
+                <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                  {t("rfqCancelRequestedHint")}
+                </p>
+              ) : null}
+              {selected.cancelStatus === "accepted" || inbox === "cancelled" ? (
+                <p className="mt-3 rounded-lg border border-line bg-paper px-3 py-2 text-sm text-mute">{t("rfqCancelled")}</p>
+              ) : null}
+              {selected.cancelStatus === "declined" ? (
+                <p className="mt-3 rounded-lg border border-line bg-paper px-3 py-2 text-sm text-mute">{t("rfqCancelDeclined")}</p>
+              ) : null}
+
+              <RfqDetailsSummary rfq={selected} t={t} />
+
+              {SHOW_RFQ_QUOTES ? (
+              <div className="mt-4">
                 <RfqStepBar
-                  steps={RFQ_LIFECYCLE_STEPS}
+                  steps={RFQ_PHASE_STEPS}
                   activeId={activeStep}
                   progressId={progressId}
                   onSelect={setActiveStep}
                 />
               </div>
+              ) : null}
 
-              <div className="mt-6">
-                {activeStep === "submitted" ? (
+              <div className="mt-4">
+                {activeStep === "submitted" || !SHOW_RFQ_QUOTES ? (
                   <SubmittedStep rfq={selected} t={t} />
                 ) : null}
 
-                {activeStep === "quotes" ? (
-                  <QuoteVariant
+                {SHOW_RFQ_QUOTES && activeStep === "quotes" ? (
+                  <>
+                    {selectedVersions.length ? (
+                      <div className="mb-4 flex flex-wrap items-end justify-between gap-3 rounded-xl border border-line bg-paper/50 px-3 py-2.5">
+                        <QuoteVersionSelect
+                          rfq={selected}
+                          value={quoteViewVersion || String(selectedEffectiveNo)}
+                          onChange={setQuoteViewVersion}
+                          currentLabel={t("quoteVersionCurrent")}
+                          label={t("quoteVersion")}
+                          id={`mm-quote-version-${selected.id}`}
+                        />
+                        {historicalQuoteView ? (
+                          <p className="text-xs text-mute">{t("quoteVersionHistoricalHint")}</p>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    <QuoteVariant
                     rfq={selected}
                     quotes={quotes}
+                    focusQuoteId={focusQuoteId}
+                    focusTick={focusTick}
                     acceptance={acceptance}
+                    historicalPreview={historicalQuoteView}
                     onAccept={(payload) => {
+                      if (historicalQuoteView) return;
                       setAcceptedByRfq((prev) => ({
                         ...prev,
                         [selected.id]: {
@@ -632,6 +1026,7 @@ export default function RfqsPage() {
                       }));
                     }}
                     onSupplierAcceptSelection={() => {
+                      if (historicalQuoteView) return;
                       setAcceptedByRfq((prev) => ({
                         ...prev,
                         [selected.id]: {
@@ -639,6 +1034,10 @@ export default function RfqsPage() {
                           quoteSupplierAccepted: true,
                         },
                       }));
+                      setActiveStep("purchaseOrder");
+                    }}
+                    onGoToPo={() => {
+                      if (historicalQuoteView) return;
                       setActiveStep("purchaseOrder");
                     }}
                     onReset={() => {
@@ -665,56 +1064,18 @@ export default function RfqsPage() {
                       setActiveStep("quotes");
                     }}
                   />
+                  </>
                 ) : null}
 
-                {activeStep === "purchaseOrder" ? (
+                {SHOW_RFQ_QUOTES && activeStep === "purchaseOrder" ? (
                   <PurchaseOrderStep
-                    acceptance={acceptance}
-                    po={poByRfq[selected.id] || { buyerConfirmed: false, sent: false, supplierAccepted: false }}
-                    onChange={(next) => setPoByRfq((prev) => ({ ...prev, [selected.id]: next }))}
-                    onContinue={() => {
-                      if (acceptedQuotesAreCod(acceptance, quotes)) {
-                        setPaymentByRfq((prev) => ({
-                          ...prev,
-                          [selected.id]: {
-                            method: "cod",
-                            receiptName: prev[selected.id]?.receiptName || "",
-                            supplierAccepted: false,
-                          },
-                        }));
-                      }
-                      setActiveStep("payment");
-                    }}
-                    onBack={() => setActiveStep("quotes")}
-                  />
-                ) : null}
-
-                {activeStep === "payment" ? (
-                  <PaymentStep
-                    acceptance={acceptance}
-                    quotes={quotes}
-                    po={po}
-                    payment={paymentByRfq[selected.id] || { method: "", receiptName: "", supplierAccepted: false }}
-                    onChange={(next) =>
-                      setPaymentByRfq((prev) => ({ ...prev, [selected.id]: next }))
-                    }
-                    onContinue={() => setActiveStep("delivery")}
-                    onBack={() => setActiveStep("purchaseOrder")}
-                  />
-                ) : null}
-
-                {activeStep === "delivery" ? (
-                  <DeliveryStep
                     rfq={selected}
                     acceptance={acceptance}
                     quotes={quotes}
                     po={po}
-                    payment={paymentByRfq[selected.id]}
-                    delivery={deliveryByRfq[selected.id] || { noteName: "", buyerAccepted: false }}
-                    onChange={(next) =>
-                      setDeliveryByRfq((prev) => ({ ...prev, [selected.id]: next }))
-                    }
-                    onBack={() => setActiveStep("payment")}
+                    t={t}
+                    onCreated={(next) => setPoByRfq((prev) => ({ ...prev, [selected.id]: next }))}
+                    onBack={() => setActiveStep("quotes")}
                   />
                 ) : null}
               </div>
@@ -734,7 +1095,7 @@ function Shell({ children, wide = false, fluid = false }) {
     <div className="bg-paper min-h-screen">
       <Seo lang={lang} path={withLocale(lang, "/rfqs")} title={`${t("myRfqs")} | Mattex Marketplace`} description={t("loginRequiredRfq")} noindex />
       <SiteHeader fluid={fluid} wide={wide} />
-      <main className={`${width} mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-10`}>{children}</main>
+      <main className={`${width} mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-6`}>{children}</main>
     </div>
   );
 }
@@ -742,15 +1103,19 @@ function Shell({ children, wide = false, fluid = false }) {
 function SubmittedStep({ rfq, t }) {
   return (
     <div>
-      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-mute">Request</p>
-      <h3 className="mt-1 text-lg font-bold text-brand-800">Submitted RFQ</h3>
-      <p className="mt-1 text-sm text-mute">Review what you sent. Supplier quotes appear in the next step.</p>
-
-      <h4 className="mt-5 text-xs font-semibold uppercase tracking-[0.12em] text-mute">{t("lineItems")}</h4>
-      <ul className="mt-3 divide-y divide-line border-y border-line">
-        {rfq.lines.map((l) => (
-          <li key={`${l.productId}-${l.qty}`} className="flex justify-between gap-3 py-3 text-sm">
-            <span className="min-w-0">
+      <h3 className="text-sm font-semibold text-brand-800">{t("lineItems")}</h3>
+      <ul className="mt-2 divide-y divide-line border-y border-line">
+        {rfq.lines.map((l) => {
+          const thumb = lineThumb(l);
+          return (
+          <li key={`${l.productId}-${l.qty}`} className="flex justify-between gap-3 py-2.5 text-sm">
+            <span className="flex min-w-0 items-start gap-2.5">
+              {thumb ? (
+                <img src={thumb} alt="" className="h-10 w-10 shrink-0 rounded-md border border-line object-cover bg-paper" />
+              ) : (
+                <span className="h-10 w-10 shrink-0 rounded-md border border-line bg-paper" />
+              )}
+              <span className="min-w-0">
               <span className="font-medium text-ink">
                 {l.name} × {l.qty}
                 {l.intent === "buy" || l.intent === "quote" ? (
@@ -765,7 +1130,7 @@ function SubmittedStep({ rfq, t }) {
                 ) : null}
                 {l.custom ? (
                   <span className="ml-2 text-[10px] font-bold uppercase tracking-wide text-brand-700 bg-brand-50 px-1.5 py-0.5">
-                    {t("customItem")}
+                    {l.tailorMade ? t("tailorMadeBadge") : t("customItem")}
                   </span>
                 ) : null}
               </span>
@@ -773,21 +1138,36 @@ function SubmittedStep({ rfq, t }) {
               {l.description ? <span className="block text-xs text-mute mt-0.5">{l.description}</span> : null}
               <AttachmentLinks files={l.attachments} />
               {l.supplier ? <span className="block text-xs text-mute mt-0.5">{l.supplier}</span> : null}
+              </span>
             </span>
             <span className="text-mute shrink-0 text-right">
-              {l.unitPrice == null ? (
-                formatPrice(null)
-              ) : l.requestedUnitPrice != null && Number(l.requestedUnitPrice) < Number(l.unitPrice) ? (
-                <>
-                  <span className="block text-xs line-through">{formatPrice(l.unitPrice)}</span>
-                  <span className="font-semibold text-brand-700">{formatPrice(l.requestedUnitPrice)}</span>
-                </>
-              ) : (
-                formatPrice(l.unitPrice)
-              )}
+              {(() => {
+                const unit = lineQuoteUnit(l);
+                if (unit == null) return formatPrice(null);
+                if (l.quotedUnitPrice != null) {
+                  return (
+                    <>
+                      {l.unitPrice != null && Number(l.unitPrice) !== Number(unit) ? (
+                        <span className="block text-xs line-through">{formatPrice(l.unitPrice)}</span>
+                      ) : null}
+                      <span className="font-semibold text-brand-700">{formatPrice(unit)}</span>
+                    </>
+                  );
+                }
+                if (l.requestedUnitPrice != null && Number(l.requestedUnitPrice) < Number(l.unitPrice)) {
+                  return (
+                    <>
+                      <span className="block text-xs line-through">{formatPrice(l.unitPrice)}</span>
+                      <span className="font-semibold text-brand-700">{formatPrice(l.requestedUnitPrice)}</span>
+                    </>
+                  );
+                }
+                return formatPrice(l.unitPrice);
+              })()}
             </span>
           </li>
-        ))}
+          );
+        })}
       </ul>
       {rfq.note ? (
         <p className="mt-4 text-sm text-mute">
@@ -799,7 +1179,7 @@ function SubmittedStep({ rfq, t }) {
           {rfq.unpricedCount ? `${rfq.unpricedCount} item(s) price upon request` : "All line items priced"}
         </p>
         <p className="text-base font-bold text-brand-700">
-          {t("pricedSubtotal")}: {formatPrice(rfq.pricedSubtotal)}
+          {t("pricedSubtotal")}: {formatPrice(rfq.quotedSubtotal != null ? rfq.quotedSubtotal : rfq.pricedSubtotal)}
         </p>
       </div>
     </div>
@@ -832,58 +1212,67 @@ function DocStatus({ steps }) {
   );
 }
 
-function PurchaseOrderStep({ acceptance, po, onChange, onContinue, onBack }) {
-  if (!acceptance?.quoteSupplierAccepted) {
+function PurchaseOrderStep({ rfq, acceptance, po, t, onCreated, onBack }) {
+  const created = Boolean(po?.id || po?.status === "created" || po?.confirmedAt);
+  const lines = created && po?.lines?.length ? po.lines : acceptance?.lines || [];
+  const total = created ? po?.total : acceptance?.total;
+  const label = created ? po?.label : acceptance?.label;
+
+  if (!created && !acceptance) {
     return (
       <div className="border border-dashed border-line rounded-xl px-5 py-8 text-center">
-        <p className="font-semibold text-brand-800">Waiting on Quotes</p>
-        <p className="mt-2 text-sm text-mute">
-          Submit your selected prices to the supplier. After they accept, confirm the purchase order here.
-        </p>
-        <button type="button" className="btn-soft mt-4 !px-5" onClick={onBack}>
-          Go to Quotes
+        <p className="font-semibold text-brand-800">{t("createPurchaseOrder")}</p>
+        <p className="mt-2 text-sm text-mute">{t("poNeedQuotesHint")}</p>
+        <button type="button" className="btn-primary mt-4 !px-5" onClick={onBack}>
+          {t("goToQuotes")}
         </button>
       </div>
     );
   }
 
-  const buyerConfirmed = Boolean(po?.buyerConfirmed);
-  const sent = Boolean(po?.sent);
-  const supplierAccepted = Boolean(po?.supplierAccepted);
-  const lines = acceptance.lines || [];
+  function createPo() {
+    const poLines = (acceptance?.lines || []).map((line) => ({
+      productId: line.productId,
+      name: line.offer?.name || line.requestName,
+      qty: line.offer?.qty,
+      supplierName: line.supplierName,
+      lineTotal: line.lineTotal,
+    }));
+    if (rfq.id === DEMO_QUOTED_RFQ.id) {
+      onCreated?.({
+        id: `PO-DEMO-${String(Date.now()).slice(-4)}`,
+        status: "created",
+        createdAt: new Date().toISOString(),
+        confirmedAt: new Date().toISOString(),
+        lines: poLines,
+        total: acceptance?.total || 0,
+        label: acceptance?.label || "",
+      });
+      return;
+    }
+    const result = createBuyerPurchaseOrder(rfq.id, {
+      lines: poLines,
+      total: acceptance?.total || 0,
+      label: acceptance?.label || "",
+    });
+    if (result?.ok) onCreated?.(result.rfq.buyerPo);
+  }
 
   return (
     <div>
-      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-mute">Purchase Order</p>
-      <h3 className="mt-1 text-lg font-bold text-brand-800">Confirm items, then send to supplier</h3>
-      <p className="mt-1 text-sm text-mute">
-        {acceptance.label} · {formatPrice(acceptance.total)}
-      </p>
-
-      <DocStatus
-        steps={[
-          {
-            n: 1,
-            label: "Buyer confirms item content",
-            hint: "Check qty, product, and supplier against the accepted quote.",
-            done: buyerConfirmed,
-            current: !buyerConfirmed,
-          },
-          {
-            n: 2,
-            label: "Send PO to supplier",
-            done: sent,
-            current: buyerConfirmed && !sent,
-          },
-          {
-            n: 3,
-            label: "Supplier accepts PO",
-            hint: "Payment unlocks after this accept.",
-            done: supplierAccepted,
-            current: sent && !supplierAccepted,
-          },
-        ]}
-      />
+      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-mute">{t("createPurchaseOrder")}</p>
+      <h3 className="mt-1 text-lg font-bold text-brand-800">
+        {created ? t("poCreated") : t("confirmCreatePo")}
+      </h3>
+      <p className="mt-1 text-sm text-mute">{t("poFromQuotesHint")}</p>
+      {created && po?.id ? (
+        <p className="mt-2 text-sm font-semibold text-brand-800">{po.id}</p>
+      ) : null}
+      {label ? (
+        <p className="mt-1 text-sm text-mute">
+          {label} · {formatPrice(total)}
+        </p>
+      ) : null}
 
       <div className="mt-5 border border-line rounded-xl overflow-hidden">
         <table className="w-full text-sm">
@@ -896,16 +1285,13 @@ function PurchaseOrderStep({ acceptance, po, onChange, onContinue, onBack }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-line">
-            {lines.map((line) => (
-              <tr key={`${line.quoteId}-${line.productId}`}>
+            {lines.map((line, index) => (
+              <tr key={`${line.productId || line.name || index}`}>
                 <td className="px-3 py-2.5">
-                  <p className="font-medium text-ink">{line.offer?.name || line.requestName}</p>
-                  {line.offer?.name && line.offer.name !== line.requestName ? (
-                    <p className="text-[11px] text-mute mt-0.5">RFQ: {line.requestName}</p>
-                  ) : null}
+                  <p className="font-medium text-ink">{line.offer?.name || line.name || line.requestName}</p>
                 </td>
-                <td className="px-3 py-2.5 text-mute">{line.supplierName}</td>
-                <td className="px-3 py-2.5 text-right tabular-nums">{line.offer?.qty ?? "—"}</td>
+                <td className="px-3 py-2.5 text-mute">{line.supplierName || "—"}</td>
+                <td className="px-3 py-2.5 text-right tabular-nums">{line.offer?.qty ?? line.qty ?? "—"}</td>
                 <td className="px-3 py-2.5 text-right font-semibold tabular-nums">
                   {formatPrice(line.lineTotal)}
                 </td>
@@ -918,7 +1304,7 @@ function PurchaseOrderStep({ acceptance, po, onChange, onContinue, onBack }) {
                 Total
               </td>
               <td className="px-3 py-2.5 text-right font-bold text-brand-700 tabular-nums">
-                {formatPrice(acceptance.total)}
+                {formatPrice(total)}
               </td>
             </tr>
           </tfoot>
@@ -927,49 +1313,14 @@ function PurchaseOrderStep({ acceptance, po, onChange, onContinue, onBack }) {
 
       <div className="mt-5 flex flex-wrap gap-2">
         <button type="button" className="btn-soft !px-4 !py-2.5" onClick={onBack}>
-          Back
+          {t("goToQuotes")}
         </button>
-        {!buyerConfirmed ? (
-          <button
-            type="button"
-            className="btn-primary !px-5 !py-2.5"
-            onClick={() => onChange({ ...po, buyerConfirmed: true, sent: false, supplierAccepted: false })}
-          >
-            Confirm items
-          </button>
-        ) : null}
-        {buyerConfirmed && !sent ? (
-          <button
-            type="button"
-            className="btn-primary !px-5 !py-2.5"
-            onClick={() => onChange({ ...po, buyerConfirmed: true, sent: true, supplierAccepted: false })}
-          >
-            Send to supplier
-          </button>
-        ) : null}
-        {sent && !supplierAccepted ? (
-          <button
-            type="button"
-            className="btn-primary !px-5 !py-2.5"
-            onClick={() =>
-              onChange({ ...po, buyerConfirmed: true, sent: true, supplierAccepted: true })
-            }
-          >
-            Simulate supplier accept
-          </button>
-        ) : null}
-        {supplierAccepted ? (
-          <button type="button" className="btn-primary !px-5 !py-2.5" onClick={onContinue}>
-            Continue to payment
+        {!created ? (
+          <button type="button" className="btn-primary !px-5 !py-2.5" onClick={createPo}>
+            {t("confirmCreatePo")}
           </button>
         ) : null}
       </div>
-      {sent && !supplierAccepted ? (
-        <p className="mt-3 text-xs text-mute">PO sent. Waiting for the supplier to accept…</p>
-      ) : null}
-      {supplierAccepted ? (
-        <p className="mt-3 text-sm font-semibold text-brand-700">Supplier accepted the purchase order.</p>
-      ) : null}
     </div>
   );
 }

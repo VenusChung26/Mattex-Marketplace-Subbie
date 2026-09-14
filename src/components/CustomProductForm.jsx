@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLanguage } from "../i18n";
-import { extractSpecItems, fileToAttachment } from "../lib/extractSpec";
-import AttachmentLinks from "./AttachmentLinks";
+import { extractSpecItems, fileToAttachment, openUrlForAttachment } from "../lib/extractSpec";
 import { QtyStepper } from "./ProductCard";
 import { getCategoryDefs } from "../lib/store";
 
@@ -13,8 +12,14 @@ export const SHOW_CUSTOM_IMAGE_UPLOAD = true;
 export const SPEC_FILE_ACCEPT = ".jpg,.jpeg,.png,.pdf,.doc,.docx,.xls,.xlsx";
 export const SPEC_FILE_EXT = /\.(jpe?g|png|pdf|docx?|xlsx?)$/i;
 
+const SPEC_FILE_MAX = 8;
+
 export function isAllowedSpecFile(file) {
   return SPEC_FILE_EXT.test(String(file?.name || ""));
+}
+
+function sameAttachment(a, b) {
+  return String(a?.name || "") === String(b?.name || "") && Number(a?.size || 0) === Number(b?.size || 0);
 }
 
 function dataUrlBytes(dataUrl) {
@@ -79,6 +84,7 @@ export default function CustomProductForm({
   const { t } = useLanguage();
   const categories = useMemo(() => getCategoryDefs(), []);
   const extractTokenRef = useRef(0);
+  const specInputRef = useRef(null);
   const imageInputRef = useRef(null);
   const [name, setName] = useState(initial.name || "");
   const [description, setDescription] = useState(initial.description || "");
@@ -89,6 +95,7 @@ export default function CustomProductForm({
   const [extracting, setExtracting] = useState(false);
   const [filledFrom, setFilledFrom] = useState("");
   const [error, setError] = useState("");
+  const [specOver, setSpecOver] = useState(false);
   const [imageOver, setImageOver] = useState(false);
 
   useEffect(() => {
@@ -116,25 +123,42 @@ export default function CustomProductForm({
     }
   }
 
+  function removeAttachment(index) {
+    setAttachments((prev) => {
+      const next = prev.filter((_, i) => i !== index);
+      if (!next.length) setFilledFrom("");
+      return next;
+    });
+    setError("");
+  }
+
   async function handleSpecFiles(list) {
-    const picked = Array.from(list || []).slice(0, 8);
-    const files = picked.filter(isAllowedSpecFile);
-    setFilledFrom("");
-    if (!files.length) {
+    const remaining = SPEC_FILE_MAX - attachments.length;
+    if (remaining <= 0) {
+      setError(t("specFileMax"));
+      return;
+    }
+    const picked = Array.from(list || []);
+    if (!picked.length) return;
+    const allowed = picked.filter(isAllowedSpecFile);
+    if (!allowed.length) {
       setError(t("specFileTypeError"));
       return;
     }
+    const unique = allowed.filter((file) => !attachments.some((row) => sameAttachment(row, file)));
+    const files = unique.slice(0, remaining);
+    if (!files.length) return;
 
     const token = ++extractTokenRef.current;
     setExtracting(true);
     setError("");
     try {
-      const next = [];
+      const added = [];
       for (const file of files) {
-        next.push(await fileToAttachment(file));
+        added.push(await fileToAttachment(file));
       }
       if (token !== extractTokenRef.current) return;
-      setAttachments(next);
+      setAttachments((prev) => [...prev, ...added].slice(0, SPEC_FILE_MAX));
     } catch (err) {
       if (token !== extractTokenRef.current) return;
       setError(err?.code === "too_large" ? t("specFileTooLarge") : t("extractFailed"));
@@ -194,6 +218,9 @@ export default function CustomProductForm({
     }
   }
 
+  const specPreview = attachments.find((file) => file.kind === "image" && file.url);
+  const specExt = String(attachments[0]?.name || "").split(".").pop()?.slice(0, 4);
+
   return (
     <form
       onSubmit={handleSubmit}
@@ -213,39 +240,122 @@ export default function CustomProductForm({
       ) : null}
 
       {SHOW_CUSTOM_FILE_UPLOADS ? (
-      <div className="rounded-lg border border-dashed border-brand-200 bg-brand-50/50 p-3 space-y-2">
-        <label className="block">
-          <span className="block text-sm font-semibold text-ink mb-1">
-            {t("uploadSpecForItem")}{" "}
-            <span className="font-normal text-mute">({t("optional")})</span>
-          </span>
+      <div>
+        <p className="text-sm font-medium text-ink">
+          {t("uploadSpecForItem")}{" "}
+          <span className="font-normal text-mute">({t("optional")})</span>
+        </p>
+        <div
+          className={`mt-1 flex items-center gap-3 rounded-lg border border-dashed ${
+            compact ? "p-2.5" : "p-3"
+          } ${specOver ? "border-brand-600 bg-brand-50" : "border-line bg-paper/60"} ${extracting ? "opacity-70" : ""}`}
+          onDragOver={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (!extracting) setSpecOver(true);
+          }}
+          onDragLeave={(e) => {
+            e.preventDefault();
+            if (!e.currentTarget.contains(e.relatedTarget)) setSpecOver(false);
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setSpecOver(false);
+            if (!extracting) handleSpecFiles(e.dataTransfer.files);
+          }}
+        >
+          <button
+            type="button"
+            disabled={extracting}
+            onClick={() => specInputRef.current?.click()}
+            className={`relative shrink-0 overflow-hidden border border-line bg-white ${
+              compact ? "h-14 w-14" : "h-20 w-20"
+            }`}
+            aria-label={attachments.length ? t("addMoreSpecFiles") : t("chooseSpecFiles")}
+          >
+            {specPreview ? (
+              <img src={specPreview.url} alt="" className="h-full w-full object-cover" />
+            ) : attachments.length ? (
+              <span className="flex h-full w-full items-center justify-center text-[11px] font-bold uppercase text-mute">
+                {specExt || String(attachments.length)}
+              </span>
+            ) : (
+              <span className="flex h-full w-full items-center justify-center text-2xl font-light text-mute">
+                +
+              </span>
+            )}
+          </button>
+          <div className="min-w-0">
+            <button
+              type="button"
+              disabled={extracting}
+              className="text-sm font-semibold text-brand-700 hover:text-brand-800 disabled:opacity-60"
+              onClick={() => specInputRef.current?.click()}
+            >
+              {specOver ? t("specDropReady") : attachments.length ? t("addMoreSpecFiles") : t("chooseSpecFiles")}
+            </button>
+            <p className={`mt-0.5 text-xs ${extracting || filledFrom ? "text-brand-800" : "text-mute"}`}>
+              {extracting
+                ? t("extracting")
+                : filledFrom
+                  ? t("filledFromSpec", { name: filledFrom })
+                  : t("dropSpecHere")}
+            </p>
+            {attachments.length ? (
+              <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                {attachments.map((file, i) => {
+                  const href = openUrlForAttachment(file);
+                  return (
+                    <span key={`${file.name}-${file.size}-${i}`} className="inline-flex max-w-full items-center gap-1.5 text-xs">
+                      {href ? (
+                        <a
+                          href={href}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="min-w-0 truncate text-brand-700 underline underline-offset-2 hover:text-brand-800"
+                          title={file.name}
+                        >
+                          {file.name}
+                        </a>
+                      ) : (
+                        <span className="min-w-0 truncate text-ink" title={file.name}>
+                          {file.name}
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        className="shrink-0 font-semibold text-mute hover:text-brand-700"
+                        onClick={() => removeAttachment(i)}
+                        aria-label={t("removeFileAria", { name: file.name })}
+                      >
+                        {t("remove")}
+                      </button>
+                    </span>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="mt-1 text-xs text-mute">{t("specFileTypes")}</p>
+            )}
+          </div>
           <input
+            ref={specInputRef}
             type="file"
             multiple
             accept={SPEC_FILE_ACCEPT}
             disabled={extracting}
+            className="sr-only"
             onChange={(e) => {
               handleSpecFiles(e.target.files);
               e.target.value = "";
             }}
-            className="block w-full text-sm text-ink file:mr-3 file:border file:border-line file:bg-white file:px-3 file:py-1.5 file:text-sm"
           />
-        </label>
-        <AttachmentLinks files={attachments} className="text-xs text-brand-700" />
-        <p className="text-xs text-brand-800">
-            {extracting
-              ? t("extracting")
-              : filledFrom
-                ? t("filledFromSpec", { name: filledFrom })
-                : t("specAiHint")}
-            {extracting || filledFrom ? null : (
-              <span className="mt-0.5 block text-mute">{t("specFileTypes")}</span>
-            )}
-        </p>
+        </div>
       </div>
       ) : null}
 
-      <div className="grid grid-cols-1 sm:grid-cols-[1fr_6.5rem] gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_12rem] sm:items-end gap-3">
         <label className="block min-w-0">
           <span className="block text-sm font-semibold text-ink mb-1">
             {t("customProductName")} <span className="text-brand-600">*</span>
@@ -260,7 +370,7 @@ export default function CustomProductForm({
             required
           />
         </label>
-        <div className="block">
+        <div className="block min-w-0">
           <QtyStepper
             value={Math.max(1, Number(qty) || 1)}
             min={1}

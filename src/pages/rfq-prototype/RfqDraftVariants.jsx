@@ -484,15 +484,33 @@ function IntentDraftSections(props) {
 }
 
 export function ConfirmRfqView(props) {
-  const { confirmKind, lines, selectedIds, onSubmitKind, setConfirmKind, formError } = props;
+  const {
+    confirmKind,
+    confirmChannel,
+    lines,
+    selectedIds,
+    onSubmitKind,
+    setConfirmKind,
+    formError,
+    setLineQty,
+    removeLine,
+    toggleId,
+  } = props;
   const { t } = useLanguage();
   const group = (lines || []).filter((line) =>
     confirmKind === "buy" ? line.intent === "buy" : line.intent !== "buy"
   ).filter((line) => selectedIds.includes(String(line.productId)));
   const groupTotals = draftTotals({ lines: group }, group.map((l) => String(l.productId)));
+  const viaWhatsapp = confirmChannel === "whatsapp";
+
+  function handleRemove(productId) {
+    removeLine?.(productId);
+    toggleId?.(productId);
+    if (group.length <= 1) setConfirmKind(null);
+  }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-8 sm:py-10 pb-28">
+    <div className="max-w-7xl mx-auto px-4 py-8 sm:py-10">
       <button
         type="button"
         onClick={() => setConfirmKind(null)}
@@ -503,10 +521,14 @@ export function ConfirmRfqView(props) {
       <p className="mt-4 text-xs font-semibold uppercase tracking-wide text-brand-600">{t("rfqDraft")}</p>
       <h1 className="reveal mt-1 text-2xl sm:text-3xl font-bold text-brand-800">{t("confirmPageTitle")}</h1>
       <p className="mt-2 text-sm text-mute">
-        {confirmKind === "buy" ? t("confirmPageHintBuy") : t("confirmPageHintQuote")}
+        {viaWhatsapp
+          ? t("confirmPageHintWhatsapp")
+          : confirmKind === "buy"
+            ? t("confirmPageHintBuy")
+            : t("confirmPageHintQuote")}
       </p>
 
-      <section className="mt-6 bg-white border border-line rounded-xl overflow-hidden">
+      <section id="rfq-confirm-lines" className="mt-6 bg-white border border-line rounded-xl overflow-hidden">
         <div className="px-4 sm:px-5 py-3 border-b border-line bg-brand-50/80">
           <h2 className="text-base sm:text-lg font-bold text-brand-800">
             {confirmKind === "buy" ? t("sectionBuy") : t("sectionQuote")}
@@ -514,29 +536,52 @@ export function ConfirmRfqView(props) {
           <p className="mt-0.5 text-xs text-mute">{t("selectedProducts")}</p>
         </div>
         <ul className="divide-y divide-line">
-          {group.map((l) => (
-            <li key={l.productId} className="px-4 sm:px-5 py-3 flex justify-between gap-3 text-sm">
-              <span>
-                <span className="font-semibold text-ink">{l.name}</span>
-                <span className="text-mute"> × {l.qty}</span>
-                {l.green ? (
-                  <span className="ml-1.5 align-middle">
-                    <GreenProductTag t={t} />
+          {group.map((l) => {
+            const moq = Math.max(1, Number(l.moq) || 1);
+            const belowMoq = !l.custom && Number(l.qty) < moq;
+            return (
+              <li key={l.productId} className="px-4 sm:px-5 py-3 flex flex-wrap justify-between gap-3 text-sm">
+                <span className="min-w-0 flex-1">
+                  <span className="font-semibold text-ink">{l.name}</span>
+                  {l.green ? (
+                    <span className="ml-1.5 align-middle">
+                      <GreenProductTag t={t} />
+                    </span>
+                  ) : null}
+                  {l.custom ? <span className="text-mute"> · {t("customItem")}</span> : null}
+                  {hasLowerAsk(l) ? (
+                    <span className="block text-xs font-normal text-mute mt-0.5">
+                      {t("listedPrice")} {formatPrice(l.unitPrice)} · {t("requestedPrice")} {formatPrice(l.requestedUnitPrice)}
+                    </span>
+                  ) : null}
+                  <AttachmentLinks files={l.attachments} />
+                  {belowMoq ? (
+                    <p className="mt-1 text-xs font-medium text-amber-800">{t("qtyBelowMoq", { n: moq })}</p>
+                  ) : null}
+                </span>
+                <span className="shrink-0 flex flex-col items-end gap-1.5 w-[13rem] max-w-full">
+                  <span className="font-semibold text-right w-full">
+                    <LineMoney line={l} t={t} compact />
                   </span>
-                ) : null}
-                {l.custom ? <span className="text-mute"> · {t("customItem")}</span> : null}
-                {hasLowerAsk(l) ? (
-                  <span className="block text-xs font-normal text-mute mt-0.5">
-                    {t("listedPrice")} {formatPrice(l.unitPrice)} · {t("requestedPrice")} {formatPrice(l.requestedUnitPrice)}
-                  </span>
-                ) : null}
-                <AttachmentLinks files={l.attachments} />
-              </span>
-              <span className="font-semibold shrink-0 text-right">
-                <LineMoney line={l} t={t} compact />
-              </span>
-            </li>
-          ))}
+                  <QtyStepper
+                    value={l.qty}
+                    min={moq}
+                    unit={l.unit || ""}
+                    onChange={(qty) => setLineQty(l.productId, qty)}
+                    size="row"
+                    t={t}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleRemove(l.productId)}
+                    className="text-[11px] font-semibold text-mute/80 hover:text-[#8a2b2b]"
+                  >
+                    {t("remove")}
+                  </button>
+                </span>
+              </li>
+            );
+          })}
         </ul>
       </section>
 
@@ -549,7 +594,13 @@ export function ConfirmRfqView(props) {
           selectedTotals={groupTotals}
           formError={formError}
           onSubmit={() => onSubmitKind(confirmKind)}
-          submitLabel={confirmKind === "buy" ? t("confirmBuyCreateRfq") : t("submitQuoteRfq")}
+          submitLabel={
+            viaWhatsapp
+              ? t("submitWhatsappAndPortal")
+              : confirmKind === "buy"
+                ? t("confirmBuyCreateRfq")
+                : t("submitQuoteRfq")
+          }
         />
       </section>
     </div>
@@ -561,7 +612,7 @@ export function VariantA(props) {
   const hasBuy = (props.lines || []).some((line) => line.intent === "buy");
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-8 sm:py-10 pb-28">
+    <div className="max-w-7xl mx-auto px-4 py-8 sm:py-10">
       <p className="text-xs font-semibold uppercase tracking-wide text-brand-600">{t("rfqDraft")}</p>
       <h1 className="reveal mt-1 text-2xl sm:text-3xl font-bold text-brand-800">{t("reviewQuote")}</h1>
       <p className="mt-2 text-sm text-mute">{hasBuy ? t("reviewQuoteHint") : t("reviewQuoteHintQuoteOnly")}</p>
@@ -589,7 +640,7 @@ export function VariantB(props) {
   const quoteTotals = draftTotals({ lines: quoteLines }, quoteSelected);
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-8 sm:py-10 pb-28">
+    <div className="max-w-7xl mx-auto px-4 py-8 sm:py-10">
       <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-brand-600">RFQ workspace</p>
@@ -682,7 +733,7 @@ export function VariantC(props) {
   ];
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-8 sm:py-10 pb-28">
+    <div className="max-w-7xl mx-auto px-4 py-8 sm:py-10">
       <p className="text-xs font-semibold uppercase tracking-wide text-brand-600">RFQ Draft</p>
       <h1 className="reveal mt-1 text-2xl sm:text-3xl font-bold text-brand-800">Create RFQ</h1>
 
@@ -751,7 +802,7 @@ export function VariantC(props) {
                     <span>
                       {l.name} × {l.qty}
                       {l.intent === "buy" ? " · buy" : " · quote"}
-                      {l.custom ? " · custom" : ""}
+                      {l.custom ? " · Tailor Made Product" : ""}
                     </span>
                     <span className="text-mute">
                       <LineMoney line={l} t={t} compact />
@@ -1000,7 +1051,15 @@ function LinesList({
             const isEditing = editingId === id;
             const catalog = l.custom ? null : getProduct(l.productId);
             const discontinued = Boolean(catalog && isDiscontinued(catalog));
-            const meta = [l.productNo, l.category, l.supplier].filter(Boolean).join(" · ");
+            const meta = [
+              l.tailorMade && (l.baseProductNo || l.productNo)
+                ? t("tailorMadeBasedOn", { sku: l.baseProductNo || l.productNo })
+                : l.productNo,
+              l.category,
+              l.supplier,
+            ]
+              .filter(Boolean)
+              .join(" · ");
             const unpriced = l.unitPrice == null && !l.custom;
             return (
               <div
@@ -1059,7 +1118,7 @@ function LinesList({
                         {showIntent ? <IntentBadge intent={l.intent} t={t} /> : null}
                         {l.custom ? (
                           <span className="text-[10px] font-bold uppercase tracking-wide text-brand-700 bg-brand-50 px-1.5 py-0.5 shrink-0">
-                            {t("customItem")}
+                            {l.tailorMade ? t("tailorMadeBadge") : t("customItem")}
                           </span>
                         ) : null}
                         {discontinued ? (
@@ -1148,6 +1207,223 @@ function ensureDeliveryLots(lots, deliveryDate) {
   return next;
 }
 
+function invalidFieldClass(invalid, extra = "") {
+  return `field-input ${extra} ${invalid ? "border-red-500 ring-2 ring-red-200 bg-red-50" : ""}`.trim();
+}
+
+function todayIso() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function isoFromParts(y, m, d) {
+  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+
+function parseDateInput(raw) {
+  const text = String(raw || "").trim();
+  if (!text) return "";
+  let y;
+  let m;
+  let d;
+  const iso = text.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
+  const dmy = text.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/);
+  if (iso) {
+    y = Number(iso[1]);
+    m = Number(iso[2]);
+    d = Number(iso[3]);
+  } else if (dmy) {
+    d = Number(dmy[1]);
+    m = Number(dmy[2]);
+    y = Number(dmy[3]);
+  } else {
+    return "";
+  }
+  if (!y || m < 1 || m > 12 || d < 1 || d > 31) return "";
+  const dt = new Date(y, m - 1, d);
+  if (dt.getFullYear() !== y || dt.getMonth() !== m - 1 || dt.getDate() !== d) return "";
+  return isoFromParts(y, m, d);
+}
+
+function DatePickerField({ value, onChange, min, invalid, className = "" }) {
+  const { lang } = useLanguage();
+  const boxRef = useRef(null);
+  const inputRef = useRef(null);
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState(value || "");
+  const selected = parseDateInput(value) || "";
+  const minIso = min || todayIso();
+  const seed = parseDateInput(value) || minIso;
+  const seedDate = new Date(`${seed}T00:00:00`);
+  const [viewYear, setViewYear] = useState(seedDate.getFullYear());
+  const [viewMonth, setViewMonth] = useState(seedDate.getMonth());
+
+  useEffect(() => {
+    setText(value || "");
+  }, [value]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const iso = parseDateInput(value) || minIso;
+    const d = new Date(`${iso}T00:00:00`);
+    setViewYear(d.getFullYear());
+    setViewMonth(d.getMonth());
+    function onDoc(e) {
+      if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open, value, minIso]);
+
+  function commit(nextIso, close = true) {
+    const iso = parseDateInput(nextIso);
+    if (!iso) return;
+    if (iso < minIso) return;
+    setText(iso);
+    onChange(iso);
+    if (close) setOpen(false);
+  }
+
+  const weekdays = lang === "zh" ? ["日", "一", "二", "三", "四", "五", "六"] : ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
+  const monthLabel = new Date(viewYear, viewMonth, 1).toLocaleDateString(lang === "zh" ? "zh-HK" : "en-GB", {
+    month: "long",
+    year: "numeric",
+  });
+  const first = new Date(viewYear, viewMonth, 1).getDay();
+  const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+  const cells = [];
+  for (let i = 0; i < first; i += 1) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d += 1) cells.push(d);
+  while (cells.length % 7) cells.push(null);
+
+  return (
+    <div ref={boxRef} className="relative">
+      <div className="relative">
+        <input
+          ref={inputRef}
+          type="text"
+          inputMode="numeric"
+          autoComplete="off"
+          placeholder="YYYY-MM-DD"
+          value={text}
+          onFocus={() => setOpen(true)}
+          onClick={() => setOpen(true)}
+          onChange={(e) => {
+            const next = e.target.value;
+            setText(next);
+            const iso = parseDateInput(next);
+            if (iso && iso >= minIso) onChange(iso);
+          }}
+          onBlur={() => {
+            const iso = parseDateInput(text);
+            if (iso && iso >= minIso) commit(iso, false);
+            else setText(value || "");
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setOpen(false);
+            if (e.key === "Enter") {
+              e.preventDefault();
+              const iso = parseDateInput(text);
+              if (iso && iso >= minIso) commit(iso);
+            }
+          }}
+          className={`${invalidFieldClass(invalid, className)} pr-10`}
+        />
+        <button
+          type="button"
+          className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-brand-800 hover:bg-brand-50"
+          aria-label="Open calendar"
+          onClick={() => {
+            setOpen((v) => !v);
+            inputRef.current?.focus();
+          }}
+        >
+          <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" aria-hidden>
+            <rect x="3" y="4.5" width="14" height="12" rx="1.5" stroke="currentColor" strokeWidth="1.6" />
+            <path d="M3 8h14M7 3v3M13 3v3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+          </svg>
+        </button>
+      </div>
+      {open ? (
+        <div className="absolute z-30 mt-1 w-[17.5rem] rounded-xl border border-line bg-white p-3 shadow-lg">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <button
+              type="button"
+              className="rounded-lg px-2 py-1 text-sm font-semibold text-brand-800 hover:bg-brand-50"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                const d = new Date(viewYear, viewMonth - 1, 1);
+                setViewYear(d.getFullYear());
+                setViewMonth(d.getMonth());
+              }}
+            >
+              ‹
+            </button>
+            <p className="text-sm font-semibold text-ink">{monthLabel}</p>
+            <button
+              type="button"
+              className="rounded-lg px-2 py-1 text-sm font-semibold text-brand-800 hover:bg-brand-50"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                const d = new Date(viewYear, viewMonth + 1, 1);
+                setViewYear(d.getFullYear());
+                setViewMonth(d.getMonth());
+              }}
+            >
+              ›
+            </button>
+          </div>
+          <div className="grid grid-cols-7 gap-0.5 text-center text-[11px] font-semibold text-mute">
+            {weekdays.map((w) => (
+              <span key={w} className="py-1">
+                {w}
+              </span>
+            ))}
+          </div>
+          <div className="mt-0.5 grid grid-cols-7 gap-0.5">
+            {cells.map((day, index) => {
+              if (!day) return <span key={`e-${index}`} />;
+              const iso = isoFromParts(viewYear, viewMonth + 1, day);
+              const disabled = iso < minIso;
+              const isSelected = iso === selected;
+              const isToday = iso === todayIso();
+              return (
+                <button
+                  key={iso}
+                  type="button"
+                  disabled={disabled}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => commit(iso)}
+                  className={`h-8 rounded-lg text-sm ${
+                    disabled
+                      ? "cursor-not-allowed text-mute/40"
+                      : isSelected
+                        ? "bg-brand-600 font-semibold text-white"
+                        : isToday
+                          ? "font-semibold text-brand-800 hover:bg-brand-50"
+                          : "text-ink hover:bg-brand-50"
+                  }`}
+                >
+                  {day}
+                </button>
+              );
+            })}
+          </div>
+          <p className="mt-2 text-[11px] text-mute">{lang === "zh" ? "可開日曆選擇，或直接輸入日期" : "Pick from the calendar, or type the date"}</p>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function FieldError({ show, children }) {
+  if (!show) return null;
+  return <span className="mt-1 block text-xs font-medium text-red-700">{children}</span>;
+}
+
 function MetaForm({
   note,
   responseDate,
@@ -1174,46 +1450,50 @@ function MetaForm({
   setDraftAddress,
   setDraftAcceptSubstitutes,
   setFormError,
+  formErrorField = "",
   compact = false,
 }) {
   const { t } = useLanguage();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayIso();
+  const deadlineInvalid = formErrorField === "response_date";
+  const deliveryInvalid = formErrorField === "delivery_date";
+  const lotsInvalid = formErrorField === "delivery_lots";
+  const addressInvalid = formErrorField === "address";
   return (
-    <div className={compact ? "space-y-3" : "bg-white border border-line rounded-xl p-4 sm:p-5 space-y-4"}>
+    <div id="rfq-details" className={compact ? "space-y-3" : "bg-white border border-line rounded-xl p-4 sm:p-5 space-y-4"}>
       <div className="grid sm:grid-cols-2 gap-4">
         <label className="block">
           <span className="block text-sm font-medium mb-1">
             {t("quotationDeadline")} <span className="text-brand-600">*</span>
           </span>
-          <input
-            type="date"
+          <DatePickerField
             value={responseDate || ""}
             min={today}
-            onChange={(e) => {
-              setResponseDate(e.target.value);
-              setDraftResponseDate(e.target.value);
+            invalid={deadlineInvalid}
+            onChange={(next) => {
+              setResponseDate(next);
+              setDraftResponseDate(next);
               setFormError("");
             }}
-            className="field-input"
           />
+          <FieldError show={deadlineInvalid}>{t("responseDateRequired")}</FieldError>
           <span className="mt-1 block text-xs text-mute">{t("quotationDeadlineHint")}</span>
         </label>
         <label className="block">
           <span className="block text-sm font-medium mb-1">
             {t("requestDeliveryDate")} <span className="text-brand-600">*</span>
           </span>
-          <input
-            type="date"
+          <DatePickerField
             value={deliveryDate || ""}
             min={today}
-            onChange={(e) => {
-              setDeliveryDate(e.target.value);
-              setDraftDeliveryDate(e.target.value);
+            invalid={deliveryInvalid}
+            onChange={(next) => {
+              setDeliveryDate(next);
+              setDraftDeliveryDate(next);
               setFormError("");
             }}
-            className="field-input"
           />
-          <span className="mt-1 block text-xs text-mute">{t("requestDeliveryDateHint")}</span>
+          <FieldError show={deliveryInvalid}>{t("deliveryDateRequired")}</FieldError>
         </label>
       </div>
       <fieldset className="block">
@@ -1260,10 +1540,11 @@ function MetaForm({
         </div>
       </fieldset>
       {deliveryMode === "partial" ? (
-        <div className="space-y-3 rounded-lg border border-line bg-paper/40 px-3 py-3">
+        <div className={`space-y-3 rounded-lg border px-3 py-3 ${lotsInvalid ? "border-red-500 bg-red-50" : "border-line bg-paper/40"}`}>
           <div>
             <p className="text-sm font-medium text-ink">{t("deliveryLotNote")}</p>
             <p className="mt-0.5 text-xs text-mute">{t("deliveryLotsHint")}</p>
+            <FieldError show={lotsInvalid}>{t("deliveryLotsRequired")}</FieldError>
           </div>
           {(deliveryLots || []).map((lot, index) => (
             <div key={`lot-${index}`} className="rounded-lg border border-line bg-white p-3 space-y-2">
@@ -1294,23 +1575,21 @@ function MetaForm({
                 <span className="block text-sm font-medium mb-1">
                   {t("deliveryLotDate")} <span className="text-brand-600">*</span>
                 </span>
-                <input
-                  type="date"
+                <DatePickerField
                   value={lot.date || ""}
                   min={today}
-                  onChange={(e) => {
-                    const next = (deliveryLots || []).map((row, i) =>
-                      i === index ? { ...row, date: e.target.value } : row
+                  onChange={(next) => {
+                    const lots = (deliveryLots || []).map((row, i) =>
+                      i === index ? { ...row, date: next } : row
                     );
-                    setDeliveryLots(next);
-                    setDraftDeliveryLots(next);
+                    setDeliveryLots(lots);
+                    setDraftDeliveryLots(lots);
                     if (index === 0) {
-                      setDeliveryDate(e.target.value);
-                      setDraftDeliveryDate(e.target.value);
+                      setDeliveryDate(next);
+                      setDraftDeliveryDate(next);
                     }
                     setFormError("");
                   }}
-                  className="field-input"
                 />
               </label>
               <label className="block">
@@ -1378,8 +1657,9 @@ function MetaForm({
             setFormError("");
           }}
           placeholder={t("addressPlaceholder")}
-          className="field-input w-full"
+          className={invalidFieldClass(addressInvalid, "w-full")}
         />
+        <FieldError show={addressInvalid}>{t("addressRequired")}</FieldError>
       </label>
       <label className="flex items-start gap-3 cursor-pointer rounded-lg border border-line bg-paper/60 px-3 py-3">
         <input
@@ -1449,14 +1729,24 @@ function SubmitBar({
             </Link>
           ) : null}
           {onSubmitChannel ? (
-            <button
-              type="button"
-              onClick={() => onSubmitChannel("whatsapp")}
-              disabled={selectedIds.length === 0}
-              className="btn-primary !px-5 !py-2.5 disabled:opacity-45"
-            >
-              {t("sendViaWhatsapp")}
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => onSubmitChannel("whatsapp")}
+                disabled={selectedIds.length === 0}
+                className="btn-soft !px-5 !py-2.5 disabled:opacity-45"
+              >
+                {t("sendViaWhatsapp")}
+              </button>
+              <button
+                type="button"
+                onClick={() => onSubmitChannel("rfq")}
+                disabled={selectedIds.length === 0}
+                className="btn-primary !px-5 !py-2.5 disabled:opacity-45"
+              >
+                {submitLabel || t("requestQuoteCta")}
+              </button>
+            </>
           ) : (
             <button
               type="button"

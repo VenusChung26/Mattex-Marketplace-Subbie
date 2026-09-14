@@ -1,0 +1,34 @@
+---
+description: Quote revisions are versions of one RFQ, created only on successful delivery
+alwaysApply: true
+---
+
+# Quote versions (locked spec)
+
+Revisions are **v1 → v2 of the same RFQ**. Do not mint new RFQ ids.
+
+A version is created **only on successful delivery**:
+
+- Member: `quoteRfqToBuyer` (Submit / Update quote to buyer) — still sets `reviewStatus: quoted` and must **not** run for guests.
+- Guest: **Quote sent on WhatsApp** (`quoteDelivery: "whatsapp"` only — never `reviewStatus: quoted` via `quoteRfqToBuyer`).
+
+Worksheet edits are **draft** until that send. Effective = last delivered. Dropdown is **view**, not make-effective.
+
+Same version list on portal RFQ detail and marketplace My RFQs. Label `vN` + sent time + **Current** on effective.
+
+Guest WhatsApp then Assign then Submit To Buyer is **one timeline** (WA v1/v2, member submit v3). Do not drop WhatsApp history.
+
+Old version cannot be resent in place — **Load into draft**, then send, which freezes a **new** version. Confirm if the draft is dirty.
+
+PO only against the **effective** version. Portal old version = read-only preview; edit only on **Draft**. Keep frozen public `/zh/quote/:token` URLs. Do not treat multi-supplier Variant A as versions.
+
+```jsx
+// ❌ BAD
+<button onClick={() => quoteRfqToBuyer(guestRfq.id)}>Submit To Buyer</button>
+setEffective(dropdownValue);
+
+// ✅ GOOD
+<button disabled={rfqBuyerKind(rfq) !== "member"}>Submit To Buyer</button>
+<select>{/* v1 · datetime · Current — view only */}</select>
+<button onClick={loadVersionIntoDraft}>Load into draft</button>
+```

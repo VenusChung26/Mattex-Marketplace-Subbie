@@ -1,0 +1,24 @@
+---
+description: Guest RFQs cannot be submitted to marketplace My RFQs
+alwaysApply: true
+---
+
+# Guest RFQ quote (locked spec)
+
+If `rfqBuyerKind` is **guest**, do **not** submit / update a quote to Mattex Marketplace (no My RFQs account).
+
+- Disable **Submit To Buyer** / **Update quote to buyer**.
+- `quoteRfqToBuyer` must return `{ error: "guest" }` and not mark the RFQ as sent to MM.
+- Guest delivery path is **Send quote on WhatsApp** (freeze public `/zh/quote/:token`, then sales clicks **Quote sent on WhatsApp**). That sets `quoteDelivery: "whatsapp"` only — never `reviewStatus: quoted`.
+- Handling: **Assign to registered member** (searchable name / email / company) then submit, **or WhatsApp / PDF**. Assign still works after a WhatsApp send. **Create TMS iRFQ** stays available.
+
+```jsx
+// ❌ BAD
+<button onClick={() => quoteRfqToBuyer(guestRfq.id)}>Submit To Buyer</button>
+
+// ✅ GOOD
+<button disabled={rfqBuyerKind(rfq) !== "member"} title="Guest has no marketplace account. Assign a member, or WhatsApp the quote.">
+  Submit To Buyer
+</button>
+<button onClick={openWhatsAppQuote}>Send quote on WhatsApp</button>
+```

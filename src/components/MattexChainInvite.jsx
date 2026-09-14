@@ -1,22 +1,23 @@
-import { MATTEX_CHAIN_URL } from "../lib/store";
+import { Link } from "react-router-dom";
+import { closeAuthModal, MATTEX_CHAIN_URL } from "../lib/store";
 import { useLanguage } from "../i18n";
+import { withLocale } from "../lib/locale";
 
 export default function MattexChainInvite({ compact = false, className = "" }) {
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
   return (
     <div className={className}>
       {compact ? null : (
         <p className="text-sm text-mute leading-relaxed">{t("chainInviteBody")}</p>
       )}
       <div className={`${compact ? "" : "mt-4"} grid gap-2.5`}>
-        <a
-          href={MATTEX_CHAIN_URL}
-          target="_blank"
-          rel="noopener noreferrer"
+        <Link
+          to={withLocale(lang, "/signup")}
           className="btn-primary !py-3"
+          onClick={() => closeAuthModal()}
         >
           {t("openMarketplaceAccount")}
-        </a>
+        </Link>
         <a
           href={MATTEX_CHAIN_URL}
           target="_blank"

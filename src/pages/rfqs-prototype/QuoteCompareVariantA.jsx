@@ -60,16 +60,13 @@ function SupplierQuoteStats({ name, paymentTerms, leadDays }) {
   );
 }
 
-function AcceptedBanner({ acceptance, onReset, onSupplierAcceptSelection }) {
+function AcceptedBanner({ acceptance, onReset, onGoToPo, historicalPreview = false }) {
   if (!acceptance) return null;
   const mixed = acceptance.mode === "mixed";
-  const supplierOk = Boolean(acceptance.quoteSupplierAccepted);
   return (
     <div className="mb-5 border border-brand-600 bg-brand-50 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
       <div>
-        <p className="text-xs font-semibold uppercase tracking-wide text-brand-600">
-          {supplierOk ? "Supplier accepted selection" : "Submitted to supplier"}
-        </p>
+        <p className="text-xs font-semibold uppercase tracking-wide text-brand-600">Submitted selection</p>
         <p className="text-sm font-semibold text-brand-800">
           {acceptance.label} · {formatPrice(acceptance.total)}
         </p>
@@ -78,15 +75,18 @@ function AcceptedBanner({ acceptance, onReset, onSupplierAcceptSelection }) {
             ? `${acceptance.lines?.length || 0} lines from ${acceptance.supplierNames?.length || 0} suppliers`
             : "Full quote from one supplier"}
           {" · "}
-          {supplierOk
-            ? "Next: confirm Purchase Order, then payment."
-            : "Waiting for the supplier to accept this selection."}
+          Continue to Purchase Order to confirm and create a PO. Payment and delivery are not required in this phase.
         </p>
       </div>
       <div className="flex flex-wrap gap-2">
-        {!supplierOk ? (
-          <button type="button" className="btn-primary !px-3 !py-2 text-sm" onClick={onSupplierAcceptSelection}>
-            Simulate supplier accept
+        {onGoToPo ? (
+          <button
+            type="button"
+            className="btn-primary !px-3 !py-2 text-sm disabled:opacity-40"
+            disabled={historicalPreview}
+            onClick={onGoToPo}
+          >
+            Purchase Order
           </button>
         ) : null}
         <button type="button" className="btn-soft !px-3 !py-2 text-sm" onClick={onReset}>
@@ -497,11 +497,13 @@ function CompactCell({
   onTogglePart,
   onSelectAllParts,
   onSelectNoneParts,
+  highlighted,
   t,
 }) {
+  const focusCls = highlighted ? " ring-2 ring-inset ring-brand-600" : "";
   if (!offered) {
     return (
-      <td className="px-3 py-3 text-center text-mute text-sm border-b border-line bg-paper/40">—</td>
+      <td className={`px-3 py-3 text-center text-mute text-sm border-b border-line bg-paper/40${focusCls}`}>—</td>
     );
   }
 
@@ -512,7 +514,7 @@ function CompactCell({
       <td
         className={`relative px-2 py-2.5 border-b border-line align-top ${
           isPicked ? "bg-brand-50/60" : "bg-white"
-        }`}
+        }${focusCls}`}
       >
         <div
           className={`rounded-lg border px-2 py-2 ${
@@ -592,7 +594,7 @@ function CompactCell({
     <td
       className={`relative px-2 py-2.5 border-b border-line align-top ${
         isPicked ? "bg-brand-50" : "bg-white"
-      }`}
+      }${focusCls}`}
     >
       <OfferCard
         offered={offered}
@@ -708,9 +710,9 @@ function ProductOfferBlock({ line, requestName, quote, isLowest, locked, t, onTo
   );
 }
 
-export default function VariantA({ rfq, quotes, acceptance, onAccept, onSupplierAcceptSelection, onReset }) {
+export default function VariantA({ rfq, quotes, acceptance, onAccept, onSupplierAcceptSelection, onGoToPo, onReset, focusQuoteId, focusTick = 0, historicalPreview = false }) {
   const { t } = useLanguage();
-  const locked = Boolean(acceptance);
+  const locked = Boolean(acceptance) || historicalPreview;
   const [matchMode, setMatchMode] = useState("supplier");
   const [reviewQuoteId, setReviewQuoteId] = useState(null);
   const [qtyEdits, setQtyEdits] = useState({});
@@ -820,10 +822,34 @@ export default function VariantA({ rfq, quotes, acceptance, onAccept, onSupplier
   }, [acceptance]);
 
   useEffect(() => {
-    if (matchMode !== "supplier" || !reviewQuoteId) return;
-    const el = document.getElementById(`quote-col-${reviewQuoteId}`);
-    if (el) el.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
-  }, [matchMode, reviewQuoteId]);
+    if (focusQuoteId) {
+      setMatchMode("supplier");
+      setReviewQuoteId(focusQuoteId);
+      return;
+    }
+    setReviewQuoteId(null);
+  }, [focusQuoteId]);
+
+  useEffect(() => {
+    if (matchMode !== "supplier" || !reviewQuoteId) return undefined;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      requestAnimationFrame(() => {
+        if (cancelled) return;
+        const table = document.getElementById("quote-compare-table");
+        const col = document.getElementById(`quote-col-${reviewQuoteId}`);
+        table?.scrollIntoView({ behavior: "smooth", block: "start" });
+        if (table && col) {
+          const left = col.offsetLeft - table.clientWidth / 2 + col.offsetWidth / 2;
+          table.scrollTo({ left: Math.max(0, left), behavior: "smooth" });
+        }
+      });
+    }, 60);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [matchMode, reviewQuoteId, focusTick]);
 
   function clearSetPartsForProduct(productId, keepQuoteId = null) {
     setSetPartPicks((prev) => {
@@ -972,7 +998,8 @@ export default function VariantA({ rfq, quotes, acceptance, onAccept, onSupplier
       <AcceptedBanner
         acceptance={acceptance}
         onReset={onReset}
-        onSupplierAcceptSelection={onSupplierAcceptSelection}
+        onGoToPo={onGoToPo || onSupplierAcceptSelection}
+        historicalPreview={historicalPreview}
       />
       <div className="flex flex-wrap items-end justify-between gap-3 mb-3">
         <div>
@@ -1311,7 +1338,7 @@ export default function VariantA({ rfq, quotes, acceptance, onAccept, onSupplier
         </div>
       ) : (
         <div>
-          <div className="overflow-x-auto border border-line rounded-xl bg-white">
+          <div id="quote-compare-table" className="scroll-mt-28 overflow-x-auto border border-line rounded-xl bg-white">
             <table className="w-full border-collapse text-sm table-fixed">
               <colgroup>
                 <col className="w-44" />
@@ -1326,6 +1353,7 @@ export default function VariantA({ rfq, quotes, acceptance, onAccept, onSupplier
                   </th>
                   {quotes.map((q) => {
                     const isCheapest = q.id === cheapestId;
+                    const isFocus = q.id === reviewQuoteId;
                     const colPicked = requestLines.filter((r) => picks[r.productId] === q.id).length;
                     const colTotal = money(
                       q.lines.reduce(
@@ -1338,11 +1366,15 @@ export default function VariantA({ rfq, quotes, acceptance, onAccept, onSupplier
                         key={q.id}
                         id={`quote-col-${q.id}`}
                         className={`px-3.5 py-3 text-left font-normal text-brand-800 min-w-[16rem] w-[16rem] align-top ${
-                          isCheapest ? "bg-brand-50" : "bg-paper/80"
+                          isFocus
+                            ? "bg-brand-50 ring-2 ring-inset ring-brand-600"
+                            : isCheapest
+                              ? "bg-brand-50"
+                              : "bg-paper/80"
                         }`}
                       >
                         <p className="font-semibold leading-snug flex items-center gap-1.5 flex-wrap" title={q.supplierName}>
-                          <span className="min-w-0 truncate">{q.supplierName}</span>
+                          <span className="min-w-0">{q.supplierName}</span>
                           {getSupplier(q.supplierName)?.verified ? (
                             <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-brand-700 shrink-0">
                               <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" aria-hidden>
@@ -1462,6 +1494,7 @@ export default function VariantA({ rfq, quotes, acceptance, onAccept, onSupplier
                               offered={displayOffer}
                               isPicked={isPicked}
                               isLineLowest={isLineLowest}
+                              highlighted={q.id === reviewQuoteId}
                               locked={locked}
                               t={t}
                               onPick={() => {
@@ -1550,25 +1583,22 @@ export default function VariantA({ rfq, quotes, acceptance, onAccept, onSupplier
           >
             Clear
           </button>
-          {locked ? (
-            acceptance?.quoteSupplierAccepted ? (
-              <button type="button" className="btn-primary !px-5 !py-2" onClick={onSupplierAcceptSelection}>
-                Go to Purchase Order
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="btn-primary !px-5 !py-2"
-                onClick={onSupplierAcceptSelection}
-              >
-                Simulate supplier accept
-              </button>
-            )
+          {acceptance ? (
+            <button
+              type="button"
+              className="btn-primary !px-5 !py-2 disabled:opacity-40"
+              disabled={historicalPreview}
+              title={historicalPreview ? t("quoteVersionPoLocked") : ""}
+              onClick={onGoToPo || onSupplierAcceptSelection}
+            >
+              Purchase Order
+            </button>
           ) : (
             <button
               type="button"
               className="btn-primary !px-5 !py-2 disabled:opacity-40"
-              disabled={!allPicked}
+              disabled={!allPicked || historicalPreview}
+              title={historicalPreview ? t("quoteVersionReadonly") : ""}
               onClick={() => onAccept(draftAcceptance)}
             >
               Submit to supplier

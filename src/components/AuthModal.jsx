@@ -1,41 +1,205 @@
-import { Link } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { useStore } from "../hooks/useStore";
 import { useLanguage } from "../i18n";
 import { withLocale } from "../lib/locale";
-import MattexChainInvite from "./MattexChainInvite";
+import { closeAuthModal, consumePendingAfterAuth, consumePendingInviteContinue, loginUser, MATTEX_CHAIN_URL, setAuthInviteHidden } from "../lib/store";
 
 export default function AuthModal({ open, onClose }) {
   const { t, lang } = useLanguage();
-  if (!open) return null;
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="presentation">
-      <div className="absolute inset-0 bg-charcoal/50 backdrop-blur-[2px]" onClick={onClose} />
-      <div
-        className="modal-panel relative bg-white border border-line max-w-md w-full p-7 shadow-[0_24px_60px_rgba(16,21,19,0.25)]"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="auth-modal-title"
-      >
-        <button
-          type="button"
-          className="absolute top-3.5 right-3.5 h-8 w-8 inline-flex items-center justify-center text-mute hover:text-ink hover:bg-paper transition-colors"
-          onClick={onClose}
-          aria-label="Close"
+  const { authModalMode } = useStore();
+  const navigate = useNavigate();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [dontShow, setDontShow] = useState(false);
+  const closeReady = useRef(false);
+  const invite = authModalMode !== "required";
+
+  useEffect(() => {
+    if (!open) return undefined;
+    closeReady.current = false;
+    const readyTimer = window.setTimeout(() => {
+      closeReady.current = true;
+    }, 280);
+    setError("");
+    setDontShow(false);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    function onKey(e) {
+      if (e.key === "Escape" && closeReady.current) onClose?.();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => {
+      window.clearTimeout(readyTimer);
+      document.body.style.overflow = prev;
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open, onClose]);
+
+  function dismissInvite() {
+    if (invite && dontShow) setAuthInviteHidden(true);
+    closeAuthModal();
+    onClose?.();
+    consumePendingInviteContinue();
+  }
+
+  function onBackdrop() {
+    if (!closeReady.current) return;
+    if (invite) dismissInvite();
+    else onClose?.();
+  }
+
+  if (!open || typeof document === "undefined") return null;
+
+  function finish() {
+    closeAuthModal();
+    onClose?.();
+  }
+
+  function onSubmit(e) {
+    e.preventDefault();
+    const result = loginUser({ email, password });
+    if (!result.ok) {
+      setError(
+        result.error === "password"
+          ? t("loginErrorPassword")
+          : result.error === "staff"
+            ? t("loginErrorStaff")
+            : result.error === "disabled"
+              ? t("loginErrorDisabled")
+              : result.error === "pending"
+                ? t("loginErrorPending")
+                : result.error === "rejected"
+                  ? t("loginErrorRejected")
+                  : result.error === "missing"
+                    ? t("loginErrorMissing")
+                    : t("loginErrorGeneric")
+      );
+      return;
+    }
+    if (invite && dontShow) setAuthInviteHidden(true);
+    finish();
+    const next = consumePendingAfterAuth();
+    if (next) navigate(withLocale(lang, next));
+  }
+
+  return createPortal(
+    <div className="fixed inset-0 z-[80] overflow-y-auto" role="presentation">
+      <div className="absolute inset-0 bg-charcoal/50 backdrop-blur-[2px]" onClick={onBackdrop} />
+      <div className="relative flex min-h-full items-center justify-center p-4">
+        <div
+          className="modal-panel relative bg-white border border-line w-full max-w-md max-h-[calc(100dvh-2rem)] overflow-y-auto p-7 shadow-[0_24px_60px_rgba(16,21,19,0.25)]"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="auth-modal-title"
         >
-          ×
-        </button>
-        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-brand-600 mb-2">{t("almostThere")}</p>
-        <h3 id="auth-modal-title" className="font-display text-2xl font-semibold text-brand-800 leading-tight">
-          {t("signInToBuild")}
-        </h3>
-        <p className="mt-3 text-sm text-mute leading-relaxed">{t("authModalBody")}</p>
-        <MattexChainInvite className="mt-6" />
-        <p className="mt-5 text-sm text-mute">
-          {t("alreadyAccount")}{" "}
-          <Link to={withLocale(lang, "/login")} className="font-semibold text-brand-600 hover:underline">
-            {t("login")}
-          </Link>
-        </p>
+          <button
+            type="button"
+            className="absolute top-3.5 right-3.5 h-8 w-8 inline-flex items-center justify-center text-mute hover:text-ink hover:bg-paper transition-colors"
+            onClick={() => {
+              if (!closeReady.current) return;
+              if (invite) dismissInvite();
+              else onClose?.();
+            }}
+            aria-label="Close"
+          >
+            ×
+          </button>
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-brand-600 mb-2">
+            {invite ? t("authInviteEyebrow") : t("almostThere")}
+          </p>
+          <h3 id="auth-modal-title" className="font-display text-2xl font-semibold text-brand-800 leading-tight pr-8">
+            {invite ? t("authInviteTitle") : t("authRequiredTitle")}
+          </h3>
+          <p className="mt-3 text-sm text-mute leading-relaxed">
+            {invite ? t("authInviteBody") : t("authRequiredBody")}
+          </p>
+
+          <form className="mt-5 space-y-3.5" onSubmit={onSubmit}>
+            <label className="block">
+              <span className="block text-sm font-medium mb-1">{t("email")}</span>
+              <input
+                type="email"
+                required
+                value={email}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  setError("");
+                }}
+                placeholder="you@company.com"
+                className="field-input"
+                autoComplete="email"
+              />
+            </label>
+            <label className="block">
+              <span className="block text-sm font-medium mb-1">{t("password")}</span>
+              <input
+                type="password"
+                required
+                minLength={4}
+                value={password}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  setError("");
+                }}
+                placeholder="••••••••"
+                className="field-input"
+                autoComplete="current-password"
+              />
+            </label>
+            {error ? <p className="text-sm font-medium text-red-700">{error}</p> : null}
+            <button type="submit" className="btn-primary w-full !py-2.5">
+              {t("login")}
+            </button>
+          </form>
+
+          <p className="mt-4 text-sm text-mute">
+            {t("noAccount")}{" "}
+            <Link
+              to={withLocale(lang, "/signup")}
+              className="font-semibold text-brand-600 hover:underline"
+              onClick={() => {
+                if (invite && dontShow) setAuthInviteHidden(true);
+                finish();
+              }}
+            >
+              {t("openMarketplaceAccount")}
+            </Link>
+          </p>
+
+          {invite ? (
+            <div className="mt-5 pt-4 border-t border-line space-y-3">
+              <label className="flex items-start gap-2.5 text-sm text-ink cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={dontShow}
+                  onChange={(e) => setDontShow(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 accent-brand-600"
+                />
+                <span>{t("dontShowAuthInvite")}</span>
+              </label>
+              <button type="button" className="btn-soft w-full !py-2.5" onClick={dismissInvite}>
+                {t("continueWhatsapp")}
+              </button>
+            </div>
+          ) : (
+            <p className="mt-3 text-xs text-mute">
+              {t("becomeSupplierHint")}{" "}
+              <a
+                href={MATTEX_CHAIN_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-semibold text-brand-700 hover:underline"
+              >
+                {t("becomeSupplier")}
+              </a>
+            </p>
+          )}
+        </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

@@ -5,7 +5,7 @@
  * Buyer may request 1 product; a supplier can reply with a SET (2+ SKUs)
  * that maps to that same RFQ line (productId).
  */
-import { getProduct } from "../../lib/store";
+import { getProduct, supplierDisplayName, getQuoteVersion, getEffectiveQuoteVersion } from "../../lib/store";
 
 const SUPPLIER_POOL = [
   { name: "Harbor Precast Co.", leadDays: 5, note: "Ex-works + site unload", paymentTerms: "Net 30" },
@@ -181,6 +181,64 @@ export function buildPrototypeQuotes(rfq) {
       total: money(total),
     };
   });
+}
+
+/** One Mattex Sales quote from admin-quoted unit prices (or a frozen quote version). */
+export function buildSalesQuote(rfq, versionNo) {
+  const version =
+    versionNo != null && versionNo !== ""
+      ? getQuoteVersion(rfq, versionNo) || getEffectiveQuoteVersion(rfq)
+      : getEffectiveQuoteVersion(rfq);
+  const sourceLines = version?.lines?.length ? version.lines : rfq?.lines;
+  if (!sourceLines?.length) return [];
+  const lines = sourceLines
+    .filter((l) => !l.noOffer)
+    .map((l) => {
+      const meta = catalogMeta(l);
+      const unitPrice =
+        l.quotedUnitPrice != null && Number(l.quotedUnitPrice) > 0
+          ? money(Number(l.quotedUnitPrice))
+          : null;
+      return {
+        productId: l.productId,
+        requestName: l.name,
+        name: l.name,
+        description: meta.description,
+        productNo: meta.productNo,
+        qty: l.qty,
+        unitPrice,
+        lineTotal: unitPrice != null ? money(unitPrice * (Number(l.qty) || 0)) : 0,
+        custom: Boolean(l.custom),
+        isSet: false,
+        setParts: null,
+        image: meta.image,
+        moq: meta.moq,
+        isAlternate: false,
+        green: Boolean(meta.green),
+      };
+    });
+  if (!lines.length || lines.some((row) => row.unitPrice == null)) return [];
+  const total = lines.reduce((s, row) => s + row.lineTotal, 0);
+  return [
+    {
+      id: `q-${rfq.id}-sales-v${version?.version || "live"}`,
+      supplierName: supplierDisplayName("Mattex"),
+      leadDays: 7,
+      note: version?.quoteNote || rfq.quoteNote || "Quoted on Marketplace",
+      paymentTerms: "Net 30",
+      validUntil: version?.deadline || rfq.responseDate || "—",
+      lines,
+      coveredCount: lines.length,
+      requestCount: sourceLines.length,
+      total: money(
+        version?.quotedSubtotal != null
+          ? Number(version.quotedSubtotal)
+          : rfq.quotedSubtotal != null
+            ? Number(rfq.quotedSubtotal)
+            : total
+      ),
+    },
+  ];
 }
 
 /** Demo RFQ so /rfqs?variant=A works even with an empty history. */

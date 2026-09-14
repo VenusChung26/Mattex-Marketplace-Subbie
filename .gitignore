@@ -24,3 +24,5 @@ dist-ssr
 *.sw?
 .vercel
 .env*
+.local-shared-store.json
+.local-shared-store.lock

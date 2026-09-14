@@ -1,0 +1,9 @@
+# mattex-marketplace-dev-1 slice
+
+`SHOW_RFQ_QUOTES` is **false** on this branch.
+
+- My RFQs: Submitted only. After Accept, buyer sees In review. Hide Quotes and PO.
+- Portal inbox: member RFQs + guest WhatsApp RFQs. Accept / Reject + Follow-up phone only.
+- Do not show Submit To Buyer, WhatsApp quote send, TMS iRFQ, quote versions, or Assign while the flag is off.
+- Guest WhatsApp inbound RFQ stays; it does not enter My RFQs.
+- To restore the full quote phase, set `SHOW_RFQ_QUOTES` to `true` — do not delete the gated code.

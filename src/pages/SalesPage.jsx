@@ -7,7 +7,7 @@ import Seo, { breadcrumbJsonLd, orgJsonLd } from "../components/Seo";
 import { useLanguage } from "../i18n";
 import { allProductsTo, siteOrigin, withLocale } from "../lib/locale";
 import { seoCopy } from "../lib/seoCopy";
-import { addToCart, getSalesProducts, searchProducts, whatsappNow } from "../lib/store";
+import { addFromStorefront, getSalesProducts, searchProducts } from "../lib/store";
 
 export default function SalesPage() {
   const { t, lang } = useLanguage();
@@ -32,14 +32,11 @@ export default function SalesPage() {
   }, [searchQuery]);
 
   function handleAdd(productId, intent = "quote", qty) {
-    if (intent === "buy-now" || intent === "quote-now") {
-      whatsappNow(productId, { qty, kind: intent === "buy-now" ? "buy" : "quote", lang });
-      return;
-    }
-    addToCart(productId, { intent, qty });
+    const result = addFromStorefront(productId, intent, qty, lang);
+    if (!result?.ok || intent === "quote-now") return;
     const product = products.find((p) => p.id === productId);
     setToast(
-      t(intent === "buy" ? "addedBuyToRfq" : "addedQuoteToRfq", { name: product?.name || "item" })
+      t(intent === "buy" || intent === "buy-now" ? "addedBuyToRfq" : "addedQuoteToRfq", { name: product?.name || "item" })
     );
   }
 

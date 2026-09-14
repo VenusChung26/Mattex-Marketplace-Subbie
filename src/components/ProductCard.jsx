@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { canDirectBuy, catalogPathForCategory, isHitProduct, stockStatusKey, supplierDisplayName, supplierPath } from "../lib/store";
+import { canDirectBuy, catalogPathForCategory, isHitProduct, stockStatusKey, supplierDisplayName, supplierPath, addCustomLine, requireBuyerAuth } from "../lib/store";
 import { useStore } from "../hooks/useStore";
 import { useLanguage } from "../i18n";
 import { withLocale } from "../lib/locale";
 import ProductPrice from "./ProductPrice";
 import ProductRating from "./ProductRating";
+import CustomProductModal from "./CustomProductModal";
 
 function LeavesIcon() {
   return (
@@ -21,6 +22,15 @@ function LeavesIcon() {
     >
       <path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z" />
       <path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12" />
+    </svg>
+  );
+}
+
+function TickIcon({ className = "h-3.5 w-3.5" }) {
+  return (
+    <svg viewBox="0 0 16 16" className={`${className} shrink-0`} fill="none" aria-hidden>
+      <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M4.8 8.2 7 10.3 11.3 5.8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -56,7 +66,7 @@ export function ProductImage({ src, alt, className = "", imgClassName = "", comp
 export function ProductTagPills({ product, className = "" }) {
   const { t } = useLanguage();
   const hit = isHitProduct(product);
-  if (!product?.green && !hit) return null;
+  if (!product?.green && !hit && !product?.tailorMade) return null;
   return (
     <span className={`inline-flex flex-wrap items-center gap-1 ${className}`}>
       {hit ? (
@@ -66,6 +76,12 @@ export function ProductTagPills({ product, className = "" }) {
         <span className={`${TAG_PILL} bg-[#1f8a45] text-white`}>
           <LeavesIcon />
           {t("greenBadge")}
+        </span>
+      ) : null}
+      {product.tailorMade ? (
+        <span className={`${TAG_PILL} bg-brand-700 text-white`}>
+          <TickIcon className="h-3 w-3" />
+          {t("tailorMadeBadge")}
         </span>
       ) : null}
     </span>
@@ -102,7 +118,7 @@ export function ProductBadges({ product, rank = null }) {
   const { t } = useLanguage();
   const hit = isHitProduct(product);
   const showRank = rank != null;
-  if (!product?.green && !hit && !showRank) return null;
+  if (!product?.green && !hit && !showRank && !product?.tailorMade) return null;
   return (
     <div className="absolute top-2.5 right-2.5 z-10 flex flex-wrap items-start justify-end gap-1 pointer-events-none">
       {showRank ? (
@@ -116,6 +132,12 @@ export function ProductBadges({ product, rank = null }) {
         <span className="inline-flex items-center gap-1 bg-[#1f8a45] text-white text-[10px] font-bold px-2 py-1 tracking-[0.08em]">
           <LeavesIcon />
           {t("greenBadge")}
+        </span>
+      ) : null}
+      {product.tailorMade ? (
+        <span className="inline-flex items-center gap-1 bg-brand-700 text-white text-[10px] font-bold px-2 py-1 tracking-[0.08em]">
+          <TickIcon className="h-3 w-3" />
+          {t("tailorMadeBadge")}
         </span>
       ) : null}
     </div>
@@ -140,7 +162,7 @@ export function QtyStepper({ value, min = 1, unit = "", onChange, size = "card",
   const btn = compact
     ? "h-8 w-8 shrink-0 text-base leading-none text-brand-800 hover:bg-brand-50 disabled:text-mute disabled:hover:bg-transparent disabled:opacity-40"
     : "h-10 w-10 shrink-0 text-lg leading-none text-brand-800 hover:bg-brand-50 disabled:text-mute disabled:hover:bg-transparent disabled:opacity-40";
-  const valueBox = compact ? "h-8 min-w-0 text-sm" : "h-10 min-w-0 text-base";
+  const valueBox = compact ? "h-8 min-w-[2.5rem] text-sm" : "h-10 min-w-[2.75rem] text-base";
 
   useEffect(() => {
     setDraft(String(value));
@@ -257,7 +279,25 @@ export function QtyStepper({ value, min = 1, unit = "", onChange, size = "card",
   );
 }
 
-export function ProductActions({ product, onAdd, size = "card", qty: qtyProp, onQtyChange, hideQty = false }) {
+function tailorInitialFromProduct(product, qty) {
+  const bits = [
+    product.sizeDesc || product.description || "",
+    product.productNo ? `Base SKU: ${product.productNo}` : "",
+    product.certifications || product.standard
+      ? `Cert: ${product.certifications || product.standard}`
+      : "",
+  ].filter(Boolean);
+  return {
+    name: product.name || "",
+    description: bits.join("\n"),
+    qty: Math.max(1, Number(qty) || Number(product.moq) || 1),
+    image: product.image || "",
+    category: product.category || "",
+    attachments: [],
+  };
+}
+
+export function ProductActions({ product, onAdd, size = "card", qty: qtyProp, onQtyChange, hideQty = false, autoOpenTailor = false }) {
   const { t } = useLanguage();
   const { draft } = useStore();
   const minQty = Math.max(1, Number(product.moq) || 1);
@@ -267,10 +307,19 @@ export function ProductActions({ product, onAdd, size = "card", qty: qtyProp, on
   const priced = canDirectBuy(product);
   const line = cartLineFor(draft, product.id);
   const count = line?.qty || 0;
+  const [tailorOpen, setTailorOpen] = useState(false);
+  const [tailorNote, setTailorNote] = useState("");
+  const [tailorInitial, setTailorInitial] = useState(null);
 
   useEffect(() => {
     if (!controlled) setInnerQty(minQty);
   }, [product.id, minQty, controlled]);
+
+  useEffect(() => {
+    if (!autoOpenTailor || !product) return;
+    setTailorInitial(tailorInitialFromProduct(product, qty));
+    setTailorOpen(true);
+  }, [autoOpenTailor, product?.id]);
 
   function setQty(next) {
     const n = Math.floor(Number(next));
@@ -280,11 +329,27 @@ export function ProductActions({ product, onAdd, size = "card", qty: qtyProp, on
   }
 
   function fire(intent) {
-    if (qty < minQty) {
-      setQty(minQty);
-      return;
-    }
+    if (qty < minQty) return;
+    if (intent !== "quote-now" && !requireBuyerAuth({ productId: product.id, intent, qty })) return;
     onAdd?.(product.id, intent, qty);
+  }
+
+  function openTailor() {
+    if (!requireBuyerAuth({ tailorFrom: product.id })) return;
+    setTailorInitial(tailorInitialFromProduct(product, qty));
+    setTailorOpen(true);
+  }
+
+  function submitTailor(payload) {
+    const result = addCustomLine({
+      ...payload,
+      tailorMade: true,
+      baseProductId: product.id,
+      baseProductNo: product.productNo || "",
+    });
+    if (!result.ok) return;
+    setTailorNote(t("addedTailorToRfq"));
+    window.setTimeout(() => setTailorNote(""), 2800);
   }
 
   const cartIntent = priced ? "buy" : "quote";
@@ -319,7 +384,7 @@ export function ProductActions({ product, onAdd, size = "card", qty: qtyProp, on
   const quoteLink = priced ? (
     <button
       type="button"
-      className={`font-semibold text-brand-700 hover:text-brand-800 hover:underline ${
+      className={`shrink-0 font-semibold text-brand-700 hover:text-brand-800 hover:underline ${
         compactBtn ? "text-[11px]" : "text-xs"
       }`}
       onClick={() => fire("quote-now")}
@@ -328,14 +393,71 @@ export function ProductActions({ product, onAdd, size = "card", qty: qtyProp, on
     </button>
   ) : null;
 
+  const showTailorCta = size === "detail" || size === "bar" || Boolean(product.tailorMade);
+  const tailorBtn = showTailorCta ? (
+    <button
+      type="button"
+      className={
+        size === "detail"
+          ? "btn-primary mt-3 w-full !py-2.5 !text-sm"
+          : `${softClass} ${compactBtn ? "col-span-2" : "w-full"}`
+      }
+      onClick={openTailor}
+    >
+      <span className="inline-flex items-center justify-center gap-1.5">
+        <TickIcon className="h-3.5 w-3.5" />
+        {t("tailorMadeCta")}
+      </span>
+    </button>
+  ) : null;
+
+  const tailorPanel =
+    size === "detail" ? (
+      <div className="rounded-xl border border-brand-200 bg-brand-50 px-4 py-3">
+        <p className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-[0.08em] text-brand-800">
+          <TickIcon className="h-3.5 w-3.5" />
+          {t("tailorMadeBadge")}
+        </p>
+        <p className="mt-1 text-sm text-mute">{t("tailorMadeHint", { name: product.name })}</p>
+        {tailorBtn}
+      </div>
+    ) : null;
+
+  const secondaryRow = quoteLink ? (
+    <div
+      className={
+        size === "bar" || size === "detail"
+          ? size === "bar"
+            ? "text-right"
+            : ""
+          : "text-center"
+      }
+    >
+      {quoteLink}
+    </div>
+  ) : null;
+
   const buttons = (
     <div className={size === "detail" ? "space-y-2" : "space-y-1.5"}>
       <div className={size === "detail" ? "flex flex-wrap gap-2.5" : "grid grid-cols-2 gap-2"}>
         {primaryBtn}
         {addBtn}
+        {size !== "detail" && size !== "bar" ? tailorBtn : null}
       </div>
-      {quoteLink ? <div className={size === "detail" ? "" : "text-center"}>{quoteLink}</div> : null}
+      {size === "bar" && tailorBtn ? <div className="grid grid-cols-1">{tailorBtn}</div> : null}
+      {secondaryRow}
+      {tailorNote ? <p className="text-[11px] font-medium text-brand-700">{tailorNote}</p> : null}
     </div>
+  );
+
+  const modal = (
+    <CustomProductModal
+      open={tailorOpen}
+      baseProduct={product}
+      initial={tailorInitial || tailorInitialFromProduct(product, qty)}
+      onClose={() => setTailorOpen(false)}
+      onSubmit={submitTailor}
+    />
   );
 
   if (size === "bar") {
@@ -348,17 +470,22 @@ export function ProductActions({ product, onAdd, size = "card", qty: qtyProp, on
               {primaryBtn}
               {addBtn}
             </div>
+            {tailorBtn ? <div className="mt-1.5">{tailorBtn}</div> : null}
           </div>
         </div>
-        {quoteLink ? <div className="text-right">{quoteLink}</div> : null}
+        {secondaryRow}
+        {tailorNote ? <p className="text-[11px] font-medium text-brand-700">{tailorNote}</p> : null}
+        {modal}
       </div>
     );
   }
 
   return (
     <div className={size === "detail" ? "space-y-3" : "space-y-2"}>
+      {tailorPanel}
       {stepper}
       {buttons}
+      {modal}
     </div>
   );
 }

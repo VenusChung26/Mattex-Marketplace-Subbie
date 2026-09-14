@@ -1,0 +1,20 @@
+---
+description: Standalone Product Category admin page
+alwaysApply: true
+---
+
+# Product Category page (locked spec)
+
+Products third tab: Mattex Products | **Product Category** | Mattex Chain Products.
+
+Add / rename / delete. Delete blocked while any product (including soft-deleted) still uses that category. Counts include soft-deleted. Select products to move; Add products assigns from the rest of the catalog. One product, one category. Never unassign to empty. Soft-deleted rows are read-only. Product form still has Add category.
+
+```jsx
+// ❌ BAD
+deleteAdminCategory(id); // while products remain
+assignAdminProductsCategory(ids, "");
+
+// ✅ GOOD
+<button disabled={category.count > 0}>Delete</button>
+assignAdminProductsCategory(ids, otherCategoryName);
+```

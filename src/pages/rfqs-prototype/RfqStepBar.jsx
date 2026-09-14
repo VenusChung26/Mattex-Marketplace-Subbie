@@ -11,7 +11,15 @@ export const RFQ_LIFECYCLE_STEPS = [
   { id: "delivery", label: "Delivery & docs", short: "5" },
 ];
 
-export default function RfqStepBar({ steps = RFQ_LIFECYCLE_STEPS, activeId, onSelect, progressId }) {
+/** Submitted, Quotes, and a processable Purchase Order. Payment / delivery stay out of this phase. */
+export const RFQ_PHASE_STEPS = RFQ_LIFECYCLE_STEPS.filter(
+  (step) => step.id === "submitted" || step.id === "quotes" || step.id === "purchaseOrder"
+);
+
+/** Dev-1 slice: Submitted only. */
+export const RFQ_SUBMITTED_STEPS = RFQ_LIFECYCLE_STEPS.filter((step) => step.id === "submitted");
+
+export default function RfqStepBar({ steps = RFQ_PHASE_STEPS, activeId, onSelect, progressId }) {
   const activeIndex = Math.max(
     0,
     steps.findIndex((s) => s.id === activeId)
@@ -64,8 +72,8 @@ export default function RfqStepBar({ steps = RFQ_LIFECYCLE_STEPS, activeId, onSe
           );
         })}
       </ol>
-      <p className="mt-2 text-[11px] text-mute">
-        Viewing step {activeIndex + 1} of {steps.length}. Click any step to jump.
+      <p className="mt-1.5 text-[11px] text-mute sm:hidden">
+        Step {activeIndex + 1} of {steps.length}
       </p>
     </nav>
   );

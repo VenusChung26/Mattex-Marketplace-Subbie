@@ -2,6 +2,7 @@ import { MATTEX_PRODUCTS } from "../data/mattexProducts.js";
 import { collectAttachmentUrls, collectProductImageUrls, fitWhatsappUrls, uploadRfqPdf } from "./rfqBlob.js";
 import { buildQuotePdf, canSharePdfFile, downloadBlob, sharePdfFile } from "./quotePdf.js";
 import { fetchRemoteState, isSupabaseConfigured, persistKv } from "./supabasePersist.js";
+import { adminOrigin, marketplaceOrigin } from "./origins.js";
 
 const HIDDEN_CATEGORY_IDS = new Set(["service", "computer", "hardware"]);
 const SYNTHETIC_CATEGORY_IDS = new Set(["service", "computer", "hardware"]);
@@ -199,8 +200,52 @@ function isDiscontinued(product) {
   return Boolean(product?.discontinued);
 }
 
+function isBuyerVisible(product) {
+  if (!product || product.deleted) return false;
+  if (product.published === false) return false;
+  if (product.held) return false;
+  return true;
+}
+
+function isOrderable(product) {
+  return isBuyerVisible(product) && !isDiscontinued(product);
+}
+
+function purposesFromProduct(product) {
+  if (Array.isArray(product?.purposes) && product.purposes.length) {
+    return product.purposes.map((term) => String(term).trim()).filter(Boolean);
+  }
+  return (Array.isArray(product?.specs) ? product.specs : [])
+    .filter((line) => /^use:/i.test(String(line)))
+    .map((line) => String(line).replace(/^use:\s*/i, "").trim())
+    .filter(Boolean);
+}
+
+function normalizeProductRecord(product) {
+  if (!product) return product;
+  return {
+    ...product,
+    published: product.published !== false,
+    held: Boolean(product.held),
+    deleted: Boolean(product.deleted),
+    discontinued: Boolean(product.discontinued),
+    provisionalSku: product.provisionalSku || "",
+    imageSource: product.imageSource || (product.image ? "upload" : "generated"),
+    purposes: purposesFromProduct(product),
+    sizeDesc: product.sizeDesc || product.description || "",
+    certifications: product.certifications || product.standard || "",
+    primarySpec: product.primarySpec || "",
+    salesUnit: product.salesUnit || product.unit || "",
+    remark: product.remark || "",
+    needsChainImage: Boolean(product.needsChainImage),
+    tailorMade: Boolean(product.tailorMade),
+    certFiles: Array.isArray(product.certFiles) ? product.certFiles : [],
+    createdAt: Number(product.createdAt) > 0 ? Number(product.createdAt) : product.createdAt || 0,
+  };
+}
+
 function activeCatalog(list) {
-  return (list || []).filter((p) => !isDiscontinued(p));
+  return (list || []).filter((p) => !isDiscontinued(p) && isBuyerVisible(p));
 }
 
 function canDirectBuy(product) {
@@ -298,6 +343,24 @@ function formatQuoteDateShort(iso, lang) {
   });
 }
 
+const CUSTOM_CATEGORIES_KEY = "subbie_custom_categories";
+const CATEGORY_ADMIN_KEY = "subbie_admin_categories";
+
+function getCategoryAdminMeta() {
+  const raw = readJson(CATEGORY_ADMIN_KEY, {});
+  return {
+    names: raw?.names && typeof raw.names === "object" ? raw.names : {},
+    hidden: Array.isArray(raw?.hidden) ? raw.hidden.map(String) : [],
+  };
+}
+
+function writeCategoryAdminMeta(meta) {
+  writeJson(CATEGORY_ADMIN_KEY, {
+    names: meta.names && typeof meta.names === "object" ? meta.names : {},
+    hidden: Array.isArray(meta.hidden) ? meta.hidden : [],
+  });
+}
+
 function buildProducts() {
   const featuredIds = [];
   const out = [];
@@ -353,25 +416,169 @@ function buildProducts() {
 }
 
 function categoryIdFromName(name) {
-  const found = CATEGORY_DEFS.find((c) => c.name === name);
+  const found = visibleCategoryDefs().find((c) => c.name === name) || CATEGORY_DEFS.find((c) => c.name === name);
   return found ? found.id : "";
 }
 
-const PRODUCTS = buildProducts();
+let PRODUCTS = buildProducts().map(normalizeProductRecord);
 
 const CATEGORIES = CATEGORY_DEFS.map((c) => c.name);
 
+function getCustomCategories() {
+  const list = readJson(CUSTOM_CATEGORIES_KEY, []);
+  return Array.isArray(list) ? list.filter((c) => c && c.id && c.name) : [];
+}
+
+function visibleCategoryDefs() {
+  const meta = getCategoryAdminMeta();
+  const hidden = new Set([...HIDDEN_CATEGORY_IDS, ...meta.hidden]);
+  const seen = new Set(CATEGORY_DEFS.map((c) => c.id));
+  const extra = getCustomCategories().filter((c) => !seen.has(c.id) && !hidden.has(c.id));
+  return [...CATEGORY_DEFS, ...extra]
+    .filter((c) => !hidden.has(c.id))
+    .map((c) => ({ ...c, name: meta.names[c.id] || c.name }));
+}
+
 function getCategoryDefs() {
-  return CATEGORY_DEFS.filter((c) => !HIDDEN_CATEGORY_IDS.has(c.id)).map((c) => ({
+  return visibleCategoryDefs().map((c) => ({
     id: c.id,
     name: c.name,
-    image: c.image,
+    image: c.image || "/assets/prod-mesh.png",
     count: activeCatalog(PRODUCTS).filter((p) => p.category === c.name).length,
+    custom: Boolean(c.custom),
   }));
 }
 
 function getCategories() {
-  return CATEGORY_DEFS.filter((c) => !HIDDEN_CATEGORY_IDS.has(c.id)).map((c) => c.name);
+  return visibleCategoryDefs().map((c) => c.name);
+}
+
+function getAdminCategories() {
+  return getCategories();
+}
+
+function matchAdminCategory(name) {
+  const n = String(name || "").trim().toLowerCase().replace(/\s+/g, " ");
+  return getAdminCategories().find((c) => c.toLowerCase() === n) || null;
+}
+
+function slugifyCategory(name) {
+  const slug = String(name || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || `cat-${Date.now()}`;
+}
+
+function addAdminCategory(name) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const nextName = String(name || "").trim();
+  if (!nextName) return { ok: false, error: "name" };
+  const exists = getAdminCategories().some((c) => c.toLowerCase() === nextName.toLowerCase());
+  if (exists) return { ok: false, error: "exists" };
+  const list = getCustomCategories();
+  let id = slugifyCategory(nextName);
+  const used = new Set([...CATEGORY_DEFS.map((c) => c.id), ...list.map((c) => c.id), ...getCategoryAdminMeta().hidden]);
+  if (used.has(id)) id = `${id}-${Date.now().toString(36)}`;
+  list.push({ id, name: nextName, image: "/assets/prod-mesh.png", custom: true });
+  writeJson(CUSTOM_CATEGORIES_KEY, list);
+  emitStoreChange();
+  return { ok: true, category: { id, name: nextName } };
+}
+
+function adminProductsInCategory(name) {
+  return PRODUCTS.filter((p) => p.category === name);
+}
+
+function listAdminCategories() {
+  return visibleCategoryDefs().map((c) => {
+    const products = adminProductsInCategory(c.name);
+    return {
+      id: c.id,
+      name: c.name,
+      image: c.image || "/assets/prod-mesh.png",
+      custom: Boolean(c.custom),
+      count: products.length,
+      deletedCount: products.filter((p) => p.deleted).length,
+    };
+  });
+}
+
+function renameAdminCategory(id, name) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const nextName = String(name || "").trim();
+  if (!nextName) return { ok: false, error: "name" };
+  const current = visibleCategoryDefs().find((c) => c.id === id);
+  if (!current) return { ok: false, error: "missing" };
+  const clash = getAdminCategories().some((c) => c.toLowerCase() === nextName.toLowerCase() && c.toLowerCase() !== current.name.toLowerCase());
+  if (clash) return { ok: false, error: "exists" };
+  if (nextName === current.name) return { ok: true, category: { id, name: nextName } };
+  const custom = getCustomCategories();
+  const customRow = custom.find((c) => c.id === id);
+  if (customRow) {
+    customRow.name = nextName;
+    writeJson(CUSTOM_CATEGORIES_KEY, custom);
+  } else {
+    const meta = getCategoryAdminMeta();
+    meta.names = { ...meta.names, [id]: nextName };
+    writeCategoryAdminMeta(meta);
+  }
+  PRODUCTS.forEach((p) => {
+    if (p.category === current.name) p.category = nextName;
+  });
+  persistProductPatches();
+  emitStoreChange();
+  return { ok: true, category: { id, name: nextName } };
+}
+
+function deleteAdminCategory(id) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const current = visibleCategoryDefs().find((c) => c.id === id);
+  if (!current) return { ok: false, error: "missing" };
+  if (adminProductsInCategory(current.name).length) return { ok: false, error: "in_use" };
+  const custom = getCustomCategories();
+  const customIdx = custom.findIndex((c) => c.id === id);
+  if (customIdx >= 0) {
+    custom.splice(customIdx, 1);
+    writeJson(CUSTOM_CATEGORIES_KEY, custom);
+  } else {
+    const meta = getCategoryAdminMeta();
+    if (!meta.hidden.includes(id)) meta.hidden = [...meta.hidden, id];
+    if (meta.names[id]) {
+      const nextNames = { ...meta.names };
+      delete nextNames[id];
+      meta.names = nextNames;
+    }
+    writeCategoryAdminMeta(meta);
+  }
+  emitStoreChange();
+  return { ok: true };
+}
+
+function assignAdminProductsCategory(ids, categoryName) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const category = matchAdminCategory(categoryName);
+  if (!category) return { ok: false, error: "category" };
+  const idSet = new Set((ids || []).map(String));
+  let ok = 0;
+  let skipped = 0;
+  PRODUCTS.forEach((p) => {
+    if (!idSet.has(p.id)) return;
+    if (p.deleted) {
+      skipped += 1;
+      return;
+    }
+    p.category = category;
+    ok += 1;
+  });
+  if (ok) persistProductPatches();
+  emitStoreChange();
+  return { ok: true, moved: ok, skipped };
 }
 
 function getCategoryBySlug(slug) {
@@ -481,6 +688,7 @@ function productSearchBlob(product) {
     product.stockStatus,
     specs,
     getProductRemarks(product).join(" "),
+    (product.purposes || []).join(" "),
     "price upon request quote",
     product.green ? "green eco sustainable low-carbon fsc recycled" : "",
   ]
@@ -503,7 +711,7 @@ function productSearchText(product, fields) {
   if (selected.includes("sku")) parts.push(product.productNo, product.id);
   if (selected.includes("spec")) parts.push(specs, product.standard, product.description);
   if (selected.includes("supplier")) parts.push(product.supplier);
-  if (selected.includes("remarks")) parts.push(getProductRemarks(product).join(" "));
+  if (selected.includes("remarks")) parts.push(getProductRemarks(product).join(" "), (product.purposes || []).join(" "));
   return parts.filter(Boolean).join(" ").toLowerCase();
 }
 
@@ -737,18 +945,52 @@ function mergeDraftMaps(local, remote) {
   return out;
 }
 
+function rfqProgress(rfq) {
+  const status = rfq?.reviewStatus || rfq?.status || "";
+  return (
+    {
+      accepted: 50,
+      quoted: 40,
+      reviewing: 30,
+      returned: 25,
+      no_offer: 20,
+      rejected: 20,
+      received: 10,
+      whatsapp_sent: 10,
+      email_sent: 10,
+      submitted: 10,
+    }[status] || 0
+  );
+}
+
+function pickRfq(a, b) {
+  if (!a) return b;
+  if (!b) return a;
+  const ra = rfqProgress(a);
+  const rb = rfqProgress(b);
+  if (rb !== ra) return rb > ra ? b : a;
+  const tb = Date.parse(b.submittedAt || "") || 0;
+  const ta = Date.parse(a.submittedAt || "") || 0;
+  if (tb !== ta) return tb > ta ? b : a;
+  return JSON.stringify(b).length >= JSON.stringify(a).length ? b : a;
+}
+
 function mergeRfqMaps(local, remote) {
-  const out = remote && typeof remote === "object" ? { ...remote } : {};
-  const src = local && typeof local === "object" ? local : {};
-  for (const [key, list] of Object.entries(src)) {
-    const byId = new Map((Array.isArray(out[key]) ? out[key] : []).map((rfq) => [rfq?.id, rfq]));
-    for (const rfq of Array.isArray(list) ? list : []) {
-      if (rfq?.id && !byId.has(rfq.id)) byId.set(rfq.id, rfq);
-    }
-    out[key] = [...byId.values()].sort((a, b) =>
-      String(b?.submittedAt || "").localeCompare(String(a?.submittedAt || ""))
+  const keys = new Set([
+    ...Object.keys(remote && typeof remote === "object" ? remote : {}),
+    ...Object.keys(local && typeof local === "object" ? local : {}),
+  ]);
+  const out = {};
+  keys.forEach((key) => {
+    const byId = new Map();
+    [...(Array.isArray(remote?.[key]) ? remote[key] : []), ...(Array.isArray(local?.[key]) ? local[key] : [])].forEach(
+      (rfq) => {
+        if (!rfq?.id) return;
+        byId.set(rfq.id, pickRfq(byId.get(rfq.id), rfq));
+      }
     );
-  }
+    out[key] = [...byId.values()].sort((a, b) => String(b?.submittedAt || "").localeCompare(String(a?.submittedAt || "")));
+  });
   return out;
 }
 
@@ -765,8 +1007,37 @@ async function hydrateStore() {
     const remote = await fetchRemoteState();
     if (!remote) return false;
     if (remote.products.length) {
-      PRODUCTS.splice(0, PRODUCTS.length, ...remote.products);
+      PRODUCTS.splice(0, PRODUCTS.length, ...remote.products.map(normalizeProductRecord));
     }
+    const overlayKeys = [
+      PRODUCT_PATCH_KEY,
+      CUSTOM_CATEGORIES_KEY,
+      CATEGORY_ADMIN_KEY,
+      STAFF_KEY,
+      REPORTS_KEY,
+      ADMIN_ALERTS_KEY,
+    ];
+    overlayKeys.forEach((key) => {
+      if (remote.kv[key] == null) return;
+      writeLocalOnly(key, remote.kv[key]);
+    });
+    [REPORT_SEQ_KEY, TMP_SEQ_KEY, TMS_SEQ_KEY].forEach((key) => {
+      const remoteN = Number(remote.kv[key] || 0);
+      let localN = 0;
+      try {
+        localN = Number(localStorage.getItem(key) || 0);
+      } catch {
+        localN = 0;
+      }
+      if (remoteN > localN) {
+        try {
+          localStorage.setItem(key, String(remoteN));
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+    applySavedProductPatches();
     supplierMetricsBySlug.clear();
     Object.entries(remote.metrics || {}).forEach(([slug, metrics]) => {
       supplierMetricsBySlug.set(slug, metrics);
@@ -779,6 +1050,9 @@ async function hydrateStore() {
     }
     if (remote.kv[RFQS_KEY]) {
       writeLocalOnly(RFQS_KEY, mergeRfqMaps(readJson(RFQS_KEY, {}), remote.kv[RFQS_KEY]));
+    }
+    if (remote.kv[QUOTE_SNAPSHOTS_KEY]) {
+      writeLocalOnly(QUOTE_SNAPSHOTS_KEY, mergeQuoteSnapshots(remote.kv[QUOTE_SNAPSHOTS_KEY], readJson(QUOTE_SNAPSHOTS_KEY, {})));
     }
     const remoteSeq = Number(remote.kv[SEQ_KEY] || 0);
     let localSeq = 0;
@@ -872,19 +1146,33 @@ function searchSupplierProducts(slugOrName, query) {
 
 
 const listeners = new Set();
+let authModalOpen = false;
+let authModalMode = "invite";
 let storeSnapshot = {
   user: null,
+  staff: null,
   cartCount: 0,
   draft: { lines: [], note: "" },
   rfqs: [],
+  allRfqs: [],
+  reports: [],
+  adminAlerts: [],
+  authModalOpen: false,
+  authModalMode: "invite",
 };
 
 function refreshStoreSnapshot() {
   storeSnapshot = {
     user: getUser(),
+    staff: getStaffSession(),
     cartCount: cartCount(),
     draft: getDraft(),
     rfqs: getRfqs(),
+    allRfqs: getAllRfqs(),
+    reports: getReports(),
+    adminAlerts: listAdminAlerts(),
+    authModalOpen,
+    authModalMode,
   };
 }
 
@@ -904,18 +1192,23 @@ const AUTH_KEY = "subbie_auth";
 const ACCOUNTS_KEY = "subbie_accounts";
 const DRAFTS_KEY = "subbie_drafts_by_user";
 const RFQS_KEY = "subbie_rfqs_by_user";
+const QUOTE_SNAPSHOTS_KEY = "subbie_guest_quote_snapshots";
 const GUEST_KEY = "__guest__";
 const SEQ_KEY = "subbie_rfq_seq";
 const WHATSAPP_NUMBER = "85256013989";
 const WHATSAPP_DISPLAY = "852-56013989";
 const WHATSAPP_HREF = `https://wa.me/${WHATSAPP_NUMBER}`;
+const SALES_EMAIL = "sales@mattex.com.hk";
 const MATTEX_CHAIN_URL = "https://uat-chain.mattex.com.hk/overview";
+const TMS_INBOUND_RFQ_URL = "https://uat-tms-v2.mattex.com.hk/inbound/inbound-rfq?current=1&pageSize=20";
 const MATTEX_SITE_URL = "https://www.mattex.com.hk/";
 
 const PENDING_CART_KEY = "subbie_pending_cart";
 const PENDING_WA_RFQ_KEY = "subbie_pending_whatsapp_rfq";
 const PENDING_CUSTOM_KEY = "subbie_pending_custom";
 const PENDING_WA_ORDER_KEY = "subbie_pending_whatsapp_order";
+const PENDING_ROUTE_KEY = "subbie_pending_route";
+const AUTH_INVITE_HIDE_KEY = "subbie_hide_auth_invite_v2";
 
 function formatPrice(price) {
   if (price == null) {
@@ -955,6 +1248,7 @@ function writeJson(key, value) {
     /* ignore quota */
   }
   persistKv(key, value);
+  persistShared(key, value);
 }
 
 function normalizeEmail(email) {
@@ -1078,7 +1372,7 @@ function getCart() {
     if (line.custom) {
       return {
         id: line.productId,
-        name: line.name || "Custom item",
+        name: line.name || "Tailor Made Product",
         price: null,
         qty: line.qty,
         custom: true,
@@ -1106,8 +1400,12 @@ function newCustomProductId() {
 }
 
 function addToCart(productId, { intent, qty } = {}) {
+  if (!isLoggedIn()) {
+    requireBuyerAuth({ productId, intent: intent || "quote", qty });
+    return getCart();
+  }
   const product = getProduct(productId);
-  if (!product || isDiscontinued(product)) return getCart();
+  if (!product || isDiscontinued(product) || !isOrderable(product)) return getCart();
   const draft = getDraft();
   const minQty = Math.max(1, Number(product.moq) || 1);
   const addQty = Math.max(minQty, Math.floor(Number(qty)) || minQty);
@@ -1145,7 +1443,24 @@ function normalizeAttachments(list) {
     .slice(0, 8);
 }
 
-function addCustomLine({ name, description = "", qty = 1, category = "", attachments, image = "" } = {}) {
+function addCustomLine({
+  name,
+  description = "",
+  qty = 1,
+  category = "",
+  attachments,
+  image = "",
+  tailorMade = false,
+  baseProductId = "",
+  baseProductNo = "",
+} = {}) {
+  if (!isLoggedIn()) {
+    requireBuyerAuth({
+      custom: true,
+      tailorFrom: tailorMade ? String(baseProductId || "").trim() : undefined,
+    });
+    return { ok: false, error: "not_logged_in" };
+  }
   const trimmed = String(name || "").trim();
   if (!trimmed) return { ok: false, error: "name" };
   const nextQty = Math.floor(Number(qty));
@@ -1161,6 +1476,9 @@ function addCustomLine({ name, description = "", qty = 1, category = "", attachm
       category: String(category || "").trim(),
       attachments: normalizeAttachments(attachments),
       image: String(image || ""),
+      tailorMade: Boolean(tailorMade),
+      baseProductId: String(baseProductId || "").trim(),
+      baseProductNo: String(baseProductNo || "").trim(),
     });
   setDraft(draft);
   return { ok: true, productId };
@@ -1202,9 +1520,7 @@ function setLineQty(productId, qty) {
   if (!line) return draft;
   const next = Math.floor(Number(qty));
   if (!Number.isFinite(next) || next < 1) return draft;
-  const product = line.custom ? null : getProduct(line.productId);
-  const minQty = product ? Math.max(1, Number(product.moq) || 1) : 1;
-  line.qty = Math.max(minQty, next);
+  line.qty = next;
   setDraft(draft);
   return draft;
 }
@@ -1361,7 +1677,7 @@ function draftTotals(draft, productIds) {
       return {
         productId: line.productId,
         qty: line.qty,
-        name: line.name || "Custom item",
+        name: line.name || "Tailor Made Product",
         description: line.description || "",
         supplier: null,
         unitPrice: null,
@@ -1370,10 +1686,13 @@ function draftTotals(draft, productIds) {
         intent: line.intent || "quote",
         moq: 1,
         unit: line.unit || "",
-        productNo: "",
+        productNo: line.baseProductNo || line.productNo || "",
         category: line.category || "",
         green: false,
         attachments: Array.isArray(line.attachments) ? line.attachments : [],
+        tailorMade: Boolean(line.tailorMade),
+        baseProductId: line.baseProductId || "",
+        baseProductNo: line.baseProductNo || "",
       };
     }
     const product = getProduct(line.productId);
@@ -1428,16 +1747,50 @@ function nextRfqId() {
     /* ignore quota */
   }
   persistKv(SEQ_KEY, seq);
+  persistShared(SEQ_KEY, seq);
   return `RFQ-${seq}`;
+}
+
+function recencyMs(value) {
+  if (value == null || value === "") return 0;
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) return value;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function idNumber(value) {
+  return Number(String(value || "").replace(/\D/g, "")) || 0;
+}
+
+function sortByNewest(list, stampOf) {
+  return [...(list || [])].sort((a, b) => {
+    const diff = recencyMs(stampOf?.(b)) - recencyMs(stampOf?.(a));
+    if (diff) return diff;
+    return idNumber(b?.id || b?.email) - idNumber(a?.id || a?.email);
+  });
+}
+
+function sortRfqsNewestFirst(rfqs) {
+  return sortByNewest(rfqs, (rfq) => rfq?.submittedAt);
 }
 
 function getRfqs() {
   const key = accountKey();
   const map = getRfqsMap();
-  return Array.isArray(map[key]) ? map[key] : [];
+  return sortRfqsNewestFirst(Array.isArray(map[key]) ? map[key] : []);
+}
+
+function buyerContactPhone(user, email) {
+  const fromSession = String(user?.phone || "").trim();
+  if (fromSession) return fromSession;
+  const account = getAccount(email || user?.email);
+  return String(account?.phone || "").trim();
 }
 
 function submitRfq(productIds, options = {}) {
+  const user = getUser();
+  const allowGuest = Boolean(options.allowGuest);
+  if (!user?.email && !allowGuest) return { ok: false, error: "not_logged_in" };
   const email = accountKey();
   let draft = getDraft();
   if (!draft.lines.length) return { ok: false, error: "empty" };
@@ -1464,15 +1817,18 @@ function submitRfq(productIds, options = {}) {
   const selectedSet = new Set(selectedIds);
   const selectedLines = draft.lines.filter((l) => selectedSet.has(String(l.productId)));
   if (!selectedLines.length) return { ok: false, error: "none_selected" };
-  const blocked = selectedLines.filter((l) => !l.custom && isDiscontinued(getProduct(l.productId)));
+  const blocked = selectedLines.filter((l) => !l.custom && !isOrderable(getProduct(l.productId)));
   if (blocked.length) return { ok: false, error: "discontinued" };
 
   const totals = draftTotals({ ...draft, lines: selectedLines });
   const channel =
     options.channel === "whatsapp" ? "whatsapp" : options.channel === "email" ? "email" : "rfq";
+  const buyerEmail = user?.email || "guest@subbie.store";
+  const buyerKind = rfqBuyerKind({ buyerEmail });
   const rfq = {
     id: nextRfqId(),
     status: channel === "whatsapp" ? "whatsapp_sent" : channel === "email" ? "email_sent" : "submitted",
+    reviewStatus: "received",
     channel,
     askKind: options.kind === "buy" ? "buy" : "quote",
     submittedAt: new Date().toISOString(),
@@ -1491,6 +1847,8 @@ function submitRfq(productIds, options = {}) {
       name: l.name,
       supplier: l.supplier,
       qty: l.qty,
+      moq: l.moq,
+      unit: l.unit || "",
       unitPrice: l.unitPrice,
       requestedUnitPrice: l.requestedUnitPrice != null ? l.requestedUnitPrice : null,
       custom: Boolean(l.custom),
@@ -1502,16 +1860,30 @@ function submitRfq(productIds, options = {}) {
       image: l.image || null,
       attachments: Array.isArray(l.attachments) ? l.attachments : [],
       remark: String(l.remark || ""),
+      tailorMade: Boolean(l.tailorMade),
+      baseProductId: l.baseProductId || "",
+      baseProductNo: l.baseProductNo || "",
     })),
     pricedSubtotal: totals.pricedSubtotal,
     unpricedCount: totals.unpricedCount,
+    buyerEmail,
+    buyerName: user?.name || "Guest",
+    buyerPhone: buyerKind === "member" ? buyerContactPhone(user, user?.email) : "",
+    buyerPhoneWhatsapp: Boolean(user?.phoneWhatsapp),
+    buyerKind,
   };
   const map = getRfqsMap();
   const list = Array.isArray(map[email]) ? map[email] : [];
   list.unshift(rfq);
   map[email] = list;
   setRfqsMap(map);
-  emitStoreChange();
+  persistSharedRfq(email, rfq);
+  notifyAdmins({
+    kind: "rfq",
+    title: `New RFQ ${rfq.id}`,
+    body: `${rfq.buyerName || rfq.buyerEmail || "Buyer"} submitted ${(rfq.lines || []).length} line(s) from Mattex Marketplace.`,
+    href: `${adminOrigin()}/?rfq=${encodeURIComponent(rfq.id)}`,
+  });
   return { ok: true, rfq };
 }
 
@@ -1573,10 +1945,13 @@ function reorderRfq(id) {
           qty: l.qty,
           custom: true,
           intent: "quote",
-          name: l.name || "Custom item",
+          name: l.name || "Tailor Made Product",
           description: l.description || "",
           category: l.category || "",
           attachments: Array.isArray(l.attachments) ? l.attachments : [],
+          tailorMade: Boolean(l.tailorMade),
+          baseProductId: l.baseProductId || "",
+          baseProductNo: l.baseProductNo || "",
         };
       }
       return { productId: l.productId, qty: l.qty, intent: l.intent || "quote" };
@@ -1599,12 +1974,19 @@ function getAccount(email) {
   return map[key] || null;
 }
 
+function buyerApprovalStatus(account) {
+  const status = String(account?.approvalStatus || "");
+  if (status === "pending" || status === "rejected" || status === "approved") return status;
+  return "approved";
+}
+
 function publicUserFromAccount(account) {
   if (!account) return null;
   return {
     email: account.email,
     name: account.name,
     phone: account.phone || "",
+    phoneWhatsapp: Boolean(account.phoneWhatsapp),
     jobTitle: account.jobTitle || "",
     companyName: account.companyName || "",
     companyReg: account.companyReg || "",
@@ -1629,38 +2011,76 @@ function setSessionUser(user) {
   emitStoreChange();
 }
 
+function isSignupPasswordOk(password) {
+  const value = String(password || "");
+  return value.length >= 8 && /[A-Za-z]/.test(value) && /\d/.test(value);
+}
+
+function persistLegacyBuyerAccess() {
+  const map = getAccountsMap();
+  let changed = false;
+  Object.keys(map || {}).forEach((key) => {
+    const account = map[key];
+    if (!account || account.approvalStatus !== "pending") return;
+    map[key] = {
+      ...account,
+      approvalStatus: "approved",
+      enabled: true,
+      approvedAt: account.approvedAt || account.createdAt || new Date().toISOString(),
+      reviewedAt: account.reviewedAt || "",
+      needsReview: true,
+    };
+    changed = true;
+  });
+  if (changed) setAccountsMap(map);
+}
+
 function registerUser(profile) {
   const email = normalizeEmail(profile.email);
   if (!email) return { ok: false, error: "email" };
+  if (getStaffAccount(email)) return { ok: false, error: "staff" };
   if (!String(profile.name || "").trim()) return { ok: false, error: "name" };
   if (!String(profile.phone || "").trim()) return { ok: false, error: "phone" };
   if (!String(profile.jobTitle || "").trim()) return { ok: false, error: "jobTitle" };
   if (!String(profile.companyName || "").trim()) return { ok: false, error: "companyName" };
+  if (!String(profile.companyReg || "").trim()) return { ok: false, error: "companyReg" };
   if (!String(profile.companyAddress || "").trim()) return { ok: false, error: "companyAddress" };
-  if (!String(profile.password || "").trim() || String(profile.password).length < 4) {
-    return { ok: false, error: "password" };
-  }
+  if (!isSignupPasswordOk(profile.password)) return { ok: false, error: "password" };
 
+  persistLegacyBuyerAccess();
   const map = getAccountsMap();
   if (map[email]) return { ok: false, error: "exists" };
 
+  const now = new Date().toISOString();
   const account = {
     email,
     password: String(profile.password),
     name: String(profile.name).trim(),
     phone: String(profile.phone).trim(),
+    phoneWhatsapp: Boolean(String(profile.phone || "").trim()),
     jobTitle: String(profile.jobTitle).trim(),
     companyName: String(profile.companyName).trim(),
     companyReg: String(profile.companyReg || "").trim(),
     companyPhone: String(profile.companyPhone || "").trim(),
     companyAddress: String(profile.companyAddress).trim(),
     project: normalizeProfileProject(profile.project),
-    createdAt: new Date().toISOString(),
+    enabled: true,
+    approvalStatus: "approved",
+    needsReview: true,
+    reviewedAt: "",
+    createdAt: now,
+    approvedAt: now,
   };
   map[email] = account;
   setAccountsMap(map);
   setSessionUser(publicUserFromAccount(account));
-  return { ok: true, user: publicUserFromAccount(account) };
+  notifyAdmins({
+    kind: "buyer",
+    title: "New marketplace buyer — review",
+    body: `${account.companyName || "Company"} · ${account.name || ""} · ${account.email}`.replace(/ · $/, ""),
+    href: `${adminOrigin()}/?buyer=${encodeURIComponent(account.email)}`,
+  });
+  return { ok: true, pending: false, loggedIn: true, email };
 }
 
 function updateUserProfile(patch = {}) {
@@ -1669,11 +2089,12 @@ function updateUserProfile(patch = {}) {
   const email = normalizeEmail(current.email);
 
   const next = {
-    name: String(patch.name ?? current.name ?? "").trim(),
+    name: String(current.name ?? "").trim(),
     phone: String(patch.phone ?? current.phone ?? "").trim(),
+    phoneWhatsapp: Boolean(String(patch.phone ?? current.phone ?? "").trim()),
     jobTitle: String(patch.jobTitle ?? current.jobTitle ?? "").trim(),
-    companyName: String(patch.companyName ?? current.companyName ?? "").trim(),
-    companyReg: String(patch.companyReg ?? current.companyReg ?? "").trim(),
+    companyName: String(current.companyName ?? "").trim(),
+    companyReg: String(current.companyReg ?? "").trim(),
     companyPhone: String(patch.companyPhone ?? current.companyPhone ?? "").trim(),
     companyAddress: String(patch.companyAddress ?? current.companyAddress ?? "").trim(),
     project: normalizeProfileProject(patch.project ?? current.project),
@@ -1705,30 +2126,23 @@ function updateUserProfile(patch = {}) {
 function loginUser({ email, password, name }) {
   const nextEmail = normalizeEmail(email);
   if (!nextEmail) return { ok: false, error: "email" };
+  if (getStaffAccount(nextEmail)) return { ok: false, error: "staff" };
 
+  persistLegacyBuyerAccess();
   const account = getAccount(nextEmail);
   if (account) {
+    const approval = buyerApprovalStatus(account);
+    if (approval === "rejected") return { ok: false, error: "rejected" };
+    if (account.enabled === false) return { ok: false, error: "disabled" };
     if (password != null && String(password) !== String(account.password)) {
       return { ok: false, error: "password" };
     }
+    authModalOpen = false;
     setSessionUser(publicUserFromAccount(account));
     return { ok: true, user: publicUserFromAccount(account) };
   }
 
-  // Legacy / quick login path (no registered company profile yet)
-  setSessionUser({
-    email: nextEmail,
-    name: name || nextEmail.split("@")[0],
-    phone: "",
-    jobTitle: "",
-    companyName: "",
-    companyReg: "",
-    companyPhone: "",
-    companyAddress: "",
-    project: SAMPLE_PROJECTS[0],
-    at: Date.now(),
-  });
-  return { ok: true, user: getUser() };
+  return { ok: false, error: "missing" };
 }
 
 function logoutUser() {
@@ -1773,19 +2187,120 @@ function getPendingWhatsappOrder() {
   }
 }
 
-function setPendingCustom() {
-  sessionStorage.setItem(PENDING_CUSTOM_KEY, "1");
+function setPendingCustom(payload = { custom: true }) {
+  sessionStorage.setItem(PENDING_CUSTOM_KEY, JSON.stringify(payload));
+}
+
+function setPendingRoute(path) {
+  const next = String(path || "").trim();
+  if (!next) {
+    sessionStorage.removeItem(PENDING_ROUTE_KEY);
+    return;
+  }
+  sessionStorage.setItem(PENDING_ROUTE_KEY, next);
+}
+
+function isAuthInviteHidden() {
+  try {
+    return localStorage.getItem(AUTH_INVITE_HIDE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function setAuthInviteHidden(hidden) {
+  try {
+    if (hidden) localStorage.setItem(AUTH_INVITE_HIDE_KEY, "1");
+    else localStorage.removeItem(AUTH_INVITE_HIDE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+function openAuthModal(mode = "required") {
+  if (mode === "invite" && isAuthInviteHidden()) return;
+  authModalMode = mode === "invite" ? "invite" : "required";
+  authModalOpen = true;
+  if (typeof window === "undefined") {
+    emitStoreChange();
+    return;
+  }
+  window.setTimeout(() => emitStoreChange(), 0);
+}
+
+function closeAuthModal() {
+  if (!authModalOpen) return;
+  authModalOpen = false;
+  emitStoreChange();
+}
+
+function inviteBuyerAuth() {
+  if (isLoggedIn()) return true;
+  openAuthModal("invite");
+  return true;
+}
+
+function requireBuyerAuth(pending = {}) {
+  if (isLoggedIn()) return true;
+  if (pending.productId) setPendingCart(pending.productId, pending.intent || "quote", pending.qty);
+  if (pending.custom || pending.tailorFrom) {
+    setPendingCustom(pending.tailorFrom ? { tailorFrom: pending.tailorFrom } : { custom: true });
+  }
+  openAuthModal("required");
+  return false;
+}
+
+function addFromStorefront(productId, intent = "quote", qty, lang) {
+  if (intent === "quote-now") {
+    if (!isLoggedIn() && !isAuthInviteHidden()) {
+      setPendingCart(productId, "quote-now", qty);
+      openAuthModal("invite");
+      return { ok: false, error: "auth_invite" };
+    }
+    return whatsappNow(productId, { qty, kind: "quote", lang, skipCart: true });
+  }
+  if (!requireBuyerAuth({ productId, intent, qty })) {
+    return { ok: false, error: "not_logged_in" };
+  }
+  if (intent === "buy-now") {
+    return whatsappNow(productId, { qty, kind: "buy", lang });
+  }
+  addToCart(productId, { intent, qty });
+  return { ok: true };
+}
+
+function consumePendingInviteContinue() {
+  const pendingCart = sessionStorage.getItem(PENDING_CART_KEY);
+  sessionStorage.removeItem(PENDING_CART_KEY);
+  if (!pendingCart) return;
+  let productId = "";
+  let intent = "";
+  let qty;
+  try {
+    const parsed = JSON.parse(pendingCart);
+    productId = parsed?.productId || "";
+    intent = parsed?.intent || "";
+    qty = parsed?.qty;
+  } catch {
+    return;
+  }
+  if (intent === "quote-now" && productId) {
+    whatsappNow(productId, { qty, kind: "quote", skipCart: true });
+  }
 }
 
 function consumePendingAfterAuth() {
   const pendingCart = sessionStorage.getItem(PENDING_CART_KEY);
   const pendingWa = sessionStorage.getItem(PENDING_WA_RFQ_KEY);
   const pendingCustom = sessionStorage.getItem(PENDING_CUSTOM_KEY);
+  const pendingRoute = sessionStorage.getItem(PENDING_ROUTE_KEY);
   sessionStorage.removeItem(PENDING_CART_KEY);
   sessionStorage.removeItem(PENDING_WA_RFQ_KEY);
   sessionStorage.removeItem(PENDING_CUSTOM_KEY);
+  sessionStorage.removeItem(PENDING_ROUTE_KEY);
 
   let wentToRfq = false;
+  let stayPut = false;
   if (pendingCart) {
     let productId = pendingCart;
     let intent = "quote";
@@ -1800,25 +2315,45 @@ function consumePendingAfterAuth() {
     } catch {
       productId = pendingCart;
     }
-    addToCart(productId, { intent, qty });
-    wentToRfq = true;
+    if (intent === "quote-now") {
+      whatsappNow(productId, { qty, kind: "quote", skipCart: true });
+      stayPut = true;
+    } else if (intent === "buy-now") {
+      whatsappNow(productId, { qty, kind: "buy" });
+      wentToRfq = true;
+    } else {
+      addToCart(productId, { intent, qty });
+      wentToRfq = true;
+    }
   }
   if (pendingWa) {
     addToCart(pendingWa);
     wentToRfq = true;
   }
   if (pendingCustom && !wentToRfq) {
+    let customPayload = pendingCustom;
+    try {
+      customPayload = JSON.parse(pendingCustom);
+    } catch {
+      customPayload = pendingCustom === "1" ? { custom: true } : {};
+    }
+    if (customPayload?.tailorFrom) {
+      return `/details/${customPayload.tailorFrom}?tailor=1`;
+    }
     return "/?custom=1#products";
   }
-  return wentToRfq ? "/rfq" : "/";
+  if (wentToRfq) return "/rfq";
+  if (pendingRoute) return pendingRoute;
+  if (stayPut) return "";
+  return "/";
 }
 
 function enrichCartLine(line) {
   if (!line) return null;
   if (line.custom) {
     return {
-      name: line.name || "Custom item",
-      productNo: line.productNo || "",
+      name: line.name || "Tailor Made Product",
+      productNo: line.baseProductNo || line.productNo || "",
       productId: line.productId,
       custom: true,
       description: line.description || "",
@@ -1828,6 +2363,9 @@ function enrichCartLine(line) {
       supplier: line.supplier || "",
       image: line.image || "",
       attachments: Array.isArray(line.attachments) ? line.attachments : [],
+      tailorMade: Boolean(line.tailorMade),
+      baseProductId: line.baseProductId || "",
+      baseProductNo: line.baseProductNo || "",
     };
   }
   const product = getProduct(line.productId);
@@ -1883,8 +2421,8 @@ function waField(label, value, prefixWidth) {
 
 function whatsappItemBlock(line, index) {
   const isCustom = Boolean(line.custom);
-  const name = String(line.name || (isCustom ? "自訂產品" : line.productId) || "-").trim();
-  const sku = line.productNo || (isCustom ? "自訂" : line.productId) || "-";
+  const name = String(line.name || (isCustom ? "度身訂造產品" : line.productId) || "-").trim();
+  const sku = line.productNo || (isCustom ? "度身訂造" : line.productId) || "-";
   const qty = `${line.qty}${line.unit ? ` ${line.unit}` : ""}`;
   const price = line.unitPrice != null ? formatPrice(line.unitPrice) : "待報價";
   const spec = flattenWaSpec(line.description);
@@ -1922,6 +2460,31 @@ function whatsappPdfHintText(kind, refNo, pdfUrl) {
   const refLine = refNo ? `${waRefLabel(kind)}：${refNo}` : "";
   const pdfLine = pdfUrl ? `產品清單 PDF：\n${pdfUrl}` : "請睇附件 PDF（產品清單）。";
   return [intro, refLine, pdfLine, outro].filter(Boolean).join("\n\n");
+}
+
+function whatsappPhoneId(phone) {
+  let digits = String(phone || "").replace(/\D/g, "");
+  if (digits.startsWith("00")) digits = digits.slice(2);
+  if (!digits) return "";
+  if (digits.length <= 9 && !digits.startsWith("852")) return `852${digits}`;
+  return digits;
+}
+
+function buyerWhatsappHref(phone, text) {
+  const id = whatsappPhoneId(phone);
+  if (!id) return "";
+  const msg = String(text || "").trim();
+  const base = `https://wa.me/${id}`;
+  return msg ? `${base}?text=${encodeURIComponent(msg)}` : base;
+}
+
+function formatBuyerPhoneDisplay(phone) {
+  const raw = String(phone || "").trim();
+  const id = whatsappPhoneId(raw);
+  if (!id) return raw;
+  if (id.startsWith("852") && id.length === 11) return `+852 ${id.slice(3, 7)} ${id.slice(7)}`;
+  if (id.length >= 8) return `+${id}`;
+  return raw;
 }
 
 function whatsappChatHref(text = "") {
@@ -2240,10 +2803,16 @@ function quotePdfItems(rows) {
     const attachments = Array.isArray(line.attachments) ? line.attachments : [];
     return {
       index: i + 1,
-      name: String(line.name || (isCustom ? "自訂產品" : line.productId) || "-").trim(),
-      sku: line.productNo || (isCustom ? "自訂" : line.productId) || "-",
+      name: String(line.name || (isCustom ? "度身訂造產品" : line.productId) || "-").trim(),
+      sku: line.productNo || (isCustom ? "度身訂造" : line.productId) || "-",
       qty: `${line.qty}${line.unit ? ` ${line.unit}` : ""}`,
-      price: line.unitPrice != null ? formatPrice(line.unitPrice) : "待報價",
+      price: line.noOffer
+        ? "不報價"
+        : line.quotedUnitPrice != null && Number(line.quotedUnitPrice) > 0
+          ? formatPrice(Number(line.quotedUnitPrice))
+          : line.unitPrice != null
+            ? formatPrice(line.unitPrice)
+            : "待報價",
       spec: isCustom ? flattenWaSpec(line.description) : "",
       attachments: waAttachmentNames(attachments),
       image: line.image || firstImageAttachmentUrl(attachments) || "",
@@ -2398,14 +2967,30 @@ function openWhatsappDraft(lines, kind, options = {}) {
   return { url, truncated: false, copied: true, count: rows.length, refNo };
 }
 
-function whatsappNow(productId, { qty, kind, lang = "zh" } = {}) {
+function whatsappNow(productId, { qty, kind, lang = "zh", skipCart = false } = {}) {
   const product = getProduct(productId);
-  if (!product || isDiscontinued(product)) return { ok: false, error: "discontinued" };
+  if (!product || isDiscontinued(product) || !isOrderable(product)) return { ok: false, error: "discontinued" };
   const intent = kind === "buy" ? "buy" : "quote";
-  addToCart(productId, { intent, qty });
-  const line = getDraft().lines.find((l) => String(l.productId) === String(productId) && !l.custom);
-  if (!line) return { ok: false };
-  return { ok: true, ...openWhatsappDraft([line], intent) };
+  const minQty = Math.max(1, Number(product.moq) || 1);
+  const addQty = Math.max(minQty, Math.floor(Number(qty)) || minQty);
+  const line = { productId, qty: addQty, intent };
+  const snapshot = skipCart ? getDraft() : null;
+  if (skipCart) {
+    const others = snapshot.lines.filter((row) => String(row.productId) !== String(productId) || row.custom);
+    setDraft({ ...snapshot, lines: [...others, line] });
+  } else {
+    addToCart(productId, { intent, qty: addQty });
+  }
+  const submitted = submitRfq([productId], {
+    kind: intent,
+    skipLogistics: true,
+    channel: "whatsapp",
+    allowGuest: !isLoggedIn(),
+  });
+  if (skipCart) setDraft(snapshot);
+  if (!submitted.ok && submitted.error !== "not_logged_in") return submitted;
+  const rfq = submitted.ok ? submitted.rfq : null;
+  return { ok: true, ...openWhatsappDraft([line], intent, { refNo: rfq?.id }), rfq };
 }
 
 function whatsappUrl() {
@@ -2420,6 +3005,2007 @@ function rfqProjectName(rfq) {
   const digits = Number(String(rfq.id || "").replace(/\D/g, "")) || 0;
   return SAMPLE_PROJECTS[Math.abs(digits) % SAMPLE_PROJECTS.length];
 }
+
+const STAFF_KEY = "subbie_staff";
+const STAFF_AUTH_KEY = "subbie_staff_auth";
+const REPORTS_KEY = "subbie_product_reports";
+const PRODUCT_PATCH_KEY = "subbie_product_patches";
+const REPORT_SEQ_KEY = "subbie_report_seq";
+const TMS_SEQ_KEY = "subbie_tms_seq";
+const TMP_SEQ_KEY = "subbie_tmp_sku_seq";
+
+const BOOTSTRAP_STAFF_EMAIL = "supabase@mattex.com.hk";
+const LEGACY_BOOTSTRAP_STAFF_EMAIL = "sales@mattex.com";
+
+function getStaffList() {
+  const seeded = [
+    { email: BOOTSTRAP_STAFF_EMAIL, name: "Supabase", password: "mattex", enabled: true, bootstrap: true },
+    { email: "ops@mattex.com", name: "Second Sales", password: "mattex", enabled: true, bootstrap: false },
+  ];
+  const saved = readJson(STAFF_KEY, null);
+  if (Array.isArray(saved) && saved.length) {
+    let changed = false;
+    const next = saved.map((s) => {
+      if (normalizeEmail(s.email) !== LEGACY_BOOTSTRAP_STAFF_EMAIL) return s;
+      changed = true;
+      return { ...s, email: BOOTSTRAP_STAFF_EMAIL, name: s.name || "Supabase", bootstrap: true };
+    });
+    if (changed) writeJson(STAFF_KEY, next);
+    return changed ? next : saved;
+  }
+  writeJson(STAFF_KEY, seeded);
+  return seeded;
+}
+
+function setStaffList(list) {
+  writeJson(STAFF_KEY, list);
+}
+
+function getStaffAccount(email) {
+  return getStaffList().find((s) => s.email === normalizeEmail(email)) || null;
+}
+
+function getStaffSession() {
+  return readJson(STAFF_AUTH_KEY, null);
+}
+
+function requireStaff() {
+  const session = getStaffSession();
+  if (!session?.email) return { ok: false, error: "staff" };
+  const account = getStaffAccount(session.email);
+  if (!account || !account.enabled) return { ok: false, error: "staff" };
+  return { ok: true, account };
+}
+
+function loginStaff({ email, password }) {
+  const nextEmail = normalizeEmail(email);
+  const account = getStaffAccount(nextEmail);
+  if (!account || !account.enabled) {
+    return { ok: false, error: "password" };
+  }
+  if (staffNeedsInvite(account)) return { ok: false, error: "invite" };
+  if (String(password) !== String(account.password)) {
+    return { ok: false, error: "password" };
+  }
+  if (getAccount(nextEmail)) return { ok: false, error: "buyer" };
+  writeLocalOnly(STAFF_AUTH_KEY, { email: account.email, name: account.name, at: Date.now() });
+  emitStoreChange();
+  return { ok: true, staff: getStaffSession() };
+}
+
+function logoutStaff() {
+  localStorage.removeItem(STAFF_AUTH_KEY);
+  emitStoreChange();
+}
+
+function staffNeedsInvite(account) {
+  return Boolean(account?.inviteToken) || (account && !account.bootstrap && !String(account.password || "").trim());
+}
+
+function makeInviteToken() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  return `inv_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 12)}`;
+}
+
+function staffSetPasswordHref(token) {
+  return `${adminOrigin()}/set-password?token=${encodeURIComponent(token)}`;
+}
+
+function staffInviteMailHref({ email, name, href }) {
+  const who = String(name || "there").trim() || "there";
+  const subject = "Set your Mattex Sales portal password";
+  const body = [
+    `Hello ${who},`,
+    "",
+    "You've been invited to the Mattex Sales portal.",
+    "Open this link to set your password:",
+    "",
+    href,
+    "",
+    "The link expires in 7 days. If you did not expect this, ignore the email.",
+    "",
+    "Mattex Marketplace",
+  ].join("\n");
+  return `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+
+function issueStaffInvite(target) {
+  const token = makeInviteToken();
+  target.inviteToken = token;
+  target.inviteExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  target.invitedAt = new Date().toISOString();
+  target.password = "";
+  return {
+    token,
+    href: staffSetPasswordHref(token),
+    mailto: staffInviteMailHref({ email: target.email, name: target.name, href: staffSetPasswordHref(token) }),
+  };
+}
+
+function createStaff({ email, name }) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const nextEmail = normalizeEmail(email);
+  const nextName = String(name || "").trim();
+  if (!nextEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nextEmail)) return { ok: false, error: "email" };
+  if (!nextName) return { ok: false, error: "name" };
+  if (getStaffAccount(nextEmail) || getAccount(nextEmail)) return { ok: false, error: "taken" };
+  const list = getStaffList();
+  const account = {
+    email: nextEmail,
+    name: nextName,
+    password: "",
+    enabled: true,
+    bootstrap: false,
+    createdAt: new Date().toISOString(),
+  };
+  const invite = issueStaffInvite(account);
+  list.unshift(account);
+  setStaffList(list);
+  emitStoreChange();
+  openMailto(invite.mailto);
+  return { ok: true, mailto: invite.mailto, href: invite.href, email: nextEmail };
+}
+
+function resendStaffInvite(email) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const list = getStaffList();
+  const target = list.find((s) => s.email === normalizeEmail(email));
+  if (!target) return { ok: false, error: "missing" };
+  const invite = issueStaffInvite(target);
+  setStaffList(list);
+  emitStoreChange();
+  openMailto(invite.mailto);
+  return { ok: true, mailto: invite.mailto, href: invite.href, email: target.email };
+}
+
+function getStaffInvite(token) {
+  const value = String(token || "").trim();
+  if (!value) return null;
+  const account = getStaffList().find((s) => s.inviteToken === value) || null;
+  if (!account) return null;
+  const expired = account.inviteExpiresAt && new Date(account.inviteExpiresAt).getTime() < Date.now();
+  return {
+    email: account.email,
+    name: account.name,
+    expired: Boolean(expired),
+  };
+}
+
+function acceptStaffInvite({ token, password }) {
+  const value = String(token || "").trim();
+  if (!value) return { ok: false, error: "token" };
+  if (!isSignupPasswordOk(password)) return { ok: false, error: "password" };
+  const list = getStaffList();
+  const target = list.find((s) => s.inviteToken === value);
+  if (!target) return { ok: false, error: "token" };
+  if (target.inviteExpiresAt && new Date(target.inviteExpiresAt).getTime() < Date.now()) {
+    return { ok: false, error: "expired" };
+  }
+  target.password = String(password);
+  target.inviteToken = "";
+  target.inviteExpiresAt = "";
+  target.enabled = true;
+  setStaffList(list);
+  writeLocalOnly(STAFF_AUTH_KEY, { email: target.email, name: target.name, at: Date.now() });
+  emitStoreChange();
+  return { ok: true, staff: getStaffSession() };
+}
+
+function updateStaff(email, { name, password } = {}) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const list = getStaffList();
+  const target = list.find((s) => s.email === normalizeEmail(email));
+  if (!target) return { ok: false, error: "missing" };
+  if (name != null) {
+    const nextName = String(name).trim();
+    if (!nextName) return { ok: false, error: "name" };
+    target.name = nextName;
+  }
+  if (password != null && String(password).trim()) {
+    target.password = String(password).trim();
+  }
+  setStaffList(list);
+  emitStoreChange();
+  return { ok: true };
+}
+
+function disableStaff(email) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const list = getStaffList();
+  const target = list.find((s) => s.email === normalizeEmail(email));
+  if (!target) return { ok: false, error: "missing" };
+  if (list.filter((s) => s.enabled).length <= 1 && target.enabled) return { ok: false, error: "last" };
+  target.enabled = false;
+  setStaffList(list);
+  const map = getRfqsMap();
+  Object.values(map || {}).forEach((listRows) => {
+    (Array.isArray(listRows) ? listRows : []).forEach((rfq) => {
+      if (rfq.reviewingBy === target.email) {
+        rfq.reviewingBy = "";
+        if (inboxStatus(rfq) === "reviewing") rfq.reviewStatus = "received";
+      }
+    });
+  });
+  setRfqsMap(map);
+  getReports().forEach((r) => {
+    if (r.lookingBy === target.email) {
+      r.lookingBy = "";
+      if (r.status === "looking") r.status = "open";
+    }
+  });
+  writeJson(REPORTS_KEY, getReports());
+  if (getStaffSession()?.email === target.email) localStorage.removeItem(STAFF_AUTH_KEY);
+  emitStoreChange();
+  return { ok: true };
+}
+
+function enableStaff(email) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const list = getStaffList();
+  const target = list.find((s) => s.email === normalizeEmail(email));
+  if (!target) return { ok: false, error: "missing" };
+  target.enabled = true;
+  setStaffList(list);
+  emitStoreChange();
+  return { ok: true };
+}
+
+function listBuyers() {
+  persistLegacyBuyerAccess();
+  const map = getAccountsMap();
+  return sortByNewest(
+    Object.values(map || {}).map((a) => ({
+      email: a.email,
+      name: a.name,
+      phone: a.phone || "",
+      phoneWhatsapp: Boolean(a.phoneWhatsapp),
+      jobTitle: a.jobTitle || "",
+      companyName: a.companyName,
+      companyReg: a.companyReg || "",
+      companyPhone: a.companyPhone || "",
+      companyAddress: a.companyAddress || "",
+      project: a.project || "",
+      enabled: a.enabled !== false,
+      approvalStatus: buyerApprovalStatus(a),
+      createdAt: a.createdAt || "",
+      approvedAt: a.approvedAt || "",
+      reviewedAt: a.reviewedAt || "",
+      needsReview: Boolean(a.needsReview),
+      rejectedAt: a.rejectedAt || "",
+      rejectReason: a.rejectReason || "",
+    })),
+    (buyer) => buyer.createdAt
+  );
+}
+
+function setBuyerEnabled(email, enabled) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const map = getAccountsMap();
+  const key = normalizeEmail(email);
+  if (!map[key]) return { ok: false, error: "missing" };
+  map[key].enabled = Boolean(enabled);
+  if (enabled) {
+    map[key].approvalStatus = "approved";
+    map[key].approvedAt = new Date().toISOString();
+  }
+  setAccountsMap(map);
+  emitStoreChange();
+  return { ok: true };
+}
+
+function approveBuyer(email) {
+  return setBuyerEnabled(email, true);
+}
+
+function markBuyerReviewed(email) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const map = getAccountsMap();
+  const key = normalizeEmail(email);
+  if (!map[key]) return { ok: false, error: "missing" };
+  map[key].reviewedAt = new Date().toISOString();
+  map[key].needsReview = false;
+  setAccountsMap(map);
+  emitStoreChange();
+  return { ok: true };
+}
+
+function buyerRejectMailHref(buyer, reason) {
+  const email = String(buyer?.email || "").trim();
+  const name = String(buyer?.name || "there").trim() || "there";
+  const company = String(buyer?.companyName || "").trim();
+  const why = String(reason || "").trim();
+  const subject = "Your Mattex Marketplace account application";
+  const body = [
+    `Hello ${name},`,
+    "",
+    `Thank you for applying for a Mattex Marketplace account${company ? ` for ${company}` : ""}.`,
+    "",
+    "We are unable to approve your application at this time.",
+    "",
+    "Reason:",
+    why,
+    "",
+    "If you have questions, reply to this email.",
+    "",
+    "Mattex Marketplace",
+    SALES_EMAIL,
+  ].join("\n");
+  return `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+
+function openMailto(href) {
+  if (typeof document === "undefined" || !href) return;
+  const link = document.createElement("a");
+  link.href = href;
+  link.rel = "noopener";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
+const ADMIN_ALERTS_KEY = "subbie_admin_alerts";
+
+function listAdminAlerts() {
+  const list = readJson(ADMIN_ALERTS_KEY, []);
+  return Array.isArray(list) ? list : [];
+}
+
+function setAdminAlerts(list) {
+  writeJson(ADMIN_ALERTS_KEY, (list || []).slice(0, 40));
+}
+
+function requestAdminNotifyPermission() {
+  if (typeof Notification === "undefined") return;
+  if (Notification.permission === "default") {
+    Notification.requestPermission().catch(() => {});
+  }
+}
+
+function showAdminWebNotification(title, body, href) {
+  if (typeof Notification === "undefined") return;
+  const fire = () => {
+    try {
+      const note = new Notification(title, {
+        body,
+        tag: title,
+        icon: "/assets/mattex-logo.png",
+      });
+      note.onclick = () => {
+        window.focus();
+        if (href) window.location.assign(href);
+        note.close();
+      };
+    } catch {
+      /* ignore blocked notifications */
+    }
+  };
+  if (Notification.permission === "granted") fire();
+  else if (Notification.permission !== "denied") {
+    Notification.requestPermission()
+      .then((perm) => {
+        if (perm === "granted") fire();
+      })
+      .catch(() => {});
+  }
+}
+
+function notifyAdmins({ kind, title, body, href } = {}) {
+  const alert = {
+    id: `AL-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    kind: kind || "rfq",
+    title: String(title || "Mattex Marketplace"),
+    body: String(body || ""),
+    href: String(href || `${adminOrigin()}/`),
+    createdAt: new Date().toISOString(),
+    seen: false,
+    mailed: false,
+  };
+  setAdminAlerts([alert, ...listAdminAlerts()]);
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("subbie-admin-alert", { detail: alert }));
+  }
+  emitStoreChange();
+  return alert;
+}
+
+function markAdminAlertsMailed(ids) {
+  const want = new Set((ids || []).map(String));
+  setAdminAlerts(
+    listAdminAlerts().map((row) => (want.has(String(row.id)) ? { ...row, mailed: true } : row))
+  );
+  emitStoreChange();
+}
+
+function markAdminAlertsSeen() {
+  setAdminAlerts(listAdminAlerts().map((row) => ({ ...row, seen: true })));
+  emitStoreChange();
+}
+
+function adminAlertMailto(alerts) {
+  const rows = alerts || [];
+  if (!rows.length) return "";
+  const subject = rows.length === 1 ? rows[0].title : `${rows.length} new Mattex Marketplace alerts`;
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  const body = rows
+    .map((row) => {
+      const link = row.href ? `${origin}${row.href}` : "";
+      return [row.title, row.body, link].filter(Boolean).join("\n");
+    })
+    .join("\n\n");
+  return `mailto:${encodeURIComponent(SALES_EMAIL)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+
+function deliverAdminAlertEmails(alerts) {
+  const href = adminAlertMailto(alerts);
+  if (!href) return;
+  openMailto(href);
+  markAdminAlertsMailed((alerts || []).map((row) => row.id));
+}
+
+function rejectBuyer(email, { reason } = {}) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const why = String(reason || "").trim();
+  if (!why) return { ok: false, error: "reason" };
+  const map = getAccountsMap();
+  const key = normalizeEmail(email);
+  if (!map[key]) return { ok: false, error: "missing" };
+  map[key].approvalStatus = "rejected";
+  map[key].enabled = false;
+  map[key].rejectedAt = new Date().toISOString();
+  map[key].rejectReason = why;
+  setAccountsMap(map);
+  emitStoreChange();
+  const mailto = buyerRejectMailHref(map[key], why);
+  openMailto(mailto);
+  return { ok: true, mailto };
+}
+
+function getAllRfqs() {
+  const map = getRfqsMap();
+  const out = [];
+  Object.entries(map || {}).forEach(([buyerEmail, list]) => {
+    (Array.isArray(list) ? list : []).forEach((rfq) => out.push({ ...rfq, buyerEmail: rfq.buyerEmail || buyerEmail }));
+  });
+  return sortRfqsNewestFirst(out);
+}
+
+function persistAllRfqsTouched() {
+  /* getAllRfqs clones; patch via map */
+}
+
+function patchRfqById(id, fn) {
+  const map = getRfqsMap();
+  let found = null;
+  Object.keys(map || {}).forEach((key) => {
+    const list = Array.isArray(map[key]) ? map[key] : [];
+    const idx = list.findIndex((r) => r.id === id);
+    if (idx < 0) return;
+    list[idx] = fn(list[idx], key) || list[idx];
+    map[key] = list;
+    found = list[idx];
+  });
+  if (!found) return { ok: false, error: "missing" };
+  setRfqsMap(map);
+  emitStoreChange();
+  return { ok: true, rfq: found };
+}
+
+function inboxStatus(rfq) {
+  if (rfq?.cancelStatus === "accepted" || rfq?.reviewStatus === "cancelled") return "cancelled";
+  if (rfq?.reviewStatus === "rejected") return "no_offer";
+  if (rfq?.reviewStatus) return rfq.reviewStatus;
+  if (["accepted", "returned", "rejected", "reviewing", "received", "no_offer"].includes(rfq?.status)) {
+    return rfq.status === "rejected" ? "no_offer" : rfq.status;
+  }
+  return "received";
+}
+
+function rfqIsNoOffer(rfq) {
+  if (inboxStatus(rfq) === "no_offer") return true;
+  const lines = rfq?.lines || [];
+  return lines.length > 0 && lines.every((line) => line.noOffer);
+}
+
+function startRfqReview(id) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  return patchRfqById(id, (rfq) => {
+    const status = inboxStatus(rfq);
+    if (status === "accepted" || status === "quoted" || status === "no_offer" || status === "cancelled") return rfq;
+    return { ...rfq, reviewStatus: "reviewing", reviewingBy: gate.account.email };
+  });
+}
+
+function rfqBuyerKind(rfq) {
+  if (rfq?.buyerKind === "member" || rfq?.buyerKind === "guest") return rfq.buyerKind;
+  const email = normalizeEmail(rfq?.buyerEmail);
+  if (!email || email === GUEST_KEY || email === "guest@subbie.store" || email.startsWith("guest@")) return "guest";
+  return listBuyers().some((b) => normalizeEmail(b.email) === email) ? "member" : "guest";
+}
+
+/** Member marketplace RFQs + guest WhatsApp RFQs (dev-1 inbox when quotes are hidden). */
+function isDev1InboxRfq(rfq) {
+  if (!rfq?.id) return false;
+  const kind = rfqBuyerKind(rfq);
+  if (kind === "member") return true;
+  const channel = String(rfq.channel || "");
+  const status = String(rfq.status || "");
+  return kind === "guest" && (channel === "whatsapp" || status === "whatsapp_sent");
+}
+
+function setRfqLineQuotedPrice(id, productId, price) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const raw = price === "" || price == null ? null : Number(price);
+  const nextPrice = Number.isFinite(raw) && raw >= 0 ? raw : null;
+  return patchRfqById(id, (rfq) => ({
+    ...rfq,
+    lines: (rfq.lines || []).map((line) =>
+      String(line.productId) === String(productId) ? { ...line, quotedUnitPrice: nextPrice, noOffer: false } : line
+    ),
+  }));
+}
+
+function setRfqLineQty(id, productId, qty) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const nextQty = Math.max(1, Math.floor(Number(qty) || 1));
+  return patchRfqById(id, (rfq) => ({
+    ...rfq,
+    lines: (rfq.lines || []).map((line) =>
+      String(line.productId) === String(productId) ? { ...line, qty: nextQty } : line
+    ),
+  }));
+}
+
+function setRfqLineRemark(id, productId, remark) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  return patchRfqById(id, (rfq) => ({
+    ...rfq,
+    lines: (rfq.lines || []).map((line) =>
+      String(line.productId) === String(productId) ? { ...line, remark: String(remark || "") } : line
+    ),
+  }));
+}
+
+function setRfqLineNoOffer(id, productId, noOffer = true) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  return patchRfqById(id, (rfq) => {
+    const status = inboxStatus(rfq);
+    if (status === "cancelled") return rfq;
+    const lines = (rfq.lines || []).map((line) =>
+      String(line.productId) === String(productId)
+        ? { ...line, noOffer: Boolean(noOffer), quotedUnitPrice: Boolean(noOffer) ? null : line.quotedUnitPrice }
+        : line
+    );
+    const allNoOffer = lines.length > 0 && lines.every((line) => line.noOffer);
+    return {
+      ...rfq,
+      lines,
+      reviewStatus: allNoOffer ? "no_offer" : rfq.reviewStatus === "no_offer" ? "accepted" : rfq.reviewStatus,
+      reason: allNoOffer ? rfq.reason || "No offer" : rfq.reason,
+    };
+  });
+}
+
+function assignRfqToBuyer(id, buyerEmail) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const buyer = listBuyers().find((b) => normalizeEmail(b.email) === normalizeEmail(buyerEmail));
+  if (!buyer) return { ok: false, error: "missing_buyer" };
+  const map = getRfqsMap();
+  let found = null;
+  let fromKey = "";
+  Object.keys(map || {}).forEach((key) => {
+    const list = Array.isArray(map[key]) ? map[key] : [];
+    const idx = list.findIndex((r) => r.id === id);
+    if (idx < 0) return;
+    found = list[idx];
+    fromKey = key;
+    list.splice(idx, 1);
+    map[key] = list;
+  });
+  if (!found) return { ok: false, error: "missing" };
+  const dest = normalizeEmail(buyer.email);
+  const next = {
+    ...found,
+    buyerEmail: buyer.email,
+    buyerName: buyer.name || found.buyerName || "",
+    buyerKind: "member",
+    buyerPhone: found.buyerPhone || buyer.phone || "",
+    assignedFromGuest: Boolean(fromKey && fromKey !== dest),
+  };
+  map[dest] = [next, ...(Array.isArray(map[dest]) ? map[dest] : [])];
+  setRfqsMap(map);
+  emitStoreChange();
+  return { ok: true, rfq: next };
+}
+
+function setRfqBuyerPhone(id, phone) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const nextPhone = String(phone || "").trim();
+  const current = getAllRfqs().find((r) => r.id === id);
+  if (!current) return { ok: false, error: "missing" };
+  const email = normalizeEmail(current.buyerEmail);
+  const accounts = getAccountsMap();
+  if (email && accounts[email]) {
+    accounts[email] = { ...accounts[email], phone: nextPhone };
+    setAccountsMap(accounts);
+  }
+  return patchRfqById(id, (rfq) => ({ ...rfq, buyerPhone: nextPhone }));
+}
+
+function getQuoteSnapshots() {
+  const map = readJson(QUOTE_SNAPSHOTS_KEY, {});
+  return map && typeof map === "object" ? map : {};
+}
+
+function setQuoteSnapshots(map) {
+  writeJson(QUOTE_SNAPSHOTS_KEY, map && typeof map === "object" ? map : {});
+}
+
+function mergeQuoteSnapshots(incoming, existing) {
+  return {
+    ...(existing && typeof existing === "object" ? existing : {}),
+    ...(incoming && typeof incoming === "object" ? incoming : {}),
+  };
+}
+
+function newGuestQuoteToken() {
+  const rand = Math.random().toString(36).slice(2, 10);
+  return `${Date.now().toString(36)}${rand}`;
+}
+
+function snapshotLineImage(line) {
+  const image = String(line?.image || "").trim();
+  return image.startsWith("data:") ? "" : image;
+}
+
+function freezeQuoteLines(lines) {
+  return (lines || []).map((line) => {
+    const qty = Number(line.qty) || 0;
+    const unitPrice = line.noOffer
+      ? null
+      : Number(line.quotedUnitPrice) > 0
+        ? Number(line.quotedUnitPrice)
+        : null;
+    return {
+      productId: line.productId,
+      name: line.name || "",
+      productNo: line.productNo || "",
+      qty,
+      unit: line.unit || "",
+      quotedUnitPrice: unitPrice,
+      noOffer: Boolean(line.noOffer),
+      custom: Boolean(line.custom),
+      remark: String(line.remark || ""),
+      image: snapshotLineImage(line),
+      lineTotal: unitPrice != null ? unitPrice * qty : 0,
+    };
+  });
+}
+
+function freezeGuestQuotePayload(rfq) {
+  const lines = freezeQuoteLines(rfq?.lines);
+  const offerLines = lines.filter((line) => !line.noOffer && line.quotedUnitPrice != null);
+  const quotedSubtotal = offerLines.reduce((sum, line) => sum + line.lineTotal, 0);
+  return {
+    rfqId: rfq.id,
+    askKind: rfq.askKind === "buy" ? "buy" : "quote",
+    responseDate: rfq.responseDate || "",
+    quoteNote: String(rfq?.quoteNote || "").trim(),
+    lines,
+    quotedSubtotal,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+function quoteVersionList(rfq) {
+  return Array.isArray(rfq?.quoteVersions) ? rfq.quoteVersions : [];
+}
+
+function nextQuoteVersionNo(rfq) {
+  return quoteVersionList(rfq).reduce((max, row) => Math.max(max, Number(row?.version) || 0), 0) + 1;
+}
+
+function quoteEffectiveVersionNo(rfq) {
+  const listed = quoteVersionList(rfq);
+  const stored = Number(rfq?.quoteEffectiveVersion);
+  if (Number.isFinite(stored) && stored > 0 && listed.some((row) => Number(row.version) === stored)) return stored;
+  return listed.length ? Number(listed[listed.length - 1].version) || 0 : 0;
+}
+
+function getQuoteVersion(rfq, versionNo) {
+  const n = Number(versionNo);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return quoteVersionList(rfq).find((row) => Number(row.version) === n) || null;
+}
+
+function getEffectiveQuoteVersion(rfq) {
+  return getQuoteVersion(rfq, quoteEffectiveVersionNo(rfq));
+}
+
+function formatQuoteVersionStamp(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return String(iso).slice(0, 16).replace("T", " ");
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function formatQuoteVersionOption(version, { effectiveVersion, currentLabel = "Current" } = {}) {
+  if (!version) return "";
+  const current = Number(version.version) === Number(effectiveVersion) ? ` · ${currentLabel}` : "";
+  return `v${version.version} · ${formatQuoteVersionStamp(version.createdAt)}${current}`;
+}
+
+function quoteLineKey(line) {
+  return String(line?.productId ?? "");
+}
+
+function quoteLinePrice(line) {
+  if (line?.noOffer) return null;
+  const n = Number(line?.quotedUnitPrice);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function quoteLinesDiffer(liveLines, frozenLines) {
+  const frozen = new Map((frozenLines || []).map((line) => [quoteLineKey(line), line]));
+  const live = liveLines || [];
+  if (live.length !== (frozenLines || []).length) {
+    const liveKeys = new Set(live.map(quoteLineKey));
+    for (const key of frozen.keys()) {
+      if (!liveKeys.has(key)) return true;
+    }
+  }
+  for (const line of live) {
+    const other = frozen.get(quoteLineKey(line));
+    if (!other) return true;
+    if (Boolean(line.noOffer) !== Boolean(other.noOffer)) return true;
+    if (quoteLinePrice(line) !== quoteLinePrice(other)) return true;
+    if ((Number(line.qty) || 0) !== (Number(other.qty) || 0)) return true;
+    if (String(line.remark || "") !== String(other.remark || "")) return true;
+  }
+  return false;
+}
+
+function quoteDraftIsDirty(rfq) {
+  const effective = getEffectiveQuoteVersion(rfq);
+  if (!effective) return false;
+  return quoteLinesDiffer(rfq?.lines, effective.lines);
+}
+
+function rfqLinesForQuoteVersion(rfq, versionNo) {
+  const snap = getQuoteVersion(rfq, versionNo);
+  if (!snap) return rfq?.lines || [];
+  const frozenById = new Map((snap.lines || []).map((line) => [quoteLineKey(line), line]));
+  const seen = new Set();
+  const merged = (rfq?.lines || []).map((line) => {
+    const frozen = frozenById.get(quoteLineKey(line));
+    seen.add(quoteLineKey(line));
+    if (!frozen) return { ...line, quotedUnitPrice: null, noOffer: true };
+    return { ...line, ...frozen, image: line.image || frozen.image };
+  });
+  (snap.lines || []).forEach((frozen) => {
+    if (!seen.has(quoteLineKey(frozen))) merged.push(frozen);
+  });
+  return merged;
+}
+
+function persistQuoteSnapshot(rfqLike, token) {
+  const id = String(token || newGuestQuoteToken());
+  const snapshot = { token: id, ...freezeGuestQuotePayload(rfqLike) };
+  const map = getQuoteSnapshots();
+  map[id] = snapshot;
+  setQuoteSnapshots(map);
+  return snapshot;
+}
+
+function buildDeliveredQuoteVersion(rfq, { channel, token, lines, note, createdAt } = {}) {
+  const frozenLines = freezeQuoteLines(lines || rfq?.lines);
+  const quotedSubtotal = frozenLines
+    .filter((line) => !line.noOffer && line.quotedUnitPrice != null)
+    .reduce((sum, line) => sum + line.lineTotal, 0);
+  return {
+    version: nextQuoteVersionNo(rfq),
+    createdAt: createdAt || new Date().toISOString(),
+    channel: channel === "whatsapp" ? "whatsapp" : "marketplace",
+    token: token || "",
+    lines: frozenLines,
+    quotedSubtotal,
+    deadline: rfq?.responseDate || "",
+    quoteNote: String(note || rfq?.quoteNote || "").trim(),
+  };
+}
+
+function applyDeliveredQuoteVersion(rfq, version, extra = {}) {
+  return {
+    ...rfq,
+    quoteVersions: [...quoteVersionList(rfq), version],
+    quoteEffectiveVersion: version.version,
+    quotedSubtotal: version.quotedSubtotal,
+    ...extra,
+  };
+}
+
+function loadQuoteVersionIntoDraft(id, versionNo) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const current = getAllRfqs().find((r) => r.id === id);
+  if (!current) return { ok: false, error: "missing" };
+  const snap = getQuoteVersion(current, versionNo);
+  if (!snap) return { ok: false, error: "missing_version" };
+  return patchRfqById(id, (rfq) => {
+    const frozenById = new Map((snap.lines || []).map((line) => [quoteLineKey(line), line]));
+    return {
+      ...rfq,
+      quoteNote: snap.quoteNote || rfq.quoteNote,
+      lines: (rfq.lines || []).map((line) => {
+        const frozen = frozenById.get(quoteLineKey(line));
+        if (!frozen) return line;
+        return {
+          ...line,
+          qty: frozen.qty != null ? frozen.qty : line.qty,
+          quotedUnitPrice: frozen.quotedUnitPrice,
+          noOffer: Boolean(frozen.noOffer),
+          remark: frozen.remark != null ? frozen.remark : line.remark,
+        };
+      }),
+    };
+  });
+}
+
+function guestQuotePublicUrl(token, lang = "zh") {
+  const id = String(token || "").trim();
+  if (!id) return "";
+  const locale = lang === "zh" ? "zh" : "en";
+  return `${marketplaceOrigin()}/${locale}/quote/${encodeURIComponent(id)}`;
+}
+
+function guestQuoteWhatsappText(rfq, publicUrl) {
+  const lines = (rfq?.lines || []).filter((line) => !line.noOffer && Number(line.quotedUnitPrice) > 0);
+  const total = lines.reduce((sum, line) => sum + Number(line.quotedUnitPrice) * (Number(line.qty) || 0), 0);
+  const block = lines
+    .map((line, index) => {
+      const qty = Number(line.qty) || 0;
+      const unit = Number(line.quotedUnitPrice);
+      return `${index + 1}. ${line.name} × ${qty} · 單價 ${formatPrice(unit)} · 小計 ${formatPrice(unit * qty)}`;
+    })
+    .join("\n");
+  return [
+    "你好，以下為報價：",
+    `RFQ 編號：${rfq?.id || ""}`,
+    block,
+    `總計：${formatPrice(total)}`,
+    `報價期限：${rfq?.responseDate || "—"}`,
+    `查看報價：\n${publicUrl}`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function getGuestQuoteSnapshot(token) {
+  return getQuoteSnapshots()[String(token || "")] || null;
+}
+
+function snapshotQuotePdfItems(snapshot) {
+  return (snapshot?.lines || []).map((line, index) => ({
+    index: index + 1,
+    name: String(line.name || line.productId || "-").trim(),
+    sku: line.productNo || line.productId || "-",
+    qty: `${line.qty}${line.unit ? ` ${line.unit}` : ""}`,
+    price: line.noOffer ? "不報價" : line.quotedUnitPrice != null ? formatPrice(line.quotedUnitPrice) : "待報價",
+    spec: "",
+    attachments: "",
+    image: snapshotLineImage(line),
+  }));
+}
+
+function rfqQuotedOffline(rfq) {
+  return String(rfq?.quoteDelivery || "") === "whatsapp";
+}
+
+function rfqOfferLinesPriced(rfq) {
+  const lines = (rfq?.lines || []).filter((line) => !line.noOffer);
+  return Boolean(lines.length) && lines.every((line) => Number(line.quotedUnitPrice) > 0);
+}
+
+function rfqCanSendWhatsappQuote(rfq) {
+  const status = inboxStatus(rfq);
+  if (status !== "accepted" && status !== "quoted" && !rfqQuotedOffline(rfq)) {
+    return { ok: false, reason: "status" };
+  }
+  if (!rfqOfferLinesPriced(rfq)) return { ok: false, reason: "prices" };
+  if (!whatsappPhoneId(rfq?.buyerPhone)) return { ok: false, reason: "phone" };
+  return { ok: true };
+}
+
+function createGuestQuoteSnapshot(id) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const current = getAllRfqs().find((r) => r.id === id);
+  if (!current) return { ok: false, error: "missing" };
+  const ready = rfqCanSendWhatsappQuote(current);
+  if (!ready.ok) return { ok: false, error: ready.reason };
+  const token = newGuestQuoteToken();
+  const snapshot = { token, ...freezeGuestQuotePayload(current) };
+  const map = getQuoteSnapshots();
+  map[token] = snapshot;
+  setQuoteSnapshots(map);
+  const patched = patchRfqById(id, (rfq) => ({
+    ...rfq,
+    quotePublicToken: token,
+    quotePublicTokens: [...new Set([...(rfq.quotePublicTokens || []), token])],
+  }));
+  const url = guestQuotePublicUrl(token, "zh");
+  const href = buyerWhatsappHref(current.buyerPhone, guestQuoteWhatsappText(patched.rfq || current, url));
+  return { ...patched, token, snapshot, url, href };
+}
+
+function markGuestQuoteWhatsappSent(id) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const current = getAllRfqs().find((r) => r.id === id);
+  if (!current) return { ok: false, error: "missing" };
+  return patchRfqById(id, (rfq) => {
+    const sentAt = new Date().toISOString();
+    const token = String(rfq.quotePublicToken || "").trim();
+    const already = token && quoteVersionList(rfq).some((row) => row.token && row.token === token);
+    const base = {
+      ...rfq,
+      quoteDelivery: "whatsapp",
+      quoteDeliveredAt: sentAt,
+    };
+    if (already) return base;
+    const snapshot = token ? getGuestQuoteSnapshot(token) : null;
+    const version = snapshot
+      ? buildDeliveredQuoteVersion(rfq, {
+          channel: "whatsapp",
+          token,
+          lines: snapshot.lines,
+          note: snapshot.quoteNote,
+          createdAt: sentAt,
+        })
+      : buildDeliveredQuoteVersion(rfq, { channel: "whatsapp", token, createdAt: sentAt });
+    return applyDeliveredQuoteVersion(base, version);
+  });
+}
+
+function createBuyerPurchaseOrder(id, payload = {}) {
+  const user = getUser();
+  if (!user?.email) return { ok: false, error: "auth" };
+  const current = getRfq(id);
+  if (!current) return { ok: false, error: "missing" };
+  if (normalizeEmail(current.buyerEmail) !== normalizeEmail(user.email)) return { ok: false, error: "forbidden" };
+  const stamp = String(Date.now()).slice(-4);
+  const poId = payload.id || `PO-${String(id).replace(/^RFQ-?/i, "")}-${stamp}`;
+  const effective = getEffectiveQuoteVersion(current);
+  const versionLines = (effective?.lines || []).filter((line) => !line.noOffer && Number(line.quotedUnitPrice) > 0);
+  const poFromEffective = versionLines.length
+    ? versionLines.map((line) => ({
+        productId: line.productId,
+        name: line.name,
+        qty: line.qty,
+        supplierName: "Mattex",
+        lineTotal: line.lineTotal != null ? Number(line.lineTotal) : Number(line.quotedUnitPrice) * (Number(line.qty) || 0),
+      }))
+    : null;
+  return patchRfqById(id, (rfq) => ({
+    ...rfq,
+    buyerPo: {
+      id: poId,
+      createdAt: rfq.buyerPo?.createdAt || new Date().toISOString(),
+      confirmedAt: new Date().toISOString(),
+      lines: poFromEffective || (Array.isArray(payload.lines) ? payload.lines : rfq.buyerPo?.lines || []),
+      total: poFromEffective
+        ? Number(effective.quotedSubtotal) || poFromEffective.reduce((sum, line) => sum + (Number(line.lineTotal) || 0), 0)
+        : payload.total != null
+          ? Number(payload.total)
+          : rfq.buyerPo?.total || 0,
+      label: String(payload.label || rfq.buyerPo?.label || (effective ? `v${effective.version}` : "")).trim(),
+      status: "created",
+      quoteVersion: effective?.version || null,
+    },
+  }));
+}
+
+function quoteRfqToBuyer(id, { linePrices, note } = {}) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const current = getAllRfqs().find((r) => r.id === id);
+  if (!current) return { ok: false, error: "missing" };
+  if (rfqBuyerKind(current) !== "member") return { ok: false, error: "guest" };
+  const status = inboxStatus(current);
+  if (status === "no_offer" || status === "rejected") return { ok: false, error: "rejected" };
+  if (status === "cancelled" || current.cancelStatus === "requested") return { ok: false, error: "cancel" };
+  if (status !== "accepted" && status !== "quoted") return { ok: false, error: "not_accepted" };
+  const prices = linePrices || {};
+  const lines = (current.lines || []).map((l) => {
+    if (l.noOffer) return { ...l, quotedUnitPrice: null, noOffer: true };
+    const overlay = Object.prototype.hasOwnProperty.call(prices, String(l.productId))
+      ? prices[String(l.productId)]
+      : undefined;
+    const raw = overlay === undefined ? l.quotedUnitPrice : overlay;
+    const n = raw === "" || raw == null ? NaN : Number(raw);
+    return {
+      ...l,
+      quotedUnitPrice: Number.isFinite(n) && n > 0 ? n : null,
+    };
+  });
+  const offerLines = lines.filter((l) => !l.noOffer);
+  if (!offerLines.length || offerLines.some((l) => l.quotedUnitPrice == null)) return { ok: false, error: "prices" };
+  const quoteNote = String(note || "").trim();
+  const snapshot = persistQuoteSnapshot({ ...current, lines, quoteNote, responseDate: current.responseDate });
+  const sentAt = new Date().toISOString();
+  return patchRfqById(id, (rfq) => {
+    const version = buildDeliveredQuoteVersion(rfq, {
+      channel: "marketplace",
+      token: snapshot.token,
+      lines,
+      note: quoteNote,
+      createdAt: sentAt,
+    });
+    return applyDeliveredQuoteVersion(rfq, version, {
+      reviewStatus: "quoted",
+      quotedAt: sentAt,
+      quoteNote,
+      lines,
+    });
+  });
+}
+
+function decideRfq(id, { decision, reason } = {}) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const nextDecision = decision === "rejected" ? "no_offer" : decision;
+  if (nextDecision === "returned" && !String(reason || "").trim()) {
+    return { ok: false, error: "reason" };
+  }
+  return patchRfqById(id, (rfq) => {
+    const status = inboxStatus(rfq);
+    if (status === "cancelled") return rfq;
+    if (rfq.cancelStatus === "requested" && nextDecision === "accepted") return rfq;
+    if (nextDecision === "no_offer") {
+      if (status === "no_offer") return rfq;
+      return {
+        ...rfq,
+        reviewStatus: "no_offer",
+        reviewingBy: "",
+        reason: String(reason || "No offer").trim(),
+        lines: (rfq.lines || []).map((line) => ({ ...line, noOffer: true, quotedUnitPrice: null })),
+      };
+    }
+    if (status === "accepted" || status === "quoted" || status === "no_offer") return rfq;
+    return {
+      ...rfq,
+      reviewStatus: nextDecision,
+      reviewingBy: "",
+      reason: String(reason || "").trim(),
+    };
+  });
+}
+
+function requestRfqCancel(id) {
+  const user = getUser();
+  if (!user?.email) return { ok: false, error: "auth" };
+  const current = getAllRfqs().find((r) => r.id === id);
+  if (!current) return { ok: false, error: "missing" };
+  if (normalizeEmail(current.buyerEmail) !== normalizeEmail(user.email)) return { ok: false, error: "auth" };
+  const status = inboxStatus(current);
+  if (status === "accepted" || status === "no_offer" || status === "cancelled") return { ok: false, error: "locked" };
+  if (current.cancelStatus === "requested") return { ok: true, rfq: current };
+  return patchRfqById(id, (rfq) => ({
+    ...rfq,
+    cancelStatus: "requested",
+    cancelRequestedAt: new Date().toISOString(),
+  }));
+}
+
+function decideRfqCancel(id, { accept } = {}) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  return patchRfqById(id, (rfq) => {
+    if (rfq.cancelStatus !== "requested") return rfq;
+    if (accept) {
+      return {
+        ...rfq,
+        cancelStatus: "accepted",
+        reviewStatus: "cancelled",
+        cancelledAt: new Date().toISOString(),
+        cancelledBy: gate.account.email,
+      };
+    }
+    return {
+      ...rfq,
+      cancelStatus: "declined",
+      cancelDeclinedAt: new Date().toISOString(),
+    };
+  });
+}
+
+function appOrigin() {
+  return marketplaceOrigin();
+}
+
+function rfqDetailsHref(rfq, lang = "en") {
+  const id = rfq?.id || "";
+  if (!id) return "";
+  const locale = lang === "zh" ? "zh" : "en";
+  return `${marketplaceOrigin()}/${locale}/rfqs?id=${encodeURIComponent(id)}`;
+}
+
+function rfqAdminHref(rfq) {
+  const id = rfq?.id || "";
+  if (!id) return "";
+  return `${adminOrigin()}/?rfq=${encodeURIComponent(id)}`;
+}
+
+function rfqDiscussWhatsappText(rfq, lang = "en") {
+  const id = rfq?.id || "";
+  const admin = rfqAdminHref(rfq);
+  const buyer = rfqDetailsHref(rfq, lang);
+  if (lang === "zh") {
+    return [
+      `你好，我想查詢／討論 ${id}。請喺 Sales portal 跟進同一張 RFQ。`,
+      admin ? `Sales portal：${admin}` : "",
+      buyer ? `Marketplace（買家檢視）：${buyer}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+  return [
+    `Hi Mattex, I would like to discuss ${id}. Please follow up the same RFQ in the Sales portal.`,
+    admin ? `Sales portal: ${admin}` : "",
+    buyer ? `Marketplace (buyer view): ${buyer}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function rfqDiscussEmailHref(rfq, lang = "en") {
+  const id = rfq?.id || "";
+  const subject = lang === "zh" ? `查詢 ${id}` : `Discuss ${id}`;
+  return `mailto:${SALES_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(rfqDiscussWhatsappText(rfq, lang))}`;
+}
+
+function uploadRfqToTms(id, { fail, whatsappPdfName, tms } = {}) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  return patchRfqById(id, (rfq) => {
+    const status = inboxStatus(rfq);
+    if (status !== "accepted" && status !== "quoted") return rfq;
+    if (fail) {
+      return {
+        ...rfq,
+        lastTmsError: fail === true ? "simulated TMS failure" : String(fail),
+        whatsappPdfName: whatsappPdfName || rfq.whatsappPdfName || "",
+      };
+    }
+    return {
+      ...rfq,
+      lastTmsError: "",
+      tmsOpenedAt: new Date().toISOString(),
+      tmsId: tms?.id || rfq.tmsId || "",
+      tmsDocumentNo: tms?.documentNo || rfq.tmsDocumentNo || "",
+      tmsUrl: tms?.url || rfq.tmsUrl || "",
+      whatsappPdfName: tms?.fileName || whatsappPdfName || rfq.whatsappPdfName || "",
+      tmsPayload: {
+        model: "inbound_request_for_quotes",
+        source: "mattex-marketplace",
+        rfqId: rfq.id,
+        tmsId: tms?.id || rfq.tmsId || "",
+        documentNo: tms?.documentNo || rfq.tmsDocumentNo || "",
+        buyerEmail: rfq.buyerEmail,
+        buyerName: rfq.buyerName,
+        project: rfq.project || "",
+        address: rfq.address || "",
+        channel: rfq.channel || "rfq",
+        askKind: rfq.askKind || "quote",
+        lines: rfq.lines,
+        whatsappPdfName: tms?.fileName || whatsappPdfName || rfq.whatsappPdfName || "",
+      },
+    };
+  });
+}
+
+function resubmitRfq(id, lines) {
+  const email = currentEmail();
+  if (!email) return { ok: false, error: "auth" };
+  return patchRfqById(id, (rfq, owner) => {
+    if (normalizeEmail(owner) !== email && rfq.buyerEmail !== email) return rfq;
+    if (inboxStatus(rfq) !== "returned") return rfq;
+    return {
+      ...rfq,
+      reviewStatus: "received",
+      reviewingBy: "",
+      lines: Array.isArray(lines) && lines.length ? lines : rfq.lines,
+    };
+  });
+}
+
+function buyerRfqDetailsLocked(rfq) {
+  const status = inboxStatus(rfq);
+  if (["accepted", "quoted", "no_offer", "cancelled"].includes(status)) return true;
+  if (rfq?.cancelStatus === "requested" || rfq?.cancelStatus === "accepted") return true;
+  return false;
+}
+
+function lineMoq(line) {
+  if (line?.custom) return 1;
+  const fromLine = Number(line?.moq);
+  if (Number.isFinite(fromLine) && fromLine > 0) return Math.max(1, fromLine);
+  const product = line?.productId ? getProduct(line.productId) : null;
+  return Math.max(1, Number(product?.moq) || 1);
+}
+
+function updateBuyerRfqDetails(id, patch = {}) {
+  const user = getUser();
+  if (!user?.email) return { ok: false, error: "auth" };
+  const current = getAllRfqs().find((r) => r.id === id);
+  if (!current) return { ok: false, error: "missing" };
+  if (normalizeEmail(current.buyerEmail) !== normalizeEmail(user.email)) return { ok: false, error: "auth" };
+  if (buyerRfqDetailsLocked(current)) return { ok: false, error: "locked" };
+  return patchRfqById(id, (rfq) => {
+    let nextLines = Array.isArray(rfq.lines) ? rfq.lines.slice() : [];
+    const removeIds = new Set((patch.removeProductIds || []).map(String));
+    if (removeIds.size) {
+      nextLines = nextLines.filter((line) => !removeIds.has(String(line.productId)));
+      if (!nextLines.length) return rfq;
+    }
+    if (Array.isArray(patch.lines)) {
+      nextLines = nextLines.map((line) => {
+        const overlay = patch.lines.find((row) => String(row.productId) === String(line.productId));
+        if (!overlay) return line;
+        const qty = overlay.qty != null ? Math.max(1, Math.floor(Number(overlay.qty) || 1)) : line.qty;
+        return {
+          ...line,
+          qty,
+          remark: overlay.remark != null ? String(overlay.remark) : line.remark,
+        };
+      });
+    }
+    return {
+      ...rfq,
+      note: patch.note != null ? String(patch.note) : rfq.note,
+      address: patch.address != null ? String(patch.address).trim() : rfq.address,
+      responseDate: patch.responseDate != null ? String(patch.responseDate).trim() : rfq.responseDate,
+      quotationDeadline: patch.responseDate != null ? String(patch.responseDate).trim() : rfq.quotationDeadline,
+      deliveryDate: patch.deliveryDate != null ? String(patch.deliveryDate).trim() : rfq.deliveryDate,
+      lines: nextLines,
+    };
+  });
+}
+
+function adminFollowUpWhatsapp(rfq) {
+  if (typeof window === "undefined") return { ok: false, error: "window" };
+  const account = getAccount(rfq?.buyerEmail);
+  const phone = rfq?.buyerPhone || account?.phone || "";
+  const href = buyerWhatsappHref(phone);
+  if (!href) return { ok: false, error: "phone" };
+  const text =
+    `Follow-up on ${rfq?.id || "RFQ"} from Mattex Marketplace.` +
+    (rfqAdminHref(rfq) ? `\nPortal: ${rfqAdminHref(rfq)}` : "");
+  window.open(`${href}?text=${encodeURIComponent(text)}`, "_blank", "noopener,noreferrer");
+  return { ok: true };
+}
+
+function getReports() {
+  return sortByNewest(readJson(REPORTS_KEY, []), (report) => report?.createdAt || report?.id);
+}
+
+function createProductReport({ productId, type, text, evidence }) {
+  const user = getUser();
+  const staff = getStaffSession();
+  if (!user && !staff) return { ok: false, error: "auth" };
+  const product = getProduct(productId);
+  if (!product || !product.published || product.deleted) return { ok: false, error: "product" };
+  if (!["圖片不對", "資料不對", "其他"].includes(type)) return { ok: false, error: "type" };
+  if (!String(text || "").trim()) return { ok: false, error: "text" };
+  const seq = Number(localStorage.getItem(REPORT_SEQ_KEY) || "20") + 1;
+  localStorage.setItem(REPORT_SEQ_KEY, String(seq));
+  persistShared(REPORT_SEQ_KEY, seq);
+  const report = {
+    id: `RPT-${seq}`,
+    productId: product.id,
+    productNo: product.productNo,
+    type,
+    text: String(text).trim(),
+    evidence: String(evidence || ""),
+    status: "open",
+    lookingBy: "",
+    filerEmail: (user || staff).email,
+    filerRole: staff && !user ? "sales" : "buyer",
+    createdAt: new Date().toISOString(),
+  };
+  const list = getReports();
+  list.unshift(report);
+  writeJson(REPORTS_KEY, list);
+  emitStoreChange();
+  return { ok: true, report };
+}
+
+function lookProductReport(id) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const list = getReports();
+  const r = list.find((x) => x.id === id);
+  if (!r || r.status === "dismissed" || r.status === "fixed") return { ok: false, error: "missing" };
+  r.status = "looking";
+  r.lookingBy = gate.account.email;
+  writeJson(REPORTS_KEY, list);
+  emitStoreChange();
+  return { ok: true };
+}
+
+function dismissProductReport(id) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const list = getReports();
+  const r = list.find((x) => x.id === id);
+  if (!r) return { ok: false, error: "missing" };
+  r.status = "dismissed";
+  r.lookingBy = "";
+  writeJson(REPORTS_KEY, list);
+  emitStoreChange();
+  return { ok: true };
+}
+
+function fixProductReport(id, { hold, markChain, patch, note, unpublish } = {}) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const list = getReports();
+  const r = list.find((x) => x.id === id);
+  if (!r) return { ok: false, error: "missing" };
+  const product = getProduct(r.productId) || PRODUCTS.find((p) => p.productNo === r.productNo);
+  if (product) {
+    if (hold || unpublish) {
+      product.published = false;
+      product.held = false;
+    }
+    if (markChain) product.needsChainImage = true;
+    if (patch) Object.assign(product, patch);
+    persistProductPatches();
+  }
+  r.status = "fixed";
+  r.lookingBy = "";
+  r.fixNote = note || "";
+  writeJson(REPORTS_KEY, list);
+  emitStoreChange();
+  return { ok: true, product };
+}
+
+function persistProductPatches() {
+  const created = PRODUCTS.filter((p) => String(p.id || "").startsWith("p-new-") || String(p.id || "").startsWith("p-xls-"));
+  const patches = {};
+  PRODUCTS.forEach((p) => {
+    patches[p.id] = {
+      published: p.published,
+      held: p.held,
+      deleted: p.deleted,
+      productNo: p.productNo,
+      provisionalSku: p.provisionalSku,
+      name: p.name,
+      category: p.category,
+      sizeDesc: p.sizeDesc,
+      certifications: p.certifications,
+      primarySpec: p.primarySpec,
+      salesUnit: p.salesUnit,
+      unit: p.salesUnit || p.unit,
+      moq: p.moq,
+      leadTime: p.leadTime,
+      leadTimeLabel: p.leadTimeLabel || "",
+      purposes: p.purposes,
+      remark: p.remark,
+      green: p.green,
+      hit: p.hit,
+      tailorMade: p.tailorMade,
+      image: p.image,
+      imageSource: p.imageSource,
+      needsChainImage: p.needsChainImage,
+      discontinued: p.discontinued,
+      createdAt: p.createdAt || 0,
+    };
+  });
+  patches.__created = created;
+  writeJson(PRODUCT_PATCH_KEY, patches);
+}
+
+function applySavedProductPatches() {
+  const patches = readJson(PRODUCT_PATCH_KEY, {});
+  PRODUCTS.forEach((p) => {
+    if (patches[p.id]) Object.assign(p, normalizeProductRecord({ ...p, ...patches[p.id] }));
+  });
+  (patches.__created || []).forEach((row) => {
+    if (!PRODUCTS.some((p) => p.id === row.id)) PRODUCTS.push(normalizeProductRecord(row));
+  });
+}
+
+function nextTmpSku() {
+  const seq = Number(localStorage.getItem(TMP_SEQ_KEY) || "100") + 1;
+  localStorage.setItem(TMP_SEQ_KEY, String(seq));
+  persistShared(TMP_SEQ_KEY, seq);
+  return `TMP-${String(seq).padStart(4, "0")}`;
+}
+
+function createAdminProduct(fields) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  if (!String(fields.name || "").trim()) return { ok: false, error: "name" };
+  const category = matchAdminCategory(fields.category);
+  if (!category) return { ok: false, error: "category" };
+  const tmp = nextTmpSku();
+  const product = normalizeProductRecord({
+    id: `p-new-${tmp.toLowerCase()}`,
+    provisionalSku: tmp,
+    productNo: String(fields.productNo || "").trim(),
+    category,
+    name: String(fields.name).trim(),
+    sizeDesc: fields.sizeDesc || "",
+    certifications: fields.certifications || "",
+    primarySpec: fields.primarySpec || "",
+    salesUnit: fields.salesUnit || fields.unit || "",
+    unit: fields.salesUnit || fields.unit || "",
+    moq: fields.moq === "" || fields.moq == null ? "" : Number(fields.moq),
+    leadTime: typeof fields.leadTime === "string"
+      ? (String(fields.leadTime).trim() ? { min: 7, max: 7 } : null)
+      : fields.leadTime || null,
+    leadTimeLabel: typeof fields.leadTime === "string" ? String(fields.leadTime).trim() : "",
+    purposes: Array.isArray(fields.purposes)
+      ? fields.purposes
+      : String(fields.purposes || "").split(/[\n,;]+/).map((s) => s.trim()).filter(Boolean),
+    remark: fields.remark || "",
+    green: Boolean(fields.green),
+    hit: Boolean(fields.hit),
+    tailorMade: Boolean(fields.tailorMade),
+    image: fields.image || "",
+    imageSource: fields.image ? (fields.imageSource || "upload") : "generated",
+    supplier: "Mattex",
+    specs: [],
+    published: false,
+    description: fields.sizeDesc || "",
+    standard: fields.certifications || "",
+    createdAt: Date.now() + (Number(String(tmp).replace(/\D/g, "")) || 0),
+  });
+  PRODUCTS.push(product);
+  persistProductPatches();
+  emitStoreChange();
+  return { ok: true, product };
+}
+
+function updateAdminProduct(id, fields) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const product = PRODUCTS.find((p) => p.id === id);
+  if (!product || product.deleted) return { ok: false, error: "missing" };
+  if (fields.category && !matchAdminCategory(fields.category)) return { ok: false, error: "category" };
+  Object.assign(product, {
+    ...fields,
+    category: fields.category ? matchAdminCategory(fields.category) : product.category,
+    purposes: fields.purposes == null
+      ? product.purposes
+      : Array.isArray(fields.purposes)
+        ? fields.purposes
+        : String(fields.purposes).split(/[\n,;]+/).map((s) => s.trim()).filter(Boolean),
+    unit: fields.salesUnit || fields.unit || product.unit,
+    leadTimeLabel: typeof fields.leadTime === "string" ? String(fields.leadTime).trim() : product.leadTimeLabel,
+    leadTime: typeof fields.leadTime === "string"
+      ? (String(fields.leadTime).trim() ? product.leadTime || { min: 7, max: 7 } : null)
+      : (fields.leadTime == null ? product.leadTime : fields.leadTime),
+    green: Boolean(fields.green),
+    hit: Boolean(fields.hit),
+    tailorMade: Boolean(fields.tailorMade),
+    image: fields.image == null ? product.image : fields.image,
+    imageSource: fields.image
+      ? (fields.imageSource || "upload")
+      : fields.image === ""
+        ? "generated"
+        : product.imageSource,
+  });
+  persistProductPatches();
+  emitStoreChange();
+  return { ok: true, product };
+}
+
+function productSkuId(product) {
+  return String(product?.productNo || product?.provisionalSku || "").trim();
+}
+
+function productOfficialSku(product) {
+  return String(product?.productNo || "").trim();
+}
+
+const PUBLISH_HARD_KEYS = ["officialSku", "name", "unit", "category", "duplicateSku"];
+const PUBLISH_WARN_KEYS = ["moq", "lead"];
+
+function publishBlockers(product) {
+  const reasons = [];
+  if (!productOfficialSku(product)) reasons.push("officialSku");
+  if (!String(product?.category || "").trim()) reasons.push("category");
+  if (!String(product?.name || "").trim()) reasons.push("name");
+  if (!String(product?.salesUnit || product?.unit || "").trim()) reasons.push("unit");
+  if (product?.moq == null || product?.moq === "") reasons.push("moq");
+  const lead = product?.leadTime;
+  if (!lead && !product?.leadTimeLabel) reasons.push("lead");
+  const sku = productOfficialSku(product).toUpperCase();
+  if (sku && PRODUCTS.some((o) => o.id !== product.id && !o.deleted && productOfficialSku(o).toUpperCase() === sku)) {
+    reasons.push("duplicateSku");
+  }
+  return reasons;
+}
+
+function publishHardBlockers(product) {
+  return publishBlockers(product).filter((key) => PUBLISH_HARD_KEYS.includes(key));
+}
+
+function publishWarnBlockers(product) {
+  return publishBlockers(product).filter((key) => PUBLISH_WARN_KEYS.includes(key));
+}
+
+/** Published = live. Unpublish = complete but not live. Draft = incomplete. Soft deleted is never live. */
+function productCatalogStatus(product) {
+  if (!product || product.deleted) return "deleted";
+  if (product.published && !product.held) return "published";
+  if (publishBlockers(product).length === 0) return "unpublished";
+  return "draft";
+}
+
+function publishAdminProduct(id) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const product = PRODUCTS.find((p) => p.id === id);
+  if (!product) return { ok: false, error: "missing" };
+  if (product.deleted) return { ok: false, error: "deleted" };
+  const blockers = publishHardBlockers(product);
+  if (blockers.length) return { ok: false, error: "publish", blockers };
+  product.published = true;
+  product.held = false;
+  product.deleted = false;
+  persistProductPatches();
+  emitStoreChange();
+  return { ok: true, product };
+}
+
+function restoreAdminProduct(id) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const product = PRODUCTS.find((p) => p.id === id);
+  if (!product) return { ok: false, error: "missing" };
+  if (!product.deleted) return { ok: false, error: "not_deleted" };
+  product.deleted = false;
+  product.published = false;
+  product.held = false;
+  persistProductPatches();
+  emitStoreChange();
+  return { ok: true, product };
+}
+
+function unpublishAdminProduct(id) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const product = PRODUCTS.find((p) => p.id === id);
+  if (!product || product.deleted) return { ok: false, error: "missing" };
+  if (!product.published) return { ok: false, error: "not_live" };
+  product.published = false;
+  product.held = false;
+  persistProductPatches();
+  emitStoreChange();
+  return { ok: true, product };
+}
+
+function holdAdminProduct(id, held) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const product = PRODUCTS.find((p) => p.id === id);
+  if (!product || product.deleted) return { ok: false, error: "missing" };
+  product.held = false;
+  if (held) product.published = false;
+  persistProductPatches();
+  emitStoreChange();
+  return { ok: true, product };
+}
+
+function migrateHeldProductsToDraft() {
+  let changed = false;
+  PRODUCTS.forEach((p) => {
+    if (p.held && !p.deleted) {
+      p.held = false;
+      p.published = false;
+      changed = true;
+    }
+  });
+  if (changed) persistProductPatches();
+}
+
+function softDeleteAdminProduct(id) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const product = PRODUCTS.find((p) => p.id === id);
+  if (!product) return { ok: false, error: "missing" };
+  product.deleted = true;
+  product.published = false;
+  product.held = false;
+  persistProductPatches();
+  emitStoreChange();
+  return { ok: true, product };
+}
+
+function isAdminCreatedProduct(p) {
+  const id = String(p.id || "");
+  return id.startsWith("p-new-") || id.startsWith("p-xls-");
+}
+
+function adminProductCreatedAt(p) {
+  const stamped = Number(p?.createdAt);
+  if (Number.isFinite(stamped) && stamped > 0) return stamped;
+  if (!isAdminCreatedProduct(p)) return 0;
+  const digits = String(p.provisionalSku || p.id || "").match(/(\d+)\s*$/);
+  return digits ? Number(digits[1]) : 1;
+}
+
+function listAdminProducts() {
+  migrateHeldProductsToDraft();
+  const index = new Map(PRODUCTS.map((p, i) => [p.id, i]));
+  return PRODUCTS.slice().sort((a, b) => {
+    const createdDiff = adminProductCreatedAt(b) - adminProductCreatedAt(a);
+    if (createdDiff) return createdDiff;
+    return (index.get(a.id) ?? 0) - (index.get(b.id) ?? 0);
+  });
+}
+
+function importAdminCsv(csv) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const parsed = parseAdminCsv(csv);
+  const results = [];
+  parsed.rows.forEach((row) => {
+    const name = String(row.name || "").trim();
+    const cat = matchAdminCategory(row.category);
+    if (!name || !cat) {
+      results.push({ line: row._line, ok: false, msg: !name ? "Missing product name" : `Unknown category: ${row.category}` });
+      return;
+    }
+    const sku = String(row.productNo || "").trim();
+    const tmp = String(row.provisionalSku || "").trim();
+    let p = sku ? PRODUCTS.find((x) => String(x.productNo || "").toUpperCase() === sku.toUpperCase()) : null;
+    if (!p && tmp) p = PRODUCTS.find((x) => x.provisionalSku === tmp || x.id === tmp);
+    const tags = String(row.tags || "").toLowerCase();
+    const purposes = String(row.purposes || "").split(/[\n,;]+/).map((s) => s.trim()).filter(Boolean);
+    const imgRaw = String(row.image || "").trim();
+    const imgIsGen = !imgRaw || /^gen/i.test(imgRaw);
+    if (!p) {
+      const created = createAdminProduct({
+        name,
+        category: cat,
+        productNo: sku,
+        sizeDesc: row.sizeDesc,
+        certifications: row.certifications,
+        primarySpec: row.primarySpec,
+        salesUnit: row.salesUnit,
+        moq: row.moq,
+        leadTime: row.leadTime,
+        purposes,
+        remark: row.remark,
+        green: /green|綠/.test(tags),
+        hit: /hit|熱/.test(tags),
+        tailorMade: /tailor|訂製|定制/.test(tags),
+        image: imgIsGen ? "" : imgRaw,
+      });
+      if (created.ok && tmp) created.product.provisionalSku = tmp;
+      results.push({ line: row._line, ok: true, msg: `Draft ${name}` });
+      return;
+    }
+    if (p.deleted) {
+      p.deleted = false;
+      p.published = false;
+      p.held = false;
+    }
+    p.category = cat;
+    p.name = name;
+    if (sku) p.productNo = sku;
+    if (row.sizeDesc != null) p.sizeDesc = row.sizeDesc;
+    if (row.certifications != null) p.certifications = row.certifications;
+    if (row.primarySpec != null) p.primarySpec = row.primarySpec;
+    if (row.salesUnit) {
+      p.salesUnit = row.salesUnit;
+      p.unit = row.salesUnit;
+    }
+    if (row.moq !== "" && row.moq != null) p.moq = Number(row.moq);
+    if (row.leadTime) p.leadTimeLabel = row.leadTime;
+    if (purposes.length) p.purposes = purposes;
+    if (row.remark != null) p.remark = row.remark;
+    if (String(row.tags || "").trim()) {
+      p.green = /green|綠/.test(tags);
+      p.hit = /hit|熱/.test(tags);
+      p.tailorMade = /tailor|訂製|定制/.test(tags);
+    }
+    const officialImg = p.imageSource === "upload" || p.imageSource === "chain";
+    if (!imgIsGen) {
+      p.image = imgRaw;
+      p.imageSource = "upload";
+    } else if (!officialImg) {
+      p.imageSource = "generated";
+    }
+    results.push({ line: row._line, ok: true, msg: p.published ? `Updated live ${p.productNo}` : `Updated draft` });
+  });
+  persistProductPatches();
+  emitStoreChange();
+  return { ok: true, results };
+}
+
+function parseAdminCsv(text) {
+  const map = {
+    "provisional sku id": "provisionalSku",
+    "official sku": "productNo",
+    "category": "category",
+    "img (gen)": "image",
+    "product name": "name",
+    "size / description": "sizeDesc",
+    "certifications / relevant reports": "certifications",
+    "primary spec description": "primarySpec",
+    "sales unit": "salesUnit",
+    "moq": "moq",
+    "lead time": "leadTime",
+    "purposes (indicator for searching)": "purposes",
+    "remark": "remark",
+    "tag (green / hit)": "tags",
+    "tag (green / hit / tailor made)": "tags",
+  };
+  const lines = String(text || "").replace(/^\uFEFF/, "").split(/\r?\n/).filter((l) => l.trim());
+  if (!lines.length) return { rows: [] };
+  const headers = splitCsvLine(lines[0]);
+  const rows = lines.slice(1).map((line, idx) => {
+    const cells = splitCsvLine(line);
+    const rec = { _line: idx + 2 };
+    headers.forEach((h, i) => {
+      const key = map[h.trim().toLowerCase()];
+      if (key) rec[key] = cells[i] || "";
+    });
+    return rec;
+  });
+  return { rows };
+}
+
+function splitCsvLine(line) {
+  const out = [];
+  let cur = "";
+  let q = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (q) {
+      if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; }
+      else if (ch === '"') q = false;
+      else cur += ch;
+    } else if (ch === '"') q = true;
+    else if (ch === ",") { out.push(cur); cur = ""; }
+    else cur += ch;
+  }
+  out.push(cur);
+  return out.map((s) => s.trim());
+}
+
+function adminCsvTemplate() {
+  return [
+    "Provisional SKU ID",
+    "Official SKU",
+    "Category",
+    "IMG (Gen)",
+    "Product name",
+    "Size / Description",
+    "Certifications / Relevant Reports",
+    "Primary Spec Description",
+    "Sales Unit",
+    "MOQ",
+    "Lead Time",
+    "Purposes (Indicator for Searching)",
+    "Remark",
+    "Tag (Green / Hit / Tailor Made)",
+  ].join(",") + "\n";
+}
+
+const PRIVATE_STORE_KEYS = new Set([AUTH_KEY, STAFF_AUTH_KEY, AUTH_INVITE_HIDE_KEY, "subbie_lang", DRAFTS_KEY]);
+let sharedStoreRev = -1;
+let sharedStoreTimer = 0;
+let sharedPostChain = Promise.resolve();
+
+function stripSharedDataUrl(value) {
+  const text = String(value || "");
+  return text.startsWith("data:") ? "" : value;
+}
+
+function leanSharedAttachment(item) {
+  if (typeof item === "string") return item.startsWith("data:") ? { name: "attachment", omitted: true } : item;
+  if (!item || typeof item !== "object") return item;
+  const url = item.url || item.data || item.src || "";
+  if (String(url).startsWith("data:")) {
+    return { ...item, url: "", data: "", src: "", omitted: true, name: item.name || "attachment" };
+  }
+  return item;
+}
+
+function leanSharedRfq(rfq) {
+  if (!rfq || typeof rfq !== "object") return rfq;
+  return {
+    ...rfq,
+    lines: (rfq.lines || []).map((line) => ({
+      ...line,
+      image: stripSharedDataUrl(line?.image),
+      attachments: Array.isArray(line?.attachments) ? line.attachments.map(leanSharedAttachment) : line?.attachments,
+    })),
+  };
+}
+
+function leanSharedRfqsMap(map) {
+  const out = {};
+  Object.entries(map && typeof map === "object" ? map : {}).forEach(([key, list]) => {
+    out[key] = (Array.isArray(list) ? list : []).map(leanSharedRfq);
+  });
+  return out;
+}
+
+function enqueueSharedPost(body) {
+  if (typeof fetch === "undefined") return Promise.resolve();
+  sharedPostChain = sharedPostChain
+    .then(() =>
+      fetch("/api/shared-store", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data?.rev != null) sharedStoreRev = Number(data.rev) || sharedStoreRev;
+        })
+    )
+    .catch(() => {});
+  return sharedPostChain;
+}
+
+function persistShared(key, value) {
+  if (typeof fetch === "undefined") return;
+  if (PRIVATE_STORE_KEYS.has(key)) return;
+  const payload = key === RFQS_KEY ? leanSharedRfqsMap(value) : value;
+  enqueueSharedPost({ key, value: payload });
+}
+
+function persistSharedRfq(buyerKey, rfq) {
+  if (!rfq?.id) return;
+  enqueueSharedPost({
+    upsertRfq: true,
+    buyerKey: buyerKey || GUEST_KEY,
+    rfq: leanSharedRfq(rfq),
+  });
+}
+
+function dumpLocalSharedKv() {
+  const keys = [
+    ACCOUNTS_KEY,
+    RFQS_KEY,
+    QUOTE_SNAPSHOTS_KEY,
+    SEQ_KEY,
+    REPORTS_KEY,
+    REPORT_SEQ_KEY,
+    ADMIN_ALERTS_KEY,
+    PRODUCT_PATCH_KEY,
+    CUSTOM_CATEGORIES_KEY,
+    CATEGORY_ADMIN_KEY,
+    TMP_SEQ_KEY,
+    STAFF_KEY,
+    TMS_SEQ_KEY,
+  ];
+  const kv = {};
+  keys.forEach((key) => {
+    if (key === SEQ_KEY || key === REPORT_SEQ_KEY || key === TMP_SEQ_KEY || key === TMS_SEQ_KEY) {
+      const n = Number(localStorage.getItem(key) || 0);
+      if (n) kv[key] = n;
+      return;
+    }
+    const raw = localStorage.getItem(key);
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw);
+      kv[key] = key === RFQS_KEY ? leanSharedRfqsMap(parsed) : parsed;
+    } catch {
+      /* skip */
+    }
+  });
+  return kv;
+}
+
+function applySharedStore(kv) {
+  if (!kv || typeof kv !== "object") return false;
+  let changed = false;
+  Object.entries(kv).forEach(([key, value]) => {
+    if (PRIVATE_STORE_KEYS.has(key)) return;
+    if (key === SEQ_KEY || key === REPORT_SEQ_KEY || key === TMP_SEQ_KEY || key === TMS_SEQ_KEY) {
+      const remote = Number(value) || 0;
+      const local = Number(localStorage.getItem(key) || 0);
+      if (remote > local) {
+        localStorage.setItem(key, String(remote));
+        changed = true;
+      }
+      return;
+    }
+    if (key === RFQS_KEY) {
+      const merged = mergeRfqMaps(readJson(RFQS_KEY, {}), value || {});
+      if (JSON.stringify(merged) !== JSON.stringify(readJson(RFQS_KEY, {}))) {
+        writeLocalOnly(RFQS_KEY, merged);
+        changed = true;
+      }
+      return;
+    }
+    if (key === QUOTE_SNAPSHOTS_KEY) {
+      const merged = mergeQuoteSnapshots(value || {}, getQuoteSnapshots());
+      if (JSON.stringify(merged) !== JSON.stringify(getQuoteSnapshots())) {
+        writeLocalOnly(QUOTE_SNAPSHOTS_KEY, merged);
+        changed = true;
+      }
+      return;
+    }
+    if (key === DRAFTS_KEY) {
+      const merged = mergeDraftMaps(readJson(DRAFTS_KEY, {}), value || {});
+      if (JSON.stringify(merged) !== JSON.stringify(readJson(DRAFTS_KEY, {}))) {
+        writeLocalOnly(DRAFTS_KEY, merged);
+        changed = true;
+      }
+      return;
+    }
+    const nextRaw = JSON.stringify(value);
+    if (nextRaw !== localStorage.getItem(key)) {
+      writeLocalOnly(key, value);
+      if (key === PRODUCT_PATCH_KEY) applySavedProductPatches();
+      changed = true;
+    }
+  });
+  if (changed) emitStoreChange();
+  return changed;
+}
+
+async function pullSharedStore({ bootstrap = false } = {}) {
+  try {
+    const res = await fetch("/api/shared-store");
+    if (!res.ok) return;
+    const data = await res.json();
+    const rev = Number(data?.rev) || 0;
+    if (bootstrap) {
+      if (data?.kv && Object.keys(data.kv).length) applySharedStore(data.kv);
+      const localKv = dumpLocalSharedKv();
+      if (Object.keys(localKv).length) {
+        await fetch("/api/shared-store", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ kv: localKv, bootstrap: true }),
+        });
+      }
+      sharedStoreRev = rev;
+      return;
+    }
+    if (rev === sharedStoreRev) return;
+    applySharedStore(data.kv);
+    sharedStoreRev = rev;
+  } catch {
+    /* ignore */
+  }
+}
+
+function startSharedStoreSync() {
+  if (typeof window === "undefined") return;
+  pullSharedStore({ bootstrap: true });
+  window.clearInterval(sharedStoreTimer);
+  sharedStoreTimer = window.setInterval(() => pullSharedStore(), 1000);
+}
+
+applySavedProductPatches();
 
 export {
   PRODUCTS,
@@ -2455,6 +5041,8 @@ export {
   getProductRemarks,
   getProductRating,
   hydrateStore,
+  startSharedStoreSync,
+  pullSharedStore,
   isSupabaseConfigured,
   canDirectBuy,
   isDiscontinued,
@@ -2510,16 +5098,139 @@ export {
   setPendingWhatsappOrder,
   getPendingWhatsappOrder,
   setPendingCustom,
+  setPendingRoute,
+  openAuthModal,
+  closeAuthModal,
+  inviteBuyerAuth,
+  requireBuyerAuth,
+  addFromStorefront,
+  consumePendingInviteContinue,
+  setAuthInviteHidden,
   consumePendingAfterAuth,
   whatsappUrl,
+  buyerWhatsappHref,
+  whatsappPhoneId,
   emptyDraft,
   PENDING_CART_KEY,
   PENDING_WA_RFQ_KEY,
   WHATSAPP_NUMBER,
   WHATSAPP_DISPLAY,
   WHATSAPP_HREF,
+  SALES_EMAIL,
   MATTEX_CHAIN_URL,
+  TMS_INBOUND_RFQ_URL,
   MATTEX_SITE_URL,
+  isBuyerVisible,
+  isOrderable,
+  inboxStatus,
+  rfqIsNoOffer,
+  listAdminProducts,
+  getAdminCategories,
+  addAdminCategory,
+  listAdminCategories,
+  renameAdminCategory,
+  deleteAdminCategory,
+  assignAdminProductsCategory,
+  restoreAdminProduct,
+  publishHardBlockers,
+  publishWarnBlockers,
+  loginStaff,
+  logoutStaff,
+  getStaffSession,
+  getStaffList,
+  createStaff,
+  resendStaffInvite,
+  getStaffInvite,
+  acceptStaffInvite,
+  updateStaff,
+  disableStaff,
+  enableStaff,
+  listBuyers,
+  setBuyerEnabled,
+  approveBuyer,
+  markBuyerReviewed,
+  rejectBuyer,
+  getAllRfqs,
+  startRfqReview,
+  decideRfq,
+  requestRfqCancel,
+  decideRfqCancel,
+  rfqDiscussWhatsappText,
+  rfqDiscussEmailHref,
+  openWhatsappChat,
+  quoteRfqToBuyer,
+  createGuestQuoteSnapshot,
+  markGuestQuoteWhatsappSent,
+  getGuestQuoteSnapshot,
+  quoteVersionList,
+  quoteEffectiveVersionNo,
+  getQuoteVersion,
+  getEffectiveQuoteVersion,
+  formatQuoteVersionOption,
+  formatQuoteVersionStamp,
+  quoteDraftIsDirty,
+  rfqLinesForQuoteVersion,
+  loadQuoteVersionIntoDraft,
+  guestQuotePublicUrl,
+  guestQuoteWhatsappText,
+  snapshotQuotePdfItems,
+  rfqQuotedOffline,
+  rfqCanSendWhatsappQuote,
+  formatBuyerPhoneDisplay,
+  createBuyerPurchaseOrder,
+  rfqBuyerKind,
+  isDev1InboxRfq,
+  setRfqLineQuotedPrice,
+  setRfqLineQty,
+  setRfqLineRemark,
+  setRfqLineNoOffer,
+  assignRfqToBuyer,
+  setRfqBuyerPhone,
+  uploadRfqToTms,
+  quotePdfItems,
+  resubmitRfq,
+  updateBuyerRfqDetails,
+  buyerRfqDetailsLocked,
+  lineMoq,
+  adminFollowUpWhatsapp,
+  getReports,
+  createProductReport,
+  lookProductReport,
+  dismissProductReport,
+  fixProductReport,
+  createAdminProduct,
+  updateAdminProduct,
+  publishAdminProduct,
+  unpublishAdminProduct,
+  publishBlockers,
+  productCatalogStatus,
+  productSkuId,
+  holdAdminProduct,
+  softDeleteAdminProduct,
+  importAdminCsv,
+  adminCsvTemplate,
+  listAdminAlerts,
+  requestAdminNotifyPermission,
+  showAdminWebNotification,
+  deliverAdminAlertEmails,
+  markAdminAlertsSeen,
 };
 
 refreshStoreSnapshot();
+
+if (typeof window !== "undefined") {
+  window.addEventListener("storage", (event) => {
+    if (
+      event.key === RFQS_KEY ||
+      event.key === QUOTE_SNAPSHOTS_KEY ||
+      event.key === REPORTS_KEY ||
+      event.key === PRODUCT_PATCH_KEY ||
+      event.key === ADMIN_ALERTS_KEY ||
+      event.key === ACCOUNTS_KEY ||
+      event.key === CUSTOM_CATEGORIES_KEY ||
+      event.key === CATEGORY_ADMIN_KEY
+    ) {
+      emitStoreChange();
+    }
+  });
+}

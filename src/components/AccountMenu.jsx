@@ -29,7 +29,13 @@ export default function AccountMenu({ user, light = false }) {
     ? "hidden sm:inline-flex items-center gap-1.5 bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-500 transition-colors"
     : "inline-flex items-center gap-1.5 bg-brand-600 px-3 sm:px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700";
 
-  if (!user) return null;
+  if (!user) {
+    return (
+      <Link to={withLocale(lang, "/login")} className={triggerClass}>
+        {t("login")}
+      </Link>
+    );
+  }
 
   return (
     <div className={light ? "relative hidden sm:block" : "relative"} ref={ref}>

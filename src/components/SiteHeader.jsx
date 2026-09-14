@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import AccountMenu from "./AccountMenu";
+import AuthModal from "./AuthModal";
 import LangToggle from "./LangToggle";
 import { useStore } from "../hooks/useStore";
 import { useLanguage } from "../i18n";
 import { stripLocale, withLocale } from "../lib/locale";
-import { getCategoryByName, getCategoryDefs, isLoggedIn, logoutUser, MATTEX_CHAIN_URL } from "../lib/store";
+import { SHOW_RFQ } from "../lib/flags";
+import { closeAuthModal, getCategoryByName, getCategoryDefs, logoutUser, MATTEX_CHAIN_URL } from "../lib/store";
 
 function CartIcon({ className = "h-4 w-4" }) {
   return (
@@ -26,6 +28,25 @@ function CartIcon({ className = "h-4 w-4" }) {
   );
 }
 
+function RfqsIcon({ className = "h-4 w-4" }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className={`shrink-0 ${className}`}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M8 4h7.5L20 8.5V20a1.5 1.5 0 0 1-1.5 1.5H8A1.5 1.5 0 0 1 6.5 20V5.5A1.5 1.5 0 0 1 8 4Z" />
+      <path d="M15 4v5h5" />
+      <path d="M10 13h6M10 16.5h4" />
+    </svg>
+  );
+}
+
 export default function SiteHeader({
   overlay = false,
   fluid = false,
@@ -39,7 +60,7 @@ export default function SiteHeader({
   onCatalogClick,
   onDraftClick,
 } = {}) {
-  const { user, cartCount } = useStore();
+  const { user, cartCount, authModalOpen } = useStore();
   const { t, lang } = useLanguage();
   const navigate = useNavigate();
   const location = useLocation();
@@ -176,11 +197,17 @@ export default function SiteHeader({
   }
 
   function onRfqClick() {
+    closeMenu();
     if (onDraftClick) {
       onDraftClick();
       return;
     }
     navigate(lp("/rfq"));
+  }
+
+  function onRfqsClick() {
+    closeMenu();
+    navigate(lp("/rfqs"));
   }
 
   function sectionTo(hash) {
@@ -252,6 +279,19 @@ export default function SiteHeader({
                 </span>
               ) : null}
             </button>
+            {SHOW_RFQ ? (
+              <button
+                type="button"
+                onClick={onRfqsClick}
+                className={`inline-flex items-center gap-2 px-3 py-2 text-sm font-medium hover:text-white hover:bg-white/10 transition-colors ${
+                  stripLocale(location.pathname) === "/rfqs" ? "text-white" : "text-white/85"
+                }`}
+                aria-label={t("myRfqs")}
+              >
+                <RfqsIcon />
+                <span>{t("myRfqs")}</span>
+              </button>
+            ) : null}
             <AccountMenu user={user} light />
             <LangToggle light />
             <button
@@ -373,10 +413,16 @@ export default function SiteHeader({
                 {l.label}
               </Link>
             ))}
-            <Link to={lp("/rfq")} className="py-2.5 hover:text-white inline-flex items-center gap-2" onClick={closeMenu}>
+            <button type="button" className="py-2.5 hover:text-white inline-flex items-center gap-2 text-left" onClick={onRfqClick}>
               <CartIcon />
               {t("rfqDraft")}
-            </Link>
+            </button>
+            {SHOW_RFQ ? (
+              <button type="button" className="py-2.5 hover:text-white inline-flex items-center gap-2 text-left" onClick={onRfqsClick}>
+                <RfqsIcon />
+                {t("myRfqs")}
+              </button>
+            ) : null}
             {user ? (
               <>
                 <p className="mt-2 pt-2 border-t border-white/15 text-xs text-white/60">{user.name}</p>
@@ -397,6 +443,9 @@ export default function SiteHeader({
               </>
             ) : (
               <>
+                <Link to={lp("/login")} className="py-2.5 hover:text-white" onClick={closeMenu}>
+                  {t("login")}
+                </Link>
                 <a
                   href={MATTEX_CHAIN_URL}
                   target="_blank"
@@ -423,6 +472,7 @@ export default function SiteHeader({
           </div>
         </div>
       ) : null}
+      <AuthModal open={Boolean(authModalOpen)} onClose={closeAuthModal} />
     </header>
   );
 }

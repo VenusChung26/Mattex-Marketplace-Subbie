@@ -13,13 +13,12 @@ import { allProductsTo, siteOrigin, withLocale } from "../lib/locale";
 import { categoryOgPath } from "../lib/ogImage";
 import { seoCopy } from "../lib/seoCopy";
 import {
-  addToCart,
   getCategoryByName,
   getCategoryBySlug,
   getEffectivePrice,
   isHitProduct,
   searchProducts,
-  whatsappNow,
+  addFromStorefront,
 } from "../lib/store";
 
 const CATALOG_BATCH = 24;
@@ -93,14 +92,11 @@ export default function CatalogPage() {
     Boolean(searchQuery.trim()) || priceFilter !== "all" || greenOnly || searchFields.length > 0;
 
   function handleAdd(productId, intent = "quote", qty) {
-    if (intent === "buy-now" || intent === "quote-now") {
-      whatsappNow(productId, { qty, kind: intent === "buy-now" ? "buy" : "quote", lang });
-      return;
-    }
-    addToCart(productId, { intent, qty });
+    const result = addFromStorefront(productId, intent, qty, lang);
+    if (!result?.ok || intent === "quote-now") return;
     const product = products.find((p) => p.id === productId);
     setToast(
-      t(intent === "buy" ? "addedBuyToRfq" : "addedQuoteToRfq", { name: product?.name || "item" })
+      t(intent === "buy" || intent === "buy-now" ? "addedBuyToRfq" : "addedQuoteToRfq", { name: product?.name || "item" })
     );
   }
 

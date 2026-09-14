@@ -1,2 +1,5 @@
-/** Prototype stage: catalog + cart + WhatsApp quote. No RFQ draft / My RFQs. */
-export const SHOW_RFQ = false;
+/** Phase 2: in-app RFQ records + My RFQs. Marketplace chrome stays the original storefront. */
+export const SHOW_RFQ = true;
+
+/** Quotes, PO, Submit To Buyer, WhatsApp quote send, TMS iRFQ, quote versions. Off on mattex-marketplace-dev-1. */
+export const SHOW_RFQ_QUOTES = false;

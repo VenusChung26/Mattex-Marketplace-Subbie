@@ -1,6 +1,5 @@
 {
   "redirects": [
-    { "source": "/", "destination": "/en", "statusCode": 301 },
     { "source": "/green", "destination": "/en/green", "statusCode": 301 },
     { "source": "/sales", "destination": "/en", "statusCode": 301 },
     { "source": "/en/sales", "destination": "/en", "statusCode": 301 },

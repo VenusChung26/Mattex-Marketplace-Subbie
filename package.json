@@ -4,23 +4,27 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --port 5178 --host",
+    "dev:admin": "vite --config vite.admin.config.js --port 5179 --host",
     "supabase:seed": "node scripts/seed-supabase.mjs",
     "build": "vite build && node scripts/prerender-seo.mjs",
+    "build:admin": "vite --config vite.admin.config.js build",
     "lint": "oxlint",
     "preview": "vite preview",
     "prototype:rfq": "vite --open /rfq?variant=A",
     "prototype:quotes": "vite --open /rfqs?variant=A",
     "prototype:website": "vite --open /?variant=A",
     "prototype:whatsapp": "vite --open /whatsapp-chat?variant=A",
-    "prototype:logic": "python3 -m http.server 8766 --directory public"
+    "prototype:logic": "python3 -m http.server 8766 --directory public",
+    "prototype:admin": "python3 -m http.server 8777 --directory public"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.114.0",
     "@vercel/blob": "^2.8.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "react-router-dom": "^7.18.2"
+    "react-router-dom": "^7.18.2",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@types/react": "^19.2.17",

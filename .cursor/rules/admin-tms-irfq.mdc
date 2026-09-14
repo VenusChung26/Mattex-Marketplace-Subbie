@@ -1,0 +1,23 @@
+---
+description: Locked Sales portal spec for Create TMS iRFQ → Open [document no.]
+alwaysApply: true
+---
+
+# Admin TMS iRFQ (locked spec)
+
+Create TMS iRFQ uses the **TMS-integration server bot** (`TMS_BOT_EMAIL` / `TMS_BOT_PASSWORD`). Do not require the Sales portal user to sign in with a TMS password to create.
+
+After a successful create, **MUST**:
+
+1. Persist `tmsId`, `tmsDocumentNo`, and details `tmsUrl` on that marketplace RFQ (`accepted` or `quoted`).
+2. Replace **Create TMS iRFQ** with **Open [iRFQ document no.]** (example: `Open iRFQ-26000759-01`). Never keep Create once `tmsDocumentNo` exists.
+3. The Open control is a link to **that iRFQ details page**: `{TMS_BASE_URL}/inbound/inbound-rfq/{tmsId}` — not the inbound list (`?current=1&pageSize=20`).
+
+```jsx
+// ❌ BAD — stays Create after success, or opens the list
+<button>Create TMS iRFQ</button>
+<a href="https://uat-tms-v2.mattex.com.hk/inbound/inbound-rfq?current=1&pageSize=20">Open TMS</a>
+
+// ✅ GOOD
+<a href="https://uat-tms-v2.mattex.com.hk/inbound/inbound-rfq/2879">Open iRFQ-26000759-01</a>
+```

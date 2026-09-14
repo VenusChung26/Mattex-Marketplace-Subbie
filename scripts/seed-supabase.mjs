@@ -51,7 +51,22 @@ if (typeof globalThis.localStorage === "undefined") {
   };
 }
 
-if (!globalThis.window) globalThis.window = globalThis;
+if (!globalThis.window || typeof globalThis.window.addEventListener !== "function") {
+  globalThis.window = {
+    addEventListener() {},
+    removeEventListener() {},
+    dispatchEvent() {
+      return true;
+    },
+    location: { origin: "http://localhost", href: "http://localhost/" },
+  };
+}
+if (typeof globalThis.fetch !== "function") {
+  globalThis.fetch = async () => ({
+    ok: false,
+    json: async () => ({}),
+  });
+}
 
 const { PRODUCTS, getSuppliers, buildSupplierMetrics, supplierSlug } = await import(
   "../src/lib/store.js"

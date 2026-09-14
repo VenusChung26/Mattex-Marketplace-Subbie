@@ -14,7 +14,11 @@ import WhatsappPage from "./pages/WhatsappPage";
 import WhatsappChatPage from "./pages/WhatsappChatPage";
 import EmailSentPage from "./pages/EmailSentPage";
 import SupplierPage from "./pages/SupplierPage";
+import AdminPortal from "./pages/admin/AdminPortal";
+import StaffSetPasswordPage from "./pages/admin/StaffSetPasswordPage";
+import PublicQuotePage from "./pages/PublicQuotePage";
 import { getCategoryByName } from "./lib/store";
+import { adminOrigin, isAdminSurface } from "./lib/origins";
 
 function LangLayout() {
   const { lang } = useParams();
@@ -22,6 +26,11 @@ function LangLayout() {
     return <Navigate to="/en" replace />;
   }
   return <Outlet />;
+}
+
+function QuoteLegacyRedirect() {
+  const { token } = useParams();
+  return <Navigate to={`/zh/quote/${token}`} replace />;
 }
 
 function LegacyParam({ prefix }) {
@@ -50,7 +59,29 @@ function UnknownLangPath() {
   return <Navigate to={`/${lang === "zh" ? "zh" : "en"}`} replace />;
 }
 
+function AdminHostRedirect() {
+  if (typeof window !== "undefined") {
+    const next = `${adminOrigin()}/${window.location.search}${window.location.hash}`;
+    window.location.replace(next);
+  }
+  return null;
+}
+
 export default function App() {
+  if (isAdminSurface()) {
+    return (
+      <BrowserRouter>
+        <LanguageProvider>
+          <ScrollToTop />
+          <Routes>
+            <Route path="/set-password" element={<StaffSetPasswordPage />} />
+            <Route path="*" element={<AdminPortal />} />
+          </Routes>
+        </LanguageProvider>
+      </BrowserRouter>
+    );
+  }
+
   return (
     <BrowserRouter>
       <LanguageProvider>
@@ -59,6 +90,8 @@ export default function App() {
           <Route path="/" element={<Navigate to="/en" replace />} />
           <Route path="/green" element={<Navigate to="/en/green" replace />} />
           <Route path="/sales" element={<Navigate to="/en" replace />} />
+          <Route path="/admin" element={<AdminHostRedirect />} />
+          <Route path="/admin/*" element={<AdminHostRedirect />} />
           <Route path="/catalog" element={<Navigate to={{ pathname: "/en", hash: "products" }} replace />} />
           <Route path="/catalog/:slug" element={<LegacyParam prefix="catalog" />} />
           <Route path="/login" element={<Navigate to="/en/login" replace />} />
@@ -72,6 +105,7 @@ export default function App() {
           <Route path="/whatsapp/:id" element={<LegacyParam prefix="whatsapp" />} />
           <Route path="/whatsapp-chat/:rfqId" element={<LegacyParam prefix="whatsapp-chat" />} />
           <Route path="/email-sent/:rfqId" element={<LegacyParam prefix="email-sent" />} />
+          <Route path="/quote/:token" element={<QuoteLegacyRedirect />} />
 
           <Route path="/:lang" element={<LangLayout />}>
             <Route index element={<HomePage />} />
@@ -90,6 +124,7 @@ export default function App() {
             <Route path="whatsapp-chat" element={<WhatsappChatPage />} />
             <Route path="whatsapp-chat/:rfqId" element={<WhatsappChatPage />} />
             <Route path="email-sent/:rfqId" element={<EmailSentPage />} />
+            <Route path="quote/:token" element={<PublicQuotePage />} />
             <Route path="*" element={<UnknownLangPath />} />
           </Route>
         </Routes>

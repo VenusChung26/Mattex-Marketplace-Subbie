@@ -1,0 +1,22 @@
+---
+description: Mattex product Publish / Unpublish / Draft / Soft delete
+alwaysApply: true
+---
+
+# Product statuses (locked spec)
+
+- **Published** = live on MM.
+- **Unpublish** = complete, not live.
+- **Draft** = incomplete, not live. Publish is allowed after listing missing MOQ/lead.
+- **Soft delete** = never live. Restore first (becomes Draft or Unpublish). `publishAdminProduct` must return `{ error: "deleted" }`.
+
+Hard block Publish: official SKU, name, unit, category, duplicate SKU. Warn only: MOQ, lead.
+
+```jsx
+// ❌ BAD
+publishAdminProduct(softDeleted.id);
+
+// ✅ GOOD
+<button disabled={product.deleted} onClick={() => requestPublish(product)}>Publish</button>
+<button onClick={() => restoreAdminProduct(product.id)}>Restore</button>
+```

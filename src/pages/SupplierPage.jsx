@@ -10,14 +10,13 @@ import { allProductsTo, siteOrigin, withLocale } from "../lib/locale";
 import { seoCopy } from "../lib/seoCopy";
 import { SHOW_RFQ } from "../lib/flags";
 import {
-  addToCart,
+  addFromStorefront,
   getEffectivePrice,
   getProductsBySupplier,
   getSupplier,
   getTopProductsForSupplier,
   isHitProduct,
   searchSupplierProducts,
-  whatsappNow,
 } from "../lib/store";
 
 export default function SupplierPage() {
@@ -101,17 +100,14 @@ export default function SupplierPage() {
   }
 
   function handleAdd(productId, intent = "quote", qty) {
-    if (intent === "buy-now" || intent === "quote-now") {
-      whatsappNow(productId, { qty, kind: intent === "buy-now" ? "buy" : "quote", lang });
-      return;
-    }
-    addToCart(productId, { intent, qty });
+    const result = addFromStorefront(productId, intent, qty, lang);
+    if (!result?.ok || intent === "quote-now") return;
     const product =
       products.find((p) => p.id === productId) ||
       catalog.find((p) => p.id === productId) ||
       top.find((p) => p.id === productId);
     setToast(
-      t(intent === "buy" ? "addedBuyToRfq" : "addedQuoteToRfq", { name: product?.name || "item" })
+      t(intent === "buy" || intent === "buy-now" ? "addedBuyToRfq" : "addedQuoteToRfq", { name: product?.name || "item" })
     );
   }
 

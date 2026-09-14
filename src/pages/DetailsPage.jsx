@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import CopyLinkButton from "../components/CopyLinkButton";
 import SiteHeader from "../components/SiteHeader";
 import SiteFooter from "../components/SiteFooter";
@@ -11,16 +11,16 @@ import { useLanguage } from "../i18n";
 import { allProductsTo, siteOrigin, withLocale } from "../lib/locale";
 import { seoCopy } from "../lib/seoCopy";
 import {
-  addToCart,
+  addFromStorefront,
   canDirectBuy,
   catalogPathForCategory,
   getEffectivePrice,
   getProduct,
   getProductRemarks,
+  isBuyerVisible,
   stockStatusKey,
   supplierDisplayName,
   supplierPath,
-  whatsappNow,
 } from "../lib/store";
 
 const STOCK_TONE = {
@@ -32,15 +32,24 @@ const STOCK_TONE = {
 
 export default function DetailsPage() {
   const { id } = useParams();
+  const [params, setSearchParams] = useSearchParams();
   const product = getProduct(id);
   const { t, lang } = useLanguage();
   const [qty, setQty] = useState(1);
+  const autoOpenTailor = params.get("tailor") === "1";
 
   useEffect(() => {
     setQty(product?.moq || 1);
   }, [product?.id, product?.moq]);
 
-  if (!product) {
+  useEffect(() => {
+    if (params.get("tailor") !== "1") return;
+    const next = new URLSearchParams(params);
+    next.delete("tailor");
+    setSearchParams(next, { replace: true });
+  }, [params, setSearchParams]);
+
+  if (!product || !isBuyerVisible(product)) {
     return (
       <div className="bg-paper min-h-screen">
         <SiteHeader />
@@ -91,15 +100,7 @@ export default function DetailsPage() {
 
   function goToRfq(intent, nextQty = qty) {
     const sendQty = Math.max(minQty, Math.floor(Number(nextQty)) || minQty);
-    if (intent === "buy-now" || intent === "quote-now") {
-      whatsappNow(product.id, {
-        qty: sendQty,
-        kind: intent === "buy-now" ? "buy" : "quote",
-        lang,
-      });
-      return;
-    }
-    addToCart(product.id, { intent, qty: sendQty });
+    addFromStorefront(product.id, intent, sendQty, lang);
   }
 
   const origin = siteOrigin();
@@ -210,6 +211,7 @@ export default function DetailsPage() {
                   onQtyChange={setQty}
                   onAdd={(_, intent, nextQty) => goToRfq(intent, nextQty)}
                   size="detail"
+                  autoOpenTailor={autoOpenTailor}
                 />
               )}
             </div>

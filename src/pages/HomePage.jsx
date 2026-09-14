@@ -15,7 +15,6 @@ import { siteOrigin, withLocale } from "../lib/locale";
 import { seoCopy } from "../lib/seoCopy";
 import {
   addCustomLine,
-  addToCart,
   catalogPathForCategory,
   getCategoryByName,
   getCategoryBySlug,
@@ -25,10 +24,11 @@ import {
   getSuppliers,
   getTopProducts,
   isHitProduct,
+  requireBuyerAuth,
+  addFromStorefront,
   searchProducts,
   WHATSAPP_DISPLAY,
   WHATSAPP_HREF,
-  whatsappNow,
 } from "../lib/store";
 
 const CATEGORY_PREVIEW_COUNT = 8;
@@ -225,6 +225,7 @@ export default function HomePage() {
   }
 
   function openCustomProduct() {
+    if (!requireBuyerAuth({ custom: true })) return;
     setCustomOpen(true);
   }
 
@@ -275,17 +276,14 @@ export default function HomePage() {
   }, [urlQ, urlCat, urlFilter, lang, navigate]);
 
   function handleAdd(productId, intent = "quote", qty) {
-    if (intent === "buy-now" || intent === "quote-now") {
-      whatsappNow(productId, { qty, kind: intent === "buy-now" ? "buy" : "quote", lang });
-      return;
-    }
-    addToCart(productId, { intent, qty });
+    const result = addFromStorefront(productId, intent, qty, lang);
+    if (!result?.ok || intent === "quote-now") return;
     const product =
       products.find((p) => p.id === productId) ||
       top.find((p) => p.id === productId) ||
       greens.find((p) => p.id === productId);
     showToast(
-      t(intent === "buy" ? "addedBuyToRfq" : "addedQuoteToRfq", { name: product?.name || "item" })
+      t(intent === "buy" || intent === "buy-now" ? "addedBuyToRfq" : "addedQuoteToRfq", { name: product?.name || "item" })
     );
   }
 

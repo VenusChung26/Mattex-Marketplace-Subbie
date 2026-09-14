@@ -3,11 +3,17 @@ import { Link, useNavigate } from "react-router-dom";
 import SiteHeader from "../components/SiteHeader";
 import MattexChainInvite from "../components/MattexChainInvite";
 import Seo from "../components/Seo";
+import {
+  AccountField,
+  AccountFormCard,
+  AccountFormHeader,
+  AccountSection,
+} from "../components/AccountForm";
 import { useStore } from "../hooks/useStore";
 import { useLanguage } from "../i18n";
 import { withLocale } from "../lib/locale";
 import { SHOW_RFQ } from "../lib/flags";
-import { consumePendingAfterAuth, loginUser, logoutUser, SAMPLE_PROJECTS, updateUserProfile } from "../lib/store";
+import { consumePendingAfterAuth, closeAuthModal, loginUser, logoutUser, SAMPLE_PROJECTS, updateUserProfile } from "../lib/store";
 
 function profileFromUser(user) {
   return {
@@ -29,26 +35,66 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState({});
   const [editing, setEditing] = useState(false);
   const [profile, setProfile] = useState(() => profileFromUser(user));
   const [saveMsg, setSaveMsg] = useState("");
 
   useEffect(() => {
+    closeAuthModal();
+  }, []);
+
+  useEffect(() => {
     if (!editing) setProfile(profileFromUser(user));
   }, [user, editing]);
+
+  function setProfileField(key, value) {
+    setProfile((prev) => ({ ...prev, [key]: value }));
+    setError("");
+    setFieldErrors((prev) => {
+      if (!prev[key]) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  }
 
   function onSubmit(e) {
     e.preventDefault();
     const result = loginUser({ email, password });
     if (!result.ok) {
-      setError(result.error === "password" ? t("loginErrorPassword") : t("loginErrorGeneric"));
+      setError(
+        result.error === "password"
+          ? t("loginErrorPassword")
+          : result.error === "staff"
+            ? t("loginErrorStaff")
+            : result.error === "disabled"
+              ? t("loginErrorDisabled")
+              : result.error === "pending"
+                ? t("loginErrorPending")
+                : result.error === "rejected"
+                  ? t("loginErrorRejected")
+                  : result.error === "missing"
+                    ? t("loginErrorMissing")
+                    : t("loginErrorGeneric")
+      );
       return;
     }
-    navigate(withLocale(lang, consumePendingAfterAuth()));
+    navigate(withLocale(lang, consumePendingAfterAuth() || "/"));
   }
 
   function onSaveProfile(e) {
     e.preventDefault();
+    const errors = {};
+    if (!String(profile.companyAddress || "").trim()) errors.companyAddress = t("signupFixRequired");
+    if (Object.keys(errors).length) {
+      setFieldErrors(errors);
+      setError(t("signupFixAlert"));
+      window.setTimeout(() => {
+        document.querySelector("[aria-invalid='true']")?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 50);
+      return;
+    }
     const result = updateUserProfile(profile);
     if (!result.ok) {
       const messages = {
@@ -56,10 +102,14 @@ export default function LoginPage() {
         companyName: t("companyName"),
         companyAddress: t("companyAddress"),
       };
+      if (result.error === "companyAddress") {
+        setFieldErrors({ companyAddress: t("signupFixRequired") });
+      }
       setError(messages[result.error] ? `${messages[result.error]} *` : t("saveErrorGeneric"));
       return;
     }
     setError("");
+    setFieldErrors({});
     setSaveMsg(t("profileSaved"));
     setEditing(false);
   }
@@ -68,144 +118,115 @@ export default function LoginPage() {
     <div className="bg-paper min-h-screen">
       <Seo lang={lang} path={withLocale(lang, "/login")} title={`${t("login")} | Mattex Marketplace`} description={t("loginRequiredRfq")} noindex />
       <SiteHeader />
-      <main className="max-w-md mx-auto px-4 py-12">
-        <div className="bg-white border border-line rounded-xl p-6 sm:p-8">
-          <p className="text-xs font-semibold uppercase tracking-wide text-brand-600 mb-2">
-            {user ? t("profile") : t("account")}
-          </p>
-          <h1 className="reveal text-2xl font-bold text-brand-800">{user ? t("profile") : t("login")}</h1>
-          <p className="mt-2 text-sm text-mute">
-            {user ? t("profileHint") : t("loginRequiredRfq")}
-          </p>
+      <main className={`${user ? "max-w-2xl" : "max-w-md"} mx-auto px-4 py-8 sm:py-10`}>
+        <AccountFormCard>
+          <AccountFormHeader
+            eyebrow={user ? t("profile") : t("account")}
+            title={user ? t("profile") : t("login")}
+            hint={user ? t("profileHint") : t("loginRequiredRfq")}
+            showRequired={Boolean(user && editing)}
+          />
 
           {user ? (
-            <div className="mt-6 space-y-4">
+            <div className="mt-6 space-y-5">
               {editing ? (
-                <form className="space-y-4" onSubmit={onSaveProfile}>
-                  <label className="block">
-                    <span className="block text-sm font-medium mb-1">{t("email")}</span>
-                    <input type="email" value={user.email} disabled className="field-input opacity-70" />
-                    <span className="mt-1 block text-xs text-mute">{t("emailReadOnly")}</span>
-                  </label>
-
-                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-mute pt-1">
-                    {t("userInfo")}
+                <form className="space-y-5" onSubmit={onSaveProfile} noValidate>
+                  <p className="rounded-lg border border-[#c5ccc8] bg-[#e6eae7] px-3 py-2 text-xs font-medium text-[#4a534e]">
+                    {t("profileLockedHint")}
                   </p>
-                  <label className="block">
-                    <span className="block text-sm font-medium mb-1">
-                      {t("fullName")} <span className="text-brand-600">*</span>
-                    </span>
-                    <input
-                      type="text"
-                      required
-                      value={profile.name}
-                      onChange={(e) => {
-                        setProfile((p) => ({ ...p, name: e.target.value }));
-                        setError("");
-                        setSaveMsg("");
-                      }}
-                      className="field-input"
-                    />
-                  </label>
-                  <label className="block">
-                    <span className="block text-sm font-medium mb-1">{t("jobTitle")}</span>
-                    <input
-                      type="text"
-                      value={profile.jobTitle}
-                      onChange={(e) => setProfile((p) => ({ ...p, jobTitle: e.target.value }))}
-                      className="field-input"
-                    />
-                  </label>
-                  <label className="block">
-                    <span className="block text-sm font-medium mb-1">{t("mobilePhone")}</span>
-                    <input
-                      type="tel"
-                      value={profile.phone}
-                      onChange={(e) => setProfile((p) => ({ ...p, phone: e.target.value }))}
-                      className="field-input"
-                    />
-                  </label>
+                  {error ? (
+                    <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-800">
+                      {error}
+                    </div>
+                  ) : null}
 
-                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-mute pt-1">
-                    {t("companyDetails")}
-                  </p>
-                  <label className="block">
-                    <span className="block text-sm font-medium mb-1">
-                      {t("companyName")} <span className="text-brand-600">*</span>
-                    </span>
-                    <input
-                      type="text"
-                      required
-                      value={profile.companyName}
-                      onChange={(e) => {
-                        setProfile((p) => ({ ...p, companyName: e.target.value }));
-                        setError("");
-                      }}
-                      className="field-input"
-                    />
-                  </label>
-                  <label className="block">
-                    <span className="block text-sm font-medium mb-1">{t("companyReg")}</span>
-                    <input
-                      type="text"
-                      value={profile.companyReg}
-                      onChange={(e) => setProfile((p) => ({ ...p, companyReg: e.target.value }))}
-                      className="field-input"
-                    />
-                  </label>
-                  <label className="block">
-                    <span className="block text-sm font-medium mb-1">{t("companyPhone")}</span>
-                    <input
-                      type="tel"
-                      value={profile.companyPhone}
-                      onChange={(e) => setProfile((p) => ({ ...p, companyPhone: e.target.value }))}
-                      className="field-input"
-                    />
-                  </label>
-                  <label className="block">
-                    <span className="block text-sm font-medium mb-1">
-                      {t("companyAddress")} <span className="text-brand-600">*</span>
-                    </span>
-                    <textarea
-                      required
-                      rows={2}
-                      value={profile.companyAddress}
-                      onChange={(e) => {
-                        setProfile((p) => ({ ...p, companyAddress: e.target.value }));
-                        setError("");
-                      }}
-                      className="field-input resize-y"
-                    />
-                  </label>
-                  <label className="block">
-                    <span className="block text-sm font-medium mb-1">{t("projectName")}</span>
-                    <input
-                      type="text"
-                      list="profile-project-suggestions"
-                      value={profile.project}
-                      onChange={(e) => setProfile((p) => ({ ...p, project: e.target.value }))}
-                      placeholder={t("projectPlaceholder")}
-                      className="field-input"
-                    />
-                    <datalist id="profile-project-suggestions">
-                      {SAMPLE_PROJECTS.map((name) => (
-                        <option key={name} value={name} />
-                      ))}
-                    </datalist>
-                    <span className="mt-1 block text-xs text-mute">{t("profileProjectHint")}</span>
-                  </label>
+                  <AccountSection title={t("userInfo")}>
+                    <AccountField label={t("email")} locked lockedHint={t("profileCannotEdit")}>
+                      <input type="text" value={user.email} className="field-input" />
+                    </AccountField>
+                    <AccountField label={t("fullName")} locked lockedHint={t("profileCannotEdit")}>
+                      <input type="text" value={profile.name} className="field-input" />
+                    </AccountField>
+                    <AccountField label={t("jobTitle")}>
+                      <input
+                        type="text"
+                        value={profile.jobTitle}
+                        onChange={(e) => setProfileField("jobTitle", e.target.value)}
+                        placeholder={t("phJobTitle")}
+                        className="field-input"
+                        autoComplete="organization-title"
+                      />
+                    </AccountField>
+                    <AccountField label={t("mobilePhone")}>
+                      <input
+                        type="tel"
+                        value={profile.phone}
+                        onChange={(e) => setProfileField("phone", e.target.value)}
+                        placeholder={t("phMobilePhone")}
+                        className="field-input"
+                        autoComplete="tel"
+                      />
+                    </AccountField>
+                  </AccountSection>
 
-                  {error ? <p className="text-sm font-medium text-red-700">{error}</p> : null}
-                  <div className="grid grid-cols-2 gap-2">
-                    <button type="submit" className="btn-primary !py-2.5">
+                  <AccountSection title={t("companyDetails")}>
+                    <AccountField label={t("companyName")} locked lockedHint={t("profileCannotEdit")}>
+                      <input type="text" value={profile.companyName} className="field-input" />
+                    </AccountField>
+                    <AccountField label={t("companyReg")} locked lockedHint={t("profileCannotEdit")}>
+                      <input type="text" value={profile.companyReg} className="field-input" />
+                    </AccountField>
+                    <AccountField label={t("companyPhone")}>
+                      <input
+                        type="tel"
+                        value={profile.companyPhone}
+                        onChange={(e) => setProfileField("companyPhone", e.target.value)}
+                        placeholder={t("phCompanyPhone")}
+                        className="field-input"
+                      />
+                    </AccountField>
+                    <AccountField label={t("projectName")} hint={t("profileProjectHint")}>
+                      <input
+                        type="text"
+                        list="profile-project-suggestions"
+                        value={profile.project}
+                        onChange={(e) => setProfileField("project", e.target.value)}
+                        placeholder={t("projectPlaceholder")}
+                        className="field-input"
+                      />
+                      <datalist id="profile-project-suggestions">
+                        {SAMPLE_PROJECTS.map((name) => (
+                          <option key={name} value={name} />
+                        ))}
+                      </datalist>
+                    </AccountField>
+                    <AccountField
+                      className="sm:col-span-2"
+                      label={t("companyAddress")}
+                      required
+                      error={fieldErrors.companyAddress}
+                    >
+                      <textarea
+                        rows={2}
+                        value={profile.companyAddress}
+                        onChange={(e) => setProfileField("companyAddress", e.target.value)}
+                        placeholder={t("phCompanyAddress")}
+                        className="field-input resize-y"
+                      />
+                    </AccountField>
+                  </AccountSection>
+
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <button type="submit" className="btn-primary !py-3">
                       {t("saveProfile")}
                     </button>
                     <button
                       type="button"
-                      className="btn-soft !py-2.5"
+                      className="btn-soft !py-3"
                       onClick={() => {
                         setEditing(false);
                         setError("");
+                        setFieldErrors({});
                         setProfile(profileFromUser(user));
                       }}
                     >
@@ -215,67 +236,56 @@ export default function LoginPage() {
                 </form>
               ) : (
                 <>
-                  <div className="border border-line rounded-xl p-4 bg-paper/60">
-                    <div className="flex items-start justify-between gap-3">
-                      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-mute">
-                        {t("signedIn")}
-                      </p>
-                      <button
-                        type="button"
-                        className="text-xs font-semibold text-brand-600 hover:text-brand-700"
-                        onClick={() => {
-                          setEditing(true);
-                          setSaveMsg("");
-                          setError("");
-                        }}
-                      >
-                        {t("editProfile")}
-                      </button>
-                    </div>
-                    <p className="mt-2 font-semibold text-brand-800">{user.name}</p>
-                    <p className="text-sm text-mute">{user.email}</p>
-                    {user.jobTitle ? <p className="mt-1 text-sm text-mute">{user.jobTitle}</p> : null}
-                    {user.phone ? <p className="mt-1 text-sm text-mute">{user.phone}</p> : null}
-                    {user.companyName ? (
-                      <div className="mt-3 pt-3 border-t border-line">
-                        <p className="text-sm font-semibold text-ink">{user.companyName}</p>
-                        {user.companyReg ? (
-                          <p className="mt-1 text-xs text-mute">{user.companyReg}</p>
-                        ) : null}
-                        {user.companyPhone ? (
-                          <p className="mt-1 text-xs text-mute">{user.companyPhone}</p>
-                        ) : null}
-                        {user.companyAddress ? (
-                          <p className="mt-1 text-xs text-mute">{user.companyAddress}</p>
-                        ) : null}
-                        {user.project ? (
-                          <p className="mt-1 text-xs text-mute">
-                            {t("projectLabel")} {user.project}
-                          </p>
-                        ) : null}
-                      </div>
-                    ) : null}
-                    {saveMsg ? (
-                      <p className="mt-3 text-sm font-medium text-brand-700">{saveMsg}</p>
-                    ) : null}
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.12em] text-mute">{t("signedIn")}</p>
+                    <button
+                      type="button"
+                      className="text-sm font-semibold text-brand-600 hover:text-brand-700 hover:underline"
+                      onClick={() => {
+                        setEditing(true);
+                        setSaveMsg("");
+                        setError("");
+                        setFieldErrors({});
+                      }}
+                    >
+                      {t("editProfile")}
+                    </button>
                   </div>
+
+                  {saveMsg ? (
+                    <p className="rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-sm font-medium text-brand-800">
+                      {saveMsg}
+                    </p>
+                  ) : null}
+
+                  <AccountSection title={t("userInfo")}>
+                    <ProfileValue label={t("email")} value={user.email} />
+                    <ProfileValue label={t("fullName")} value={user.name} />
+                    <ProfileValue label={t("jobTitle")} value={user.jobTitle} />
+                    <ProfileValue label={t("mobilePhone")} value={user.phone} />
+                  </AccountSection>
+
+                  <AccountSection title={t("companyDetails")}>
+                    <ProfileValue label={t("companyName")} value={user.companyName} />
+                    <ProfileValue label={t("companyReg")} value={user.companyReg} />
+                    <ProfileValue label={t("companyPhone")} value={user.companyPhone} />
+                    <ProfileValue label={t("projectName")} value={user.project} />
+                    <ProfileValue className="sm:col-span-2" label={t("companyAddress")} value={user.companyAddress} />
+                  </AccountSection>
+
                   <div className="grid gap-2">
                     <Link to={withLocale(lang, "/rfq")} className="btn-primary !py-2.5">
                       {t("openRfqDraft")}
                     </Link>
                     {SHOW_RFQ ? (
-                    <Link to={withLocale(lang, "/rfqs")} className="btn-soft !py-2.5 !border-brand-600 !text-brand-600">
-                      {t("myRfqs")}
-                    </Link>
+                      <Link to={withLocale(lang, "/rfqs")} className="btn-soft !py-2.5 !border-brand-600 !text-brand-600">
+                        {t("myRfqs")}
+                      </Link>
                     ) : null}
                     <Link to={withLocale(lang, "/")} className="btn-soft !py-2.5">
                       {t("continueShopping")}
                     </Link>
-                    <button
-                      type="button"
-                      onClick={() => logoutUser()}
-                      className="btn-soft !py-2.5"
-                    >
+                    <button type="button" onClick={() => logoutUser()} className="btn-soft !py-2.5">
                       {t("logout")}
                     </button>
                   </div>
@@ -285,8 +295,7 @@ export default function LoginPage() {
           ) : (
             <>
               <form className="mt-6 space-y-4" onSubmit={onSubmit}>
-                <label className="block">
-                  <span className="block text-sm font-medium mb-1">{t("email")}</span>
+                <AccountField label={t("email")}>
                   <input
                     type="email"
                     required
@@ -299,9 +308,8 @@ export default function LoginPage() {
                     className="field-input"
                     autoComplete="email"
                   />
-                </label>
-                <label className="block">
-                  <span className="block text-sm font-medium mb-1">{t("password")}</span>
+                </AccountField>
+                <AccountField label={t("password")}>
                   <input
                     type="password"
                     required
@@ -315,9 +323,9 @@ export default function LoginPage() {
                     className="field-input"
                     autoComplete="current-password"
                   />
-                </label>
+                </AccountField>
                 {error ? <p className="text-sm font-medium text-red-700">{error}</p> : null}
-                <button type="submit" className="btn-primary w-full !py-2.5">
+                <button type="submit" className="btn-primary w-full !py-3">
                   {t("login")}
                 </button>
               </form>
@@ -327,8 +335,17 @@ export default function LoginPage() {
               </div>
             </>
           )}
-        </div>
+        </AccountFormCard>
       </main>
+    </div>
+  );
+}
+
+function ProfileValue({ label, value, className = "" }) {
+  return (
+    <div className={`min-w-0 ${className}`.trim()}>
+      <p className="text-xs font-medium text-mute mb-1">{label}</p>
+      <p className="text-sm font-medium text-ink break-all">{value || "—"}</p>
     </div>
   );
 }
