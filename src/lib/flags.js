@@ -3,3 +3,6 @@ export const SHOW_RFQ = true;
 
 /** Quotes, PO, Submit To Buyer, WhatsApp quote send, TMS iRFQ, quote versions. Off on mattex-marketplace-dev-1. */
 export const SHOW_RFQ_QUOTES = false;
+
+/** Catalog Excel import / template. Off this phase. */
+export const SHOW_PRODUCT_IMPORT = false;

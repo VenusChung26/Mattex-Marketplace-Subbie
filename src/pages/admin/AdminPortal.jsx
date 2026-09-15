@@ -34,7 +34,6 @@ import {
   logoutStaff,
   markAdminAlertsSeen,
   pullSharedStore,
-  markBuyerReviewed,
   assignRfqToBuyer,
   setRfqBuyerPhone,
   buyerWhatsappHref,
@@ -67,20 +66,31 @@ import {
   setBuyerEnabled,
   showAdminWebNotification,
   softDeleteAdminProduct,
+  hardDeleteAdminProduct,
+  canDeleteProductForever,
+  rejectBuyer,
   updateAdminProduct,
   uploadRfqToTms,
+  deliverRfqAcceptedEmail,
+  deliverRfqNoOfferEmail,
+  deliverRfqCancelAcceptedEmail,
+  deliverRfqCancelDeclinedEmail,
+  rfqLastActivity,
+  rfqActivityLabel,
+  formatQuoteVersionStamp,
+  hydrateRfqDecisionActivity,
 } from "../../lib/store";
 import { submitRfqToTms } from "../../lib/tmsSubmit";
 import { downloadProductExcelTemplate, excelFileToCsv } from "../../lib/excelImport";
 import { clearTmsSession } from "../../lib/tmsSession";
 import { transactedRefsForLine } from "../../lib/tmsTransacted";
 import QuoteVersionSelect, { DRAFT_VALUE } from "../../components/QuoteVersionSelect";
-import { SHOW_RFQ_QUOTES } from "../../lib/flags";
+import RfqActivityLog from "../../components/RfqActivityLog";
+import { SHOW_PRODUCT_IMPORT, SHOW_RFQ_QUOTES } from "../../lib/flags";
 
 const NAV = [
-  { id: "attention", label: "Needs attention" },
-  { id: "products", label: "Products" },
   { id: "rfqs", label: "RFQ inbox" },
+  { id: "products", label: "Products" },
   { id: "accounts", label: "Accounts" },
 ];
 
@@ -104,7 +114,6 @@ const ACCOUNT_STATUS_TABS = [
 
 const BUYER_STATUS_TABS = [
   { id: "all", label: "All" },
-  { id: "new", label: "New" },
   { id: "active", label: "Active" },
   { id: "disabled", label: "Disabled" },
   { id: "rejected", label: "Rejected" },
@@ -115,10 +124,13 @@ const STATUS_TABS = [
   { id: "published", label: "Published" },
   { id: "unpublished", label: "Unpublish" },
   { id: "draft", label: "Draft" },
-  { id: "deleted", label: "Soft deleted" },
+  { id: "deleted", label: "Trash" },
 ];
 
+const RFQ_ACTION_TAB = { id: "action", label: "Pending" };
+
 const RFQ_STATUS_TABS = [
+  RFQ_ACTION_TAB,
   { id: "all", label: "All" },
   { id: "received", label: "Received" },
   { id: "reviewing", label: "Reviewing" },
@@ -132,10 +144,8 @@ const RFQ_STATUS_TABS = [
 ];
 
 const RFQ_STATUS_TABS_SLICE = [
+  RFQ_ACTION_TAB,
   { id: "all", label: "All" },
-  { id: "received", label: "Received" },
-  { id: "reviewing", label: "Reviewing" },
-  { id: "cancel", label: "Cancel requested" },
   { id: "accepted", label: "In review" },
   { id: "rejected", label: "No Offer Rejected" },
   { id: "cancelled", label: "Cancelled" },
@@ -155,7 +165,7 @@ function productStatusKey(p) {
 
 function statusLabel(p) {
   const key = productCatalogStatus(p);
-  if (key === "deleted") return "Soft deleted";
+  if (key === "deleted") return "Trash";
   if (key === "unpublished") return "Unpublish";
   if (key === "draft") return "Draft";
   return "Published";
@@ -266,7 +276,6 @@ function accountStatusKey(u) {
   if (u.approvalStatus === "rejected") return "rejected";
   if (u.enabled === false) return "disabled";
   if (u.inviteToken || (!u.approvalStatus && !u.bootstrap && !String(u.password || "").trim())) return "invited";
-  if (u.approvalStatus && u.needsReview) return "new";
   return "active";
 }
 
@@ -275,7 +284,6 @@ function accountStatusLabel(u) {
   if (u.approvalStatus === "rejected") return "Rejected";
   if (u.enabled === false) return "Disabled";
   if (u.inviteToken || (!u.approvalStatus && !u.bootstrap && !String(u.password || "").trim())) return "Invited";
-  if (u.approvalStatus && u.needsReview) return "New";
   return "Active";
 }
 
@@ -378,24 +386,25 @@ export default function AdminPortal() {
   const [params, setSearchParams] = useSearchParams();
   const focusRfqId = String(params.get("rfq") || params.get("id") || "").trim();
   const focusBuyerParam = String(params.get("buyer") || "").trim();
-  const [page, setPage] = useState(focusRfqId ? "rfqs" : "attention");
+  const [page, setPage] = useState(focusRfqId ? "rfqs" : focusBuyerParam ? "accounts" : "rfqs");
   const [jumpAlert, setJumpAlert] = useState(null);
   const mailedAlertIds = useRef(new Set());
   const notifiedAlertIds = useRef(new Set());
   const [productSource, setProductSource] = useState("mattex");
-  const [productsNavOpen, setProductsNavOpen] = useState(true);
-  const [accountSource, setAccountSource] = useState("sales");
-  const [accountsNavOpen, setAccountsNavOpen] = useState(false);
-  const [focusBuyerEmail, setFocusBuyerEmail] = useState("");
-  const [peekBuyerEmail, setPeekBuyerEmail] = useState("");
+  const [productsNavOpen, setProductsNavOpen] = useState(false);
+  const [accountSource, setAccountSource] = useState(focusBuyerParam && !focusRfqId ? "buyer" : "sales");
+  const [accountsNavOpen, setAccountsNavOpen] = useState(Boolean(focusBuyerParam && !focusRfqId));
+  const [focusBuyerEmail, setFocusBuyerEmail] = useState(focusBuyerParam && !focusRfqId ? focusBuyerParam : "");
   const [email, setEmail] = useState("supabase@mattex.com.hk");
   const [password, setPassword] = useState("mattex");
   const [error, setError] = useState("");
   const [loginBusy, setLoginBusy] = useState(false);
   const [editing, setEditing] = useState("");
   const [focusReport, setFocusReport] = useState(null);
+  const [jumpProductId, setJumpProductId] = useState("");
   const [flash, setFlash] = useState("");
   const [flashError, setFlashError] = useState(false);
+  const [inboxHomeKey, setInboxHomeKey] = useState(0);
   const products = listAdminProducts();
 
   useEffect(() => {
@@ -404,8 +413,10 @@ export default function AdminPortal() {
       return;
     }
     if (focusBuyerParam) {
-      setPeekBuyerEmail(focusBuyerParam);
-      setPage("attention");
+      setFocusBuyerEmail(focusBuyerParam);
+      setAccountSource("buyer");
+      setAccountsNavOpen(true);
+      setPage("accounts");
     }
   }, [focusRfqId, focusBuyerParam]);
 
@@ -449,7 +460,18 @@ export default function AdminPortal() {
   function note(result, fallback) {
     if (!result?.ok) {
       setFlashError(true);
-      setFlash(result?.error || "Unable to save");
+      const reason = result?.error;
+      setFlash(
+        reason === "staff"
+          ? "Sign in as sales staff to change this."
+          : reason === "published"
+            ? "Unpublish this product before Delete forever."
+            : reason === "reason"
+              ? "Enter a rejection reason."
+              : reason === "in_use"
+                ? "Move products out of this category first."
+                : reason || "Unable to save"
+      );
     } else {
       setFlashError(false);
       setFlash(fallback || "Saved");
@@ -459,9 +481,14 @@ export default function AdminPortal() {
   if (!staff) {
     return (
       <div className="min-h-screen bg-charcoal text-white font-sans">
-        <header className="flex items-center justify-between px-6 py-4">
-          <img src="/assets/mattex-logo.png" alt="Mattex" className="h-8 brightness-0 invert" />
-          <a href={marketplaceHomeHref("en")} className="text-xs text-white/60 hover:text-white">
+        <header className="flex items-center justify-between gap-4 px-6 py-4">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <img src="/assets/mattex-logo.png" alt="" className="h-8 w-auto shrink-0 brightness-0 invert" />
+            <span className="block text-[15px] sm:text-lg font-semibold tracking-tight leading-tight">
+              Mattex Marketplace Admin Portal
+            </span>
+          </div>
+          <a href={marketplaceHomeHref("en")} className="shrink-0 text-xs text-white/60 hover:text-white">
             Marketplace
           </a>
         </header>
@@ -509,43 +536,22 @@ export default function AdminPortal() {
     );
   }
 
-  const pendingRfqs = allRfqs.filter((r) => {
-    if (r.cancelStatus === "requested") return true;
-    if (inboxStatus(r) === "cancelled") return false;
-    return ["received", "reviewing", "returned"].includes(inboxStatus(r));
-  }).length;
-  const pendingBuyers = listBuyers().filter((b) => b.needsReview && b.enabled !== false && b.approvalStatus !== "rejected").length;
-  const attentionItems = collectAttentionItems({ buyers: listBuyers(), rfqs: allRfqs });
-  const attentionCount = attentionItems.length;
+  const inboxRfqs = SHOW_RFQ_QUOTES ? allRfqs : allRfqs.filter(isDev1InboxRfq);
+  const pendingRfqs = inboxRfqs.filter(rfqNeedsAction).length;
   const product = products.find((p) => p.id === editing) || null;
-
-  function goAttention() {
-    setFocusReport(null);
-    setFocusBuyerEmail("");
-    setPeekBuyerEmail("");
-    setSearchParams({});
-    setPage("attention");
-  }
 
   function goRfqInbox() {
     setFocusReport(null);
     setFocusBuyerEmail("");
-    setPeekBuyerEmail("");
     setSearchParams({});
     setPage("rfqs");
-  }
-
-  function openBuyerPeek(email) {
-    const next = String(email || "").trim();
-    if (!next) return;
-    setPeekBuyerEmail(next);
+    setInboxHomeKey((n) => n + 1);
   }
 
   function openBuyerInfo(email) {
     const next = String(email || "").trim();
     if (!next) return;
     setFocusReport(null);
-    setPeekBuyerEmail("");
     setFocusBuyerEmail(next);
     setAccountSource("buyer");
     setAccountsNavOpen(true);
@@ -557,7 +563,6 @@ export default function AdminPortal() {
     if (!next) return;
     setFocusReport(null);
     setFocusBuyerEmail("");
-    setPeekBuyerEmail("");
     setSearchParams({ rfq: next });
     setPage("rfqs");
   }
@@ -579,23 +584,11 @@ export default function AdminPortal() {
       openRfqDetail(rfq);
     } else if (buyer) {
       setSearchParams({ buyer });
-      setPeekBuyerEmail(buyer);
-      setPage("attention");
     } else {
-      goAttention();
+      goRfqInbox();
     }
     markAdminAlertsSeen();
     setJumpAlert(null);
-  }
-
-  function openAttentionItem(item) {
-    if (item.kind === "buyer") {
-      openBuyerPeek(item.payload.email);
-      return;
-    }
-    if (item.kind === "rfq") {
-      openRfqDetail(item.payload.rfqId);
-    }
   }
 
   function openReportedProduct(report) {
@@ -614,9 +607,11 @@ export default function AdminPortal() {
   return (
     <div className="flex min-h-screen bg-paper text-ink font-sans">
       <aside className="relative w-60 shrink-0 bg-charcoal text-white">
-        <div className="flex items-center gap-2 px-4 py-4">
-          <img src="/assets/mattex-logo.png" alt="" className="h-7 brightness-0 invert" />
-          <span className="text-[10px] font-semibold uppercase tracking-widest text-white/50">Sales</span>
+        <div className="flex items-center gap-2.5 px-4 py-4">
+          <img src="/assets/mattex-logo.png" alt="" className="h-8 w-auto shrink-0 brightness-0 invert" />
+          <span className="min-w-0 text-[15px] font-semibold leading-tight tracking-tight">
+            Mattex Marketplace Admin Portal
+          </span>
         </div>
         <nav className="space-y-1 px-3 pb-32">
           {NAV.map((item) => {
@@ -722,7 +717,6 @@ export default function AdminPortal() {
                           }`}
                         >
                           <span>{src.label}</span>
-                          {src.id === "buyer" && pendingBuyers ? <span className="text-xs">{pendingBuyers}</span> : null}
                         </button>
                       ))}
                     </div>
@@ -735,10 +729,6 @@ export default function AdminPortal() {
                 key={item.id}
                 type="button"
                 onClick={() => {
-                  if (item.id === "attention") {
-                    goAttention();
-                    return;
-                  }
                   if (item.id === "rfqs") {
                     goRfqInbox();
                     return;
@@ -752,7 +742,6 @@ export default function AdminPortal() {
                 }`}
               >
                 <span>{item.label}</span>
-                {item.id === "attention" && attentionCount ? <span className="text-xs">{attentionCount}</span> : null}
                 {item.id === "rfqs" && pendingRfqs ? <span className="text-xs">{pendingRfqs}</span> : null}
               </button>
             );
@@ -810,22 +799,6 @@ export default function AdminPortal() {
           ) : null}
         </header>
         <div className="p-6">
-          {page === "attention" ? (
-            <>
-              <AttentionPanel items={attentionItems} onOpen={openAttentionItem} onOpenBuyer={openBuyerPeek} />
-              {peekBuyerEmail ? (
-                <BuyerInfoModal
-                  email={peekBuyerEmail}
-                  note={note}
-                  onClose={() => setPeekBuyerEmail("")}
-                  onOpenRfq={(id) => {
-                    setPeekBuyerEmail("");
-                    openRfqDetail(id);
-                  }}
-                />
-              ) : null}
-            </>
-          ) : null}
           {page === "products" && productSource === "mattex" ? (
             <ProductsPanel
               products={products}
@@ -835,13 +808,29 @@ export default function AdminPortal() {
               note={note}
               reports={reports}
               focusReport={focusReport}
+              openProductId={jumpProductId}
+              onOpenedProduct={() => setJumpProductId("")}
               onClearFocus={() => setFocusReport(null)}
             />
           ) : null}
-          {page === "products" && productSource === "category" ? <CategoryPanel products={products} note={note} /> : null}
+          {page === "products" && productSource === "category" ? (
+            <CategoryPanel
+              products={products}
+              note={note}
+              onOpenProduct={(p) => {
+                setFocusReport(null);
+                setEditing(p.id);
+                setJumpProductId(p.id);
+                setPage("products");
+                setProductSource("mattex");
+                setProductsNavOpen(true);
+              }}
+            />
+          ) : null}
           {page === "products" && productSource === "chain" ? <ChainProductsPanel /> : null}
           {page === "rfqs" ? (
             <RfqPanel
+              key={inboxHomeKey}
               rfqs={allRfqs}
               note={note}
               focusId={focusRfqId}
@@ -922,6 +911,28 @@ function AdminModal({ title, onClose, children, wide, footer }) {
   );
 }
 
+function HoverTip({ text, children }) {
+  const [show, setShow] = useState(false);
+  if (!text) return children;
+  return (
+    <span
+      className="relative inline-flex [&_button:disabled]:pointer-events-none"
+      onMouseEnter={() => setShow(true)}
+      onMouseLeave={() => setShow(false)}
+    >
+      {children}
+      {show ? (
+        <span
+          role="tooltip"
+          className="absolute right-0 top-full z-30 mt-1 w-56 rounded-md bg-charcoal px-2.5 py-1.5 text-left text-[11px] font-medium normal-case leading-snug tracking-normal text-white shadow-lg"
+        >
+          {text}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 function AdminSearchBar({ value, onChange, placeholder, label }) {
   return (
     <label className="mb-4 block">
@@ -974,7 +985,7 @@ function StatusTabs({ products, statusTab, setStatusTab }) {
   );
 }
 
-function CategoryPanel({ products, note }) {
+function CategoryPanel({ products, note, onOpenProduct }) {
   const categories = listAdminCategories();
   const [activeId, setActiveId] = useState(categories[0]?.id || "");
   const [query, setQuery] = useState("");
@@ -1106,7 +1117,7 @@ function CategoryPanel({ products, note }) {
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
           <h1 className="font-display text-2xl text-brand-900">Product Category</h1>
-          <p className="text-sm text-mute">Add, rename, or delete categories. Counts include soft-deleted products (grey rows are read-only).</p>
+          <p className="text-sm text-mute">Add, rename, or delete empty categories. Hover Delete to see why a category cannot be removed.</p>
         </div>
         <div className="flex min-w-[18rem] gap-2">
           <input
@@ -1165,15 +1176,24 @@ function CategoryPanel({ products, note }) {
                         >
                           Edit
                         </button>
-                        <button
-                          type="button"
-                          className="rounded border border-red-200 px-2 py-1 text-[10px] font-semibold text-red-700 disabled:opacity-40"
-                          disabled={cat.count > 0}
-                          title={cat.count > 0 ? "Move products first" : "Delete category"}
-                          onClick={() => removeCategory(cat)}
+                        <HoverTip
+                          text={
+                            categories.length <= 1
+                              ? "Cannot delete the last category."
+                              : cat.count > 0
+                                ? `Cannot delete: ${cat.count} product${cat.count === 1 ? "" : "s"} still in this category. Move them first.`
+                                : ""
+                          }
                         >
-                          Delete
-                        </button>
+                          <button
+                            type="button"
+                            className="rounded border border-red-200 px-2 py-1 text-[10px] font-semibold text-red-700 disabled:opacity-40"
+                            disabled={categories.length <= 1 || cat.count > 0}
+                            onClick={() => removeCategory(cat)}
+                          >
+                            Delete
+                          </button>
+                        </HoverTip>
                       </div>
                     </td>
                   </tr>
@@ -1243,6 +1263,7 @@ function CategoryPanel({ products, note }) {
                       <th className="px-3 py-2">SKU</th>
                       <th className="px-3 py-2">Product</th>
                       <th className="px-3 py-2">Status</th>
+                      <th className="px-3 py-2 w-12" />
                     </tr>
                   </thead>
                   <tbody>
@@ -1271,11 +1292,24 @@ function CategoryPanel({ products, note }) {
                           <td className="px-3 py-2">
                             <StatusBadge product={p} />
                           </td>
+                          <td className="px-3 py-2">
+                            <button
+                              type="button"
+                              className="inline-flex h-7 w-7 items-center justify-center rounded border border-line text-brand-800 hover:bg-brand-50"
+                              title="Open product"
+                              aria-label={`Open ${productRowLabel(p)}`}
+                              onClick={() => onOpenProduct?.(p)}
+                            >
+                              <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+                                <path d="M3 8h8M8 3l5 5-5 5" />
+                              </svg>
+                            </button>
+                          </td>
                         </tr>
                       ))
                     ) : (
                       <tr>
-                        <td colSpan={4} className="px-3 py-16 text-center text-sm text-mute">
+                        <td colSpan={5} className="px-3 py-16 text-center text-sm text-mute">
                           {needle ? "No products match this search." : "No products in this category."}
                         </td>
                       </tr>
@@ -1526,11 +1560,12 @@ function ProductCategoryField({ value, onChange, note }) {
   );
 }
 
-function ProductsPanel({ products, product, editing, setEditing, note, reports = [], focusReport, onClearFocus }) {
-  const [form, setForm] = useState(focusReport && product ? toForm(product) : null);
-  const [modal, setModal] = useState(focusReport ? "edit" : null);
+function ProductsPanel({ products, product, editing, setEditing, note, reports = [], focusReport, onClearFocus, openProductId, onOpenedProduct }) {
+  const jumped = openProductId ? products.find((row) => row.id === openProductId) : null;
+  const [form, setForm] = useState(() => (jumped || (focusReport && product) ? toForm(jumped || product) : null));
+  const [modal, setModal] = useState(() => (jumped || focusReport ? "edit" : null));
   const [formError, setFormError] = useState("");
-  const [statusTab, setStatusTab] = useState("all");
+  const [statusTab, setStatusTab] = useState(() => (jumped ? productStatusKey(jumped) : "all"));
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(() => new Set());
   const [bulkConfirm, setBulkConfirm] = useState(null);
@@ -1552,10 +1587,23 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
     : []
   ).filter((r) => r.status === "open" || r.status === "looking" || r.id === focusReport?.id);
 
+  useEffect(() => {
+    if (!openProductId) return;
+    const target = products.find((row) => row.id === openProductId);
+    if (target) {
+      setEditing(target.id);
+      setForm(toForm(target));
+      setFormError("");
+      setModal("edit");
+      setStatusTab(productStatusKey(target));
+    }
+  }, [openProductId]);
+
   function closeModal() {
     setModal(null);
     setFormError("");
     setImageOver(false);
+    onOpenedProduct?.();
     onClearFocus?.();
   }
 
@@ -1653,13 +1701,19 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
     } else if (type === "delete") {
       items = selectedProducts.filter((p) => !p.deleted);
       if (!items.length) {
-        note({ ok: false, error: "Select products to soft delete." });
+        note({ ok: false, error: "Select products to move to trash." });
+        return;
+      }
+    } else if (type === "forever") {
+      items = selectedProducts.filter((p) => canDeleteProductForever(p));
+      if (!items.length) {
+        note({ ok: false, error: "Select Unpublish, Draft, or Trash products to Delete forever. Unpublish live SKUs first." });
         return;
       }
     } else if (type === "restore") {
       items = selectedProducts.filter((p) => p.deleted);
       if (!items.length) {
-        note({ ok: false, error: "Select soft-deleted products to Restore." });
+        note({ ok: false, error: "Select Trash products to Restore." });
         return;
       }
     }
@@ -1690,6 +1744,7 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
     const { type, items } = bulkConfirm;
     let ok = 0;
     let fail = 0;
+    let lastError = "";
     items.forEach((p) => {
       let result = { ok: false };
       if (type === "publish") {
@@ -1700,14 +1755,22 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
         result = publishAdminProduct(p.id);
       } else if (type === "unpublish") result = unpublishAdminProduct(p.id);
       else if (type === "delete") result = softDeleteAdminProduct(p.id);
+      else if (type === "forever") result = hardDeleteAdminProduct(p.id);
       else if (type === "restore") result = restoreAdminProduct(p.id);
       if (result?.ok) ok += 1;
-      else fail += 1;
+      else {
+        fail += 1;
+        if (result?.error) lastError = result.error;
+      }
     });
     setBulkConfirm(null);
     clearSelected();
-    const labels = { publish: "published", unpublish: "taken offline", delete: "soft deleted", restore: "restored" };
+    const labels = { publish: "published", unpublish: "taken offline", delete: "moved to trash", forever: "deleted forever", restore: "restored" };
     if (!ok) {
+      if (lastError === "staff" || lastError === "published") {
+        note({ ok: false, error: lastError });
+        return;
+      }
       note({
         ok: false,
         error:
@@ -1717,7 +1780,9 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
               ? "Unable to Unpublish selected products."
               : type === "restore"
                 ? "Unable to restore selected products."
-                : "Unable to update selected products.",
+                : type === "forever"
+                  ? "Unable to Delete forever. Unpublish live SKUs first."
+                  : "Unable to update selected products.",
       });
       return;
     }
@@ -1727,7 +1792,8 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
   const bulkTitles = {
     publish: "Confirm publish (go live)",
     unpublish: "Confirm Unpublish (take offline)",
-    delete: "Confirm soft delete",
+    delete: "Move to trash",
+    forever: "Delete forever",
     restore: "Confirm Restore",
   };
 
@@ -1766,17 +1832,19 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
         <div>
           <h1 className="font-display text-2xl text-brand-900">Mattex Products</h1>
           <p className="text-sm text-mute">
-            Published is live. Unpublish is complete but not live. Draft is incomplete and can still go live after you confirm missing MOQ or lead. Soft delete never goes live — Restore first.
+            Published is live. Unpublish is complete but not live. Draft is incomplete. Move to trash hides a SKU until Restore. Delete forever removes it from the catalog and cannot be undone.
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap justify-end gap-2">
-          <button
-            type="button"
-            className="rounded-lg border border-line bg-white px-4 py-2 text-sm font-semibold text-ink hover:bg-brand-50"
-            onClick={() => setModal("import")}
-          >
-            Import Excel
-          </button>
+          {SHOW_PRODUCT_IMPORT ? (
+            <button
+              type="button"
+              className="rounded-lg border border-line bg-white px-4 py-2 text-sm font-semibold text-ink hover:bg-brand-50"
+              onClick={() => setModal("import")}
+            >
+              Import Excel
+            </button>
+          ) : null}
           <button
             type="button"
             className="rounded-lg border border-brand-600 bg-white px-4 py-2 text-sm font-semibold text-brand-800 hover:bg-brand-50"
@@ -1818,7 +1886,14 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
               className="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-700"
               onClick={() => openBulkConfirm("delete")}
             >
-              Soft delete
+              Move to trash
+            </button>
+            <button
+              type="button"
+              className="rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-semibold text-red-800"
+              onClick={() => openBulkConfirm("forever")}
+            >
+              Delete forever
             </button>
             <button
               type="button"
@@ -1957,12 +2032,27 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
                   className="rounded-lg border border-red-200 bg-white px-4 py-2 text-sm text-red-700"
                   onClick={() => {
                     const result = softDeleteAdminProduct(product.id);
-                    note(result, "Soft deleted");
+                    note(result, "Moved to trash");
                     if (result?.ok) closeModal();
                   }}
                 >
-                  Soft delete
+                  Move to trash
                 </button>
+              ) : null}
+              {product ? (
+                <HoverTip text={canDeleteProductForever(product) ? "" : "Unpublish this product before Delete forever."}>
+                  <button
+                    type="button"
+                    className="rounded-lg bg-red-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
+                    disabled={!canDeleteProductForever(product)}
+                    onClick={() => {
+                      if (!canDeleteProductForever(product)) return;
+                      setBulkConfirm({ type: "forever", items: [product] });
+                    }}
+                  >
+                    Delete forever
+                  </button>
+                </HoverTip>
               ) : null}
               {product && !product.deleted && product.published ? (
                 <button
@@ -2208,7 +2298,7 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
         </AdminModal>
       ) : null}
 
-      {modal === "import" ? (
+      {SHOW_PRODUCT_IMPORT && modal === "import" ? (
         <AdminModal title="Import Excel" onClose={closeModal} wide>
           <ExcelPanel note={note} />
         </AdminModal>
@@ -2226,7 +2316,7 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
               </button>
               <button
                 type="button"
-                className={`rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 ${bulkConfirm.type === "delete" ? "bg-red-700" : "bg-brand-600"}`}
+                className={`rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 ${bulkConfirm.type === "delete" || bulkConfirm.type === "forever" ? "bg-red-700" : "bg-brand-600"}`}
                 disabled={bulkConfirm.type === "publish" && !publishableCount}
                 onClick={applyBulkConfirm}
               >
@@ -2236,7 +2326,9 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
                     ? `Unpublish ${bulkConfirm.items.length}`
                     : bulkConfirm.type === "restore"
                       ? `Restore ${bulkConfirm.items.length}`
-                      : `Soft delete ${bulkConfirm.items.length}`}
+                      : bulkConfirm.type === "forever"
+                        ? `Delete forever ${bulkConfirm.items.length}`
+                        : `Move to trash ${bulkConfirm.items.length}`}
               </button>
             </div>
           }
@@ -2245,8 +2337,12 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
             {bulkConfirm.type === "publish"
               ? "Official SKU, name, unit and category are required. Duplicate SKUs are skipped. Missing MOQ or lead time is a warning — confirm to go live anyway."
               : bulkConfirm.type === "restore"
-                ? "Restore takes the SKU out of Soft deleted. It becomes Draft or Unpublish and does not go live."
-                : "Confirm these products before the change is applied."}
+                ? "Restore takes the SKU out of Trash. It becomes Draft or Unpublish and does not go live."
+                : bulkConfirm.type === "forever"
+                  ? "This cannot be undone. The SKU leaves the catalog. Old RFQs keep the name and SKU from when they were sent."
+                  : bulkConfirm.type === "delete"
+                    ? "Moved SKUs leave the marketplace and sit in Trash until Restore."
+                    : "Confirm these products before the change is applied."}
           </p>
           <div className="mt-3 overflow-auto rounded-lg border border-line max-h-80">
             <table className="w-full text-left text-[12px]">
@@ -2427,7 +2523,23 @@ function ExcelPanel({ note }) {
 const REJECT_PRESETS = ["No offer", "Cannot supply", "Out of stock", "Spec not available", "Quantity too low"];
 
 function rfqStamp(rfq) {
-  return String(rfq.submittedAt || "").slice(0, 16).replace("T", " ");
+  return formatQuoteVersionStamp(rfq.submittedAt || rfq.createdAt);
+}
+
+function RfqActivityDates({ rfq }) {
+  const last = rfqLastActivity(rfq, { audience: "staff" });
+  const submitted = rfqStamp(rfq);
+  if (!last || last.kind === "submitted") {
+    return <span className="whitespace-nowrap">{submitted || "—"}</span>;
+  }
+  return (
+    <div className="whitespace-nowrap">
+      <div>{submitted || "—"}</div>
+      <div className="mt-0.5 text-[10px] font-medium leading-snug text-ink">
+        {rfqActivityLabel(last)} · {formatQuoteVersionStamp(last.at)}
+      </div>
+    </div>
+  );
 }
 
 function rfqProductLabel(line) {
@@ -2768,10 +2880,17 @@ function rfqStatusKey(rfq) {
   return "received";
 }
 
+function rfqNeedsAction(rfq) {
+  if (rfq.cancelStatus === "requested") return true;
+  const status = inboxStatus(rfq);
+  return status === "received" || status === "reviewing";
+}
+
 function rfqStatusCounts(rfqs) {
-  const counts = { all: rfqs.length, received: 0, reviewing: 0, cancel: 0, tms: 0, accepted: 0, returned: 0, quoted: 0, rejected: 0, cancelled: 0 };
+  const counts = { action: 0, all: rfqs.length, received: 0, reviewing: 0, cancel: 0, tms: 0, accepted: 0, returned: 0, quoted: 0, rejected: 0, cancelled: 0 };
   rfqs.forEach((rfq) => {
     counts[rfqStatusKey(rfq)] += 1;
+    if (rfqNeedsAction(rfq)) counts.action += 1;
   });
   return counts;
 }
@@ -2804,113 +2923,19 @@ function rfqInboxChipClass(rfq) {
   return "bg-blue-50 text-blue-800";
 }
 
-const ATTENTION_CHIP = {
-  buyer: "bg-violet-100 text-violet-900",
-  cancel: "bg-amber-100 text-amber-950",
-  tms: "bg-amber-50 text-amber-900",
-  rfq: "bg-blue-50 text-blue-800",
-  returned: "bg-orange-50 text-orange-800",
-  report: "bg-rose-50 text-rose-800",
-};
-
 function buyerDomId(email) {
   return `admin-buyer-${String(email || "").replace(/[^a-zA-Z0-9]/g, "-")}`;
 }
 
-function collectAttentionItems({ buyers, rfqs }) {
-  const items = [];
-
-  (buyers || []).forEach((b) => {
-    if (b.approvalStatus === "rejected") return;
-    if (b.enabled === false) return;
-    if (!b.needsReview) return;
-    items.push({
-      id: `buyer-${b.email}`,
-      kind: "buyer",
-      section: "Buyers",
-      urgency: 2,
-      title: b.companyName || b.name || b.email,
-      detail: [b.name, b.email].filter(Boolean).join(" · "),
-      why: "New signup can already log in. Review the profile, then Enable or Disable if needed.",
-      chip: "New buyer",
-      chipClass: ATTENTION_CHIP.buyer,
-      stamp: b.createdAt || "",
-      payload: { email: b.email, name: b.name },
-    });
-  });
-
-  (rfqs || []).forEach((r) => {
-    if (!SHOW_RFQ_QUOTES && !isDev1InboxRfq(r)) return;
-    const status = inboxStatus(r);
-    const buyer = [r.buyerName, r.buyerEmail].filter(Boolean).join(" · ");
-    if (r.cancelStatus === "requested") {
-      items.push({
-        id: `rfq-cancel-${r.id}`,
-        kind: "rfq",
-        section: "RFQs",
-        urgency: 1,
-        title: r.id,
-        detail: buyer,
-        why: "Buyer asked to cancel. Accept to close, or keep the RFQ.",
-        chip: "Cancel requested",
-        chipClass: ATTENTION_CHIP.cancel,
-        stamp: r.submittedAt || "",
-        payload: { rfqId: r.id, email: r.buyerEmail, name: r.buyerName },
-      });
-      return;
-    }
-    if (SHOW_RFQ_QUOTES && status === "accepted" && !r.tmsDocumentNo) {
-      items.push({
-        id: `rfq-tms-${r.id}`,
-        kind: "rfq",
-        section: "RFQs",
-        urgency: 1,
-        title: r.id,
-        detail: r.lastTmsError ? `TMS failed: ${r.lastTmsError}` : buyer,
-        why: "Accepted — enter prices, then Submit To Buyer or Create TMS iRFQ.",
-        chip: "Accepted",
-        chipClass: ATTENTION_CHIP.tms,
-        stamp: r.submittedAt || "",
-        payload: { rfqId: r.id, email: r.buyerEmail, name: r.buyerName },
-      });
-      return;
-    }
-    if (["received", "reviewing", "returned"].includes(status)) {
-      items.push({
-        id: `rfq-${r.id}`,
-        kind: "rfq",
-        section: "RFQs",
-        urgency: status === "returned" ? 2 : 3,
-        title: r.id,
-        detail: buyer || `${(r.lines || []).length} line(s)`,
-        why:
-          status === "returned"
-            ? "Returned — review again."
-            : status === "reviewing"
-              ? "Still in review."
-              : "New RFQ waiting for Accept or Reject.",
-        chip: rfqInboxLabel(r),
-        chipClass: status === "returned" ? ATTENTION_CHIP.returned : ATTENTION_CHIP.rfq,
-        stamp: r.submittedAt || "",
-        payload: { rfqId: r.id, email: r.buyerEmail, name: r.buyerName },
-      });
-    }
-  });
-
-  items.sort((a, b) => {
-    const tb = Date.parse(b.stamp || "") || 0;
-    const ta = Date.parse(a.stamp || "") || 0;
-    if (tb !== ta) return tb - ta;
-    const nb = Number(String(b.title || "").replace(/\D/g, "")) || 0;
-    const na = Number(String(a.title || "").replace(/\D/g, "")) || 0;
-    if (nb !== na) return nb - na;
-    return String(b.title || "").localeCompare(String(a.title || ""));
-  });
-  return items;
-}
-
 function sameEmail(a, b) {
   return String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
+}
+
+function formatSignedUp(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
 function sortNewestAccounts(list) {
@@ -2946,145 +2971,6 @@ function BuyerNameLink({ name, email, onOpen, className = "" }) {
       {name && email ? <span className="text-mute"> · </span> : null}
       {email ? <span className={name ? "text-mute" : "font-medium"}>{email}</span> : null}
     </button>
-  );
-}
-
-function AttentionPanel({ items, onOpen, onOpenBuyer }) {
-  const buyers = items.filter((item) => item.section === "Buyers");
-  const rfqs = items.filter((item) => item.section === "RFQs");
-
-  function jump(id) {
-    document.getElementById(id)?.scrollIntoView({ block: "start", behavior: "smooth" });
-  }
-
-  return (
-    <div>
-      <div className="mb-4">
-        <h1 className="font-display text-2xl text-brand-900">Needs attention</h1>
-        <p className="mt-1 text-sm text-mute">Open a row to work it. Buyer name or email opens their account.</p>
-        <div className="mt-3 flex flex-wrap gap-2">
-          {[
-            { id: "attention-buyers", label: "Buyer reviews", count: buyers.length },
-            { id: "attention-rfqs", label: "RFQs", count: rfqs.length },
-          ].map((chip) => (
-            <button
-              key={chip.id}
-              type="button"
-              onClick={() => chip.count && jump(chip.id)}
-              className="inline-flex items-center gap-1.5 rounded-full border border-line bg-white px-2.5 py-1 text-xs font-semibold text-ink hover:bg-brand-50"
-            >
-              {chip.label}
-              <span
-                className={`inline-flex min-w-[1.35rem] items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-bold tabular-nums ${
-                  chip.count
-                    ? chip.id === "attention-buyers"
-                      ? "bg-violet-600 text-white"
-                      : "bg-brand-600 text-white"
-                    : "bg-paper text-mute"
-                }`}
-              >
-                {chip.count}
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
-      {items.length ? (
-        <div className="space-y-5">
-          <section id="attention-buyers">
-            <h2 className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-mute">
-              Buyer reviews
-              <span className="inline-flex min-w-[1.35rem] items-center justify-center rounded-full bg-violet-600 px-1.5 py-0.5 text-[11px] font-bold tabular-nums text-white">
-                {buyers.length}
-              </span>
-            </h2>
-            {buyers.length ? (
-              <div className="overflow-auto rounded-xl border border-line bg-white max-h-40">
-                <table className="min-w-[28rem] w-full text-left text-[12px]">
-                  <thead className="sticky top-0 bg-violet-50 text-[10px] font-semibold uppercase tracking-wide text-mute">
-                    <tr>
-                      {["Company", "Name", "Email"].map((h) => (
-                        <th key={h} className="px-3 py-1.5">
-                          {h}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {buyers.map((item) => (
-                      <tr
-                        key={item.id}
-                        className="cursor-pointer border-t border-line/80 hover:bg-violet-50/70"
-                        onClick={() => onOpen(item)}
-                      >
-                        <td className="px-3 py-1.5 font-semibold">{item.title}</td>
-                        <td className="px-3 py-1.5">{item.payload.name || "—"}</td>
-                        <td className="px-3 py-1.5 text-mute">{item.payload.email}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <p className="text-xs text-mute">No sign-ups waiting.</p>
-            )}
-          </section>
-          <section id="attention-rfqs">
-            <h2 className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-mute">
-              RFQs
-              <span className="inline-flex min-w-[1.35rem] items-center justify-center rounded-full bg-brand-600 px-1.5 py-0.5 text-[11px] font-bold tabular-nums text-white">
-                {rfqs.length}
-              </span>
-            </h2>
-            {rfqs.length ? (
-              <div className="overflow-auto rounded-xl border border-line bg-white max-h-[min(36rem,calc(100vh-18rem))]">
-                <table className="min-w-[36rem] w-full text-left text-[12px]">
-                  <thead className="sticky top-0 bg-brand-50 text-[10px] font-semibold uppercase tracking-wide text-mute">
-                    <tr>
-                      {["RFQ", "Buyer", "Need", "When"].map((h) => (
-                        <th key={h} className="px-3 py-2">
-                          {h}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rfqs.map((item) => (
-                      <tr
-                        key={item.id}
-                        className="cursor-pointer border-t border-line/80 hover:bg-brand-50/60"
-                        onClick={() => onOpen(item)}
-                      >
-                        <td className="px-3 py-2 font-semibold whitespace-nowrap">
-                          <button type="button" className="hover:underline" onClick={() => onOpen(item)}>
-                            {item.title}
-                          </button>
-                        </td>
-                        <td className="px-3 py-2">
-                          <BuyerNameLink name={item.payload.name} email={item.payload.email} onOpen={onOpenBuyer} />
-                        </td>
-                        <td className="px-3 py-2">
-                          <span className={`inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${item.chipClass}`}>
-                            {item.chip}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2 text-mute whitespace-nowrap">{item.stamp ? rfqStamp({ submittedAt: item.stamp }) : "—"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <p className="rounded-xl border border-dashed border-line bg-white px-3 py-8 text-sm text-mute">No RFQs waiting.</p>
-            )}
-          </section>
-        </div>
-      ) : (
-        <p className="rounded-xl border border-dashed border-line bg-white px-4 py-16 text-center text-sm text-mute">
-          All clear. No buyer approvals or RFQs waiting.
-        </p>
-      )}
-    </div>
   );
 }
 
@@ -3169,10 +3055,10 @@ function RfqActions({
   onAcceptCancel,
   onDeclineCancel,
   prominent = false,
+  note,
 }) {
   const status = inboxStatus(rfq);
   const kind = rfqActionKind(rfq, open);
-  if (!kind) return null;
   const wrap = prominent ? "flex flex-wrap items-center gap-3" : "flex flex-wrap justify-end gap-2";
   const primary = prominent
     ? "rounded-lg bg-brand-600 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
@@ -3189,6 +3075,8 @@ function RfqActions({
   const dark = prominent
     ? "rounded-lg bg-charcoal px-5 py-2.5 text-sm font-semibold text-white"
     : "rounded-lg bg-charcoal px-3 py-1.5 text-xs font-semibold text-white";
+
+  if (!kind) return null;
 
   if (kind === "cancel") {
     return (
@@ -3329,6 +3217,11 @@ function RfqDetail({
   const actionKind = rfqActionKind(rfq, open);
   const guestBuyer = rfqBuyerKind(rfq) !== "member";
   const waSent = rfqQuotedOffline(rfq);
+  const lastActivity = rfqLastActivity(rfq, { audience: "staff" });
+
+  useEffect(() => {
+    hydrateRfqDecisionActivity(rfq.id);
+  }, [rfq.id]);
 
   useEffect(() => {
     setViewMode(DRAFT_VALUE);
@@ -3400,6 +3293,11 @@ function RfqDetail({
             {(rfq.askKind || "quote").toUpperCase()} · {rfq.channel === "email" ? "email" : "portal"} · {rfqStamp(rfq)}
             {rfqProjectName(rfq) ? ` · ${rfqProjectName(rfq)}` : ""}
           </p>
+          {lastActivity && lastActivity.kind !== "submitted" ? (
+            <p className="mt-1 text-xs text-ink">
+              Last action · {rfqActivityLabel(lastActivity)} · {formatQuoteVersionStamp(lastActivity.at)}
+            </p>
+          ) : null}
         </div>
         <RfqStatusChip rfq={rfq} />
       </div>
@@ -3409,13 +3307,14 @@ function RfqDetail({
             actionKind === "open" ? "border-line bg-white" : "border-brand-200 bg-brand-50"
           }`}
         >
-          <p className="text-sm font-medium text-ink">{actionCopy}</p>
+          {actionCopy ? <p className="text-sm font-medium text-ink">{actionCopy}</p> : null}
           <RfqActions
             rfq={rfq}
             open={open}
             accepting={accepting}
             quoting={quoting}
             prominent
+            note={note}
             onAccept={onAccept}
             onReject={onReject}
             onCreateTms={onCreateTms}
@@ -3548,6 +3447,7 @@ function RfqDetail({
               <RfqFollowUpContact rfq={rfq} account={account} note={note} />
             </div>
           </section>
+          <RfqActivityLog rfq={rfq} lang="en" audience="staff" title="Activity" />
           <section className="rounded-xl border border-line bg-white p-4">
             <h2 className="text-xs font-semibold uppercase tracking-wide text-mute">PDF</h2>
             <p className="mt-1 text-xs text-mute">Download a copy of this RFQ.</p>
@@ -3571,7 +3471,7 @@ function RfqDetail({
 function RfqPanel({ rfqs: rawRfqs, note, focusId = "", onClearFocus, onOpenDetail, onOpenBuyer }) {
   const rfqs = SHOW_RFQ_QUOTES ? rawRfqs : rawRfqs.filter(isDev1InboxRfq);
   const [view, setView] = useState("list");
-  const [statusTab, setStatusTab] = useState("all");
+  const [statusTab, setStatusTab] = useState("action");
   const [query, setQuery] = useState("");
   const [rejecting, setRejecting] = useState(null);
   const [rejectReason, setRejectReason] = useState("");
@@ -3580,14 +3480,32 @@ function RfqPanel({ rfqs: rawRfqs, note, focusId = "", onClearFocus, onOpenDetai
   const [quotingId, setQuotingId] = useState("");
   const [waBusyId, setWaBusyId] = useState("");
   const [waOpenedId, setWaOpenedId] = useState("");
+  const [pinnedId, setPinnedId] = useState("");
   const focused = Boolean(focusId) && rfqs.some((r) => r.id === focusId);
   const needle = searchNeedle(query);
   const searchedRfqs = needle
     ? rfqs.filter((r) => matchesSearch(needle, ...rfqSearchHay(r)))
     : rfqs;
   const statusTabs = SHOW_RFQ_QUOTES ? RFQ_STATUS_TABS : RFQ_STATUS_TABS_SLICE;
-  const activeStatusTab = statusTabs.some((tab) => tab.id === statusTab) ? statusTab : "all";
-  const visibleRfqs = activeStatusTab === "all" ? searchedRfqs : searchedRfqs.filter((r) => rfqStatusKey(r) === activeStatusTab);
+  const activeStatusTab = statusTabs.some((tab) => tab.id === statusTab) ? statusTab : "action";
+  const visibleRfqs =
+    activeStatusTab === "all"
+      ? searchedRfqs
+      : activeStatusTab === "action"
+        ? searchedRfqs.filter(rfqNeedsAction)
+        : searchedRfqs.filter((r) => rfqStatusKey(r) === activeStatusTab);
+
+  useEffect(() => {
+    if (!focusId) return;
+    const rfq = rfqs.find((r) => r.id === focusId);
+    if (!rfq) return;
+    if (rfqNeedsAction(rfq)) {
+      setStatusTab("action");
+      return;
+    }
+    const key = rfqStatusKey(rfq);
+    setStatusTab(statusTabs.some((tab) => tab.id === key) ? key : "all");
+  }, [focusId]);
 
   useEffect(() => {
     if (!focusId) return undefined;
@@ -3601,6 +3519,34 @@ function RfqPanel({ rfqs: rawRfqs, note, focusId = "", onClearFocus, onOpenDetai
     setWaOpenedId("");
   }, [focusId]);
 
+  function followRfq(rfq) {
+    if (!rfq?.id) return;
+    setPinnedId(rfq.id);
+    if (rfqNeedsAction(rfq)) setStatusTab("action");
+    else {
+      const key = rfqStatusKey(rfq);
+      setStatusTab(statusTabs.some((tab) => tab.id === key) ? key : "all");
+    }
+    window.setTimeout(() => {
+      document.getElementById(`admin-rfq-${rfq.id}`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+    }, 80);
+  }
+
+  function mailNote(mail, okMessage, failMessage) {
+    if (mail?.ok === false && mail.error === "email") {
+      note({ ok: true }, okMessage.replace(/Buyer email sent\.?/, "No buyer email (guest or invalid address)."));
+      return;
+    }
+    if (mail?.ok === false) {
+      note(mail, failMessage);
+      return;
+    }
+    note(
+      { ok: true },
+      mail?.skipped ? okMessage.replace("Buyer email sent.", "Localhost does not send the buyer email.") : okMessage
+    );
+  }
+
   function openReject(rfq) {
     setRejecting(rfq);
     setRejectReason("No offer");
@@ -3613,19 +3559,41 @@ function RfqPanel({ rfqs: rawRfqs, note, focusId = "", onClearFocus, onOpenDetai
     setRejectError("");
   }
 
-  function confirmReject() {
-    const result = decideRfq(rejecting.id, { decision: "no_offer", reason: rejectReason.trim() || "No offer" });
-    note(result, "RFQ marked No Offer Rejected");
-    if (result?.ok) closeReject();
-    else setRejectError(result?.error || "Unable to reject.");
+  async function confirmReject() {
+    const why = rejectReason.trim() || "No offer";
+    const result = decideRfq(rejecting.id, { decision: "no_offer", reason: why });
+    if (!result?.ok) {
+      setRejectError(result?.error || "Unable to reject.");
+      note(result, "RFQ marked No Offer Rejected");
+      return;
+    }
+    const next = result.rfq || { ...rejecting, reviewStatus: "no_offer", reason: why };
+    closeReject();
+    followRfq(next);
+    const mail = await deliverRfqNoOfferEmail(next);
+    mailNote(mail, "RFQ moved to No Offer Rejected. Buyer email sent.", "RFQ rejected. Buyer email could not be sent.");
   }
 
-  function acceptCancel(rfq) {
-    note(decideRfqCancel(rfq.id, { accept: true }), "Cancel accepted");
+  async function acceptCancel(rfq) {
+    const result = decideRfqCancel(rfq.id, { accept: true });
+    if (!result?.ok) {
+      note(result, "Cancel accepted");
+      return;
+    }
+    followRfq(result.rfq || { ...rfq, cancelStatus: "accepted", reviewStatus: "cancelled" });
+    const mail = await deliverRfqCancelAcceptedEmail(result.rfq || rfq);
+    mailNote(mail, "Cancel accepted. Buyer email sent.", "Cancel accepted. Buyer email could not be sent.");
   }
 
-  function declineCancel(rfq) {
-    note(decideRfqCancel(rfq.id, { accept: false }), "RFQ kept");
+  async function declineCancel(rfq) {
+    const result = decideRfqCancel(rfq.id, { accept: false });
+    if (!result?.ok) {
+      note(result, "RFQ kept");
+      return;
+    }
+    followRfq(result.rfq || { ...rfq, cancelStatus: "declined" });
+    const mail = await deliverRfqCancelDeclinedEmail(result.rfq || rfq);
+    mailNote(mail, "RFQ kept in In review. Buyer email sent.", "RFQ kept. Buyer email could not be sent.");
   }
 
   async function createIrfq(rfq) {
@@ -3679,12 +3647,26 @@ function RfqPanel({ rfqs: rawRfqs, note, focusId = "", onClearFocus, onOpenDetai
     }
   }
 
-  function acceptRfq(rfq) {
-    note(
-      decideRfq(rfq.id, { decision: "accepted" }),
+  async function acceptRfq(rfq) {
+    const result = decideRfq(rfq.id, { decision: "accepted" });
+    if (!result?.ok) {
+      note(
+        result,
+        SHOW_RFQ_QUOTES
+          ? "RFQ accepted — enter prices, then Submit To Buyer or Create TMS iRFQ"
+          : "RFQ accepted — buyer sees In review. Follow up by phone if needed."
+      );
+      return;
+    }
+    const next = result.rfq || { ...rfq, reviewStatus: "accepted" };
+    followRfq(next);
+    const mail = await deliverRfqAcceptedEmail(next);
+    mailNote(
+      mail,
       SHOW_RFQ_QUOTES
-        ? "RFQ accepted — enter prices, then Submit To Buyer or Create TMS iRFQ"
-        : "RFQ accepted — buyer sees In review. Follow up by phone if needed."
+        ? "RFQ accepted. Buyer email sent. Enter prices, then Submit To Buyer or Create TMS iRFQ."
+        : "RFQ moved to In review. Buyer email sent.",
+      "RFQ accepted. Buyer email could not be sent."
     );
   }
 
@@ -3876,14 +3858,25 @@ function RfqPanel({ rfqs: rawRfqs, note, focusId = "", onClearFocus, onOpenDetai
         empty
       ) : !visibleRfqs.length ? (
         <p className="rounded-xl border border-dashed border-line bg-white px-4 py-16 text-center text-sm text-mute">
-          {needle ? "No RFQs match this search." : "No RFQs in this status."}
+          {needle
+            ? "No RFQs match this search."
+            : activeStatusTab === "action"
+              ? (
+                <>
+                  No pending RFQs.{" "}
+                  <button type="button" className="font-semibold text-brand-800 hover:underline" onClick={() => setStatusTab("all")}>
+                    View all RFQs
+                  </button>
+                </>
+              )
+              : "No RFQs in this status."}
         </p>
       ) : view === "list" ? (
         <div className="overflow-auto rounded-xl border border-line bg-white max-h-[calc(100vh-16rem)]">
           <table className="min-w-[64rem] w-full text-left text-[12px]">
-            <thead className="sticky top-0 bg-brand-50 text-[10px] font-semibold uppercase tracking-wide text-mute">
+            <thead className="pointer-events-none sticky top-0 z-10 bg-brand-50 text-[10px] font-semibold uppercase tracking-wide text-mute">
               <tr>
-                {["RFQ", "Buyer", "Channel", "Products", "Status", "Submitted", "Action"].map((h) => (
+                {["RFQ", "Buyer", "Channel", "Products", "Status", "Activity", "Action"].map((h) => (
                   <th key={h} className="px-3 py-2">
                     {h}
                   </th>
@@ -3894,7 +3887,7 @@ function RfqPanel({ rfqs: rawRfqs, note, focusId = "", onClearFocus, onOpenDetai
               {visibleRfqs.map((r) => {
                 const open = rfqIsOpen(r);
                 const lines = r.lines || [];
-                const isFocus = r.id === focusId;
+                const isFocus = r.id === focusId || r.id === pinnedId;
                 return (
                   <tr
                     id={`admin-rfq-${r.id}`}
@@ -3927,13 +3920,16 @@ function RfqPanel({ rfqs: rawRfqs, note, focusId = "", onClearFocus, onOpenDetai
                     <td className="px-3 py-2">
                       <RfqStatusChip rfq={r} />
                     </td>
-                    <td className="px-3 py-2 text-mute whitespace-nowrap">{rfqStamp(r)}</td>
+                    <td className="px-3 py-2 text-mute">
+                      <RfqActivityDates rfq={r} />
+                    </td>
                     <td className="px-3 py-2">
                       <RfqActions
                         rfq={r}
                         open={open}
                         accepting={acceptingId === r.id}
                         quoting={quotingId === r.id}
+                        note={note}
                         onAccept={acceptRfq}
                         onReject={openReject}
                         onCreateTms={createTmsIrfq}
@@ -3953,7 +3949,7 @@ function RfqPanel({ rfqs: rawRfqs, note, focusId = "", onClearFocus, onOpenDetai
           {visibleRfqs.map((r) => {
             const status = inboxStatus(r);
             const open = rfqIsOpen(r);
-            const isFocus = r.id === focusId;
+            const isFocus = r.id === focusId || r.id === pinnedId;
             return (
               <article
                 id={`admin-rfq-${r.id}`}
@@ -3969,8 +3965,11 @@ function RfqPanel({ rfqs: rawRfqs, note, focusId = "", onClearFocus, onOpenDetai
                       <RfqBuyerMeta rfq={r} note={note} onOpenBuyer={onOpenBuyer} compact />
                     </div>
                     <p className="text-[11px] text-mute">
-                      {(r.askKind || "quote").toUpperCase()} · {r.channel || "rfq"} · {rfqStamp(r)}
+                      {(r.askKind || "quote").toUpperCase()} · {r.channel || "rfq"}
                     </p>
+                    <div className="mt-1 text-[11px] text-mute">
+                      <RfqActivityDates rfq={r} />
+                    </div>
                   </div>
                   <RfqStatusChip rfq={r} />
                 </div>
@@ -4024,6 +4023,7 @@ function RfqPanel({ rfqs: rawRfqs, note, focusId = "", onClearFocus, onOpenDetai
                     open={open}
                     accepting={acceptingId === r.id}
                     quoting={quotingId === r.id}
+                    note={note}
                     onAccept={acceptRfq}
                     onReject={openReject}
                     onCreateTms={createTmsIrfq}
@@ -4256,7 +4256,7 @@ function RfqFollowUpContact({ rfq, account, note }) {
   );
 }
 
-function BuyerInfoModal({ email, note, onClose, onOpenRfq }) {
+function BuyerInfoModal({ email, note, onClose, onOpenRfq, onReject }) {
   const buyer = listBuyers().find((b) => sameEmail(b.email, email));
   const rfqs = getAllRfqs().filter((r) => sameEmail(r.buyerEmail, email));
   const hintName = buyer?.name || rfqs[0]?.buyerName || "";
@@ -4264,7 +4264,7 @@ function BuyerInfoModal({ email, note, onClose, onOpenRfq }) {
   const signedUp = buyer?.createdAt ? String(buyer.createdAt).slice(0, 16).replace("T", " ") : "";
   const canEnable = Boolean(buyer && buyer.approvalStatus !== "rejected" && buyer.enabled === false);
   const canDisable = Boolean(buyer && buyer.enabled !== false && buyer.approvalStatus !== "rejected");
-  const canReview = Boolean(buyer && buyer.needsReview && buyer.approvalStatus !== "rejected");
+  const canReject = Boolean(buyer && buyer.approvalStatus !== "rejected");
 
   return (
     <AdminModal
@@ -4275,13 +4275,13 @@ function BuyerInfoModal({ email, note, onClose, onOpenRfq }) {
           <button type="button" className="rounded-lg border border-line bg-white px-4 py-2 text-sm" onClick={onClose}>
             Close
           </button>
-          {canReview ? (
+          {canReject ? (
             <button
               type="button"
-              className="rounded-lg border border-line bg-white px-4 py-2 text-sm font-semibold text-brand-800"
-              onClick={() => note(markBuyerReviewed(buyer.email), "Marked reviewed")}
+              className="rounded-lg border border-red-200 bg-white px-4 py-2 text-sm font-semibold text-red-800"
+              onClick={() => onReject?.(buyer.email)}
             >
-              Mark reviewed
+              Reject
             </button>
           ) : null}
           {canDisable ? (
@@ -4311,7 +4311,7 @@ function BuyerInfoModal({ email, note, onClose, onOpenRfq }) {
           {buyer?.jobTitle ? <p className="mt-0.5 text-sm text-mute">{buyer.jobTitle}</p> : null}
           {signedUp ? <p className="mt-1 text-xs text-mute">Signed up {signedUp}</p> : null}
           {buyer && buyer.approvalStatus !== "rejected" && buyer.enabled !== false ? (
-            <p className="mt-2 text-xs text-mute">Can log in now. Review details, then Enable / Disable as needed.</p>
+            <p className="mt-2 text-xs text-mute">Can log in now. Disable to pause, or Reject to refuse the account.</p>
           ) : null}
         </div>
         <AccountStatusChip account={buyer} />
@@ -4384,6 +4384,7 @@ function AccountPanel({ note, kind = "sales", focusEmail = "", onOpenRfq }) {
   const [formEmail, setFormEmail] = useState("");
   const [formName, setFormName] = useState("");
   const [formError, setFormError] = useState("");
+  const [rejectReason, setRejectReason] = useState("");
   const [query, setQuery] = useState("");
   const isSales = kind === "sales";
   const rows = sortNewestAccounts(isSales ? staff : buyers);
@@ -4450,6 +4451,7 @@ function AccountPanel({ note, kind = "sales", focusEmail = "", onOpenRfq }) {
   function closeModal() {
     setModal(null);
     setFormError("");
+    setRejectReason("");
   }
 
   function saveStaff() {
@@ -4468,7 +4470,7 @@ function AccountPanel({ note, kind = "sales", focusEmail = "", onOpenRfq }) {
         staffNote(result);
         return;
       }
-      staffNote(result, `Invite email opened for ${normalizeStaffLabel(formName, formEmail)}.`);
+      staffNote(result, `Invite email sent to ${normalizeStaffLabel(formName, formEmail)}.`);
       closeModal();
       return;
     }
@@ -4491,7 +4493,7 @@ function AccountPanel({ note, kind = "sales", focusEmail = "", onOpenRfq }) {
           <p className="text-sm text-mute">
             {isSales
               ? "Invite portal logins by email. They set a password from the invite link. Disable hides the account from sign-in."
-              : "New sign-ups can log in immediately. Review the profile, Mark reviewed to clear Needs attention, or Disable to block login."}
+              : "New sign-ups can log in immediately. Disable to pause login, or Reject to refuse the account."}
           </p>
         </div>
         {isSales ? (
@@ -4521,7 +4523,7 @@ function AccountPanel({ note, kind = "sales", focusEmail = "", onOpenRfq }) {
         <table className="min-w-[48rem] w-full text-left text-[12px]">
           <thead className="sticky top-0 bg-brand-50 text-[10px] font-semibold uppercase tracking-wide text-mute">
             <tr>
-              {(isSales ? ["Name", "Email", "Type", "Status", "Action"] : ["Company", "Name", "Email", "Status", "Action"]).map((h) => (
+              {(isSales ? ["Name", "Email", "Type", "Status", "Action"] : ["Company", "Name", "Email", "Signed up", "Status", "Action"]).map((h) => (
                 <th key={h} className="px-3 py-2">
                   {h}
                 </th>
@@ -4550,6 +4552,7 @@ function AccountPanel({ note, kind = "sales", focusEmail = "", onOpenRfq }) {
                       <td className="px-3 py-2 font-medium">{u.companyName || "—"}</td>
                       <td className="px-3 py-2">{u.name || "—"}</td>
                       <td className="px-3 py-2 text-mute">{u.email}</td>
+                      <td className="px-3 py-2 text-mute whitespace-nowrap">{formatSignedUp(u.createdAt)}</td>
                     </>
                   )}
                   <td className="px-3 py-2">
@@ -4570,18 +4573,22 @@ function AccountPanel({ note, kind = "sales", focusEmail = "", onOpenRfq }) {
                         <button
                           type="button"
                           className="text-xs font-semibold text-brand-700 hover:underline"
-                          onClick={() => staffNote(resendStaffInvite(u.email), "Invite email opened")}
+                          onClick={() => staffNote(resendStaffInvite(u.email), "Invite email sent")}
                         >
                           Resend invite
                         </button>
                       ) : null}
-                      {!isSales && u.needsReview && u.enabled !== false && u.approvalStatus !== "rejected" ? (
+                      {!isSales && u.approvalStatus !== "rejected" ? (
                         <button
                           type="button"
-                          className="text-xs font-semibold text-brand-700 hover:underline"
-                          onClick={() => note(markBuyerReviewed(u.email), "Marked reviewed")}
+                          className="text-xs font-semibold text-red-800 hover:underline"
+                          onClick={() => {
+                            setRejectReason("");
+                            setFormError("");
+                            setModal({ type: "reject", email: u.email });
+                          }}
                         >
-                          Mark reviewed
+                          Reject
                         </button>
                       ) : null}
                       {!isSales && (u.approvalStatus === "pending" || u.approvalStatus === "rejected") ? null : u.enabled !== false ? (
@@ -4615,7 +4622,7 @@ function AccountPanel({ note, kind = "sales", focusEmail = "", onOpenRfq }) {
               ))
             ) : (
               <tr>
-                <td colSpan={5} className="px-3 py-16 text-center text-sm text-mute">
+                <td colSpan={isSales ? 5 : 6} className="px-3 py-16 text-center text-sm text-mute">
                   {needle
                     ? "No accounts match this search."
                     : rows.length
@@ -4636,7 +4643,57 @@ function AccountPanel({ note, kind = "sales", focusEmail = "", onOpenRfq }) {
           note={note}
           onClose={closeModal}
           onOpenRfq={onOpenRfq}
+          onReject={(email) => {
+            setRejectReason("");
+            setFormError("");
+            setModal({ type: "reject", email });
+          }}
         />
+      ) : null}
+      {!isSales && modal?.type === "reject" ? (
+        <AdminModal
+          title="Reject buyer"
+          onClose={closeModal}
+          footer={
+            <div className="flex justify-end gap-2">
+              <button type="button" className="rounded-lg border border-line bg-white px-4 py-2 text-sm" onClick={closeModal}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="rounded-lg bg-red-700 px-4 py-2 text-sm font-semibold text-white"
+                onClick={() => {
+                  const result = rejectBuyer(modal.email, { reason: rejectReason });
+                  if (!result?.ok) {
+                    setFormError(result?.error === "reason" ? "Enter a rejection reason." : "Unable to reject.");
+                    note(result);
+                    return;
+                  }
+                  note(result, "Rejection email sent");
+                  closeModal();
+                }}
+              >
+                Reject
+              </button>
+            </div>
+          }
+        >
+          <p className="text-sm text-mute">They cannot log in. This cannot be reversed with Enable. A rejection email will open.</p>
+          <label className="mt-3 block text-sm font-medium">
+            Reason
+            <textarea
+              className="mt-1 w-full rounded-lg border border-line px-3 py-2 text-sm"
+              rows={4}
+              value={rejectReason}
+              onChange={(e) => {
+                setRejectReason(e.target.value);
+                setFormError("");
+              }}
+              placeholder="Why this account is refused"
+            />
+          </label>
+          {formError ? <p className="mt-2 text-sm text-red-700">{formError}</p> : null}
+        </AdminModal>
       ) : null}
       {isSales && modal ? (
         <AdminModal

@@ -189,6 +189,9 @@ export default function RfqPage() {
             <p className="mt-2 text-sm text-mute">
               {success.id} · {success.lines.length} line(s) · {formatPrice(success.pricedSubtotal)}
             </p>
+            {success.channel !== "whatsapp" && success.buyerEmail && !String(success.buyerEmail).startsWith("guest@") ? (
+              <p className="mt-2 text-sm font-medium text-brand-800">{t("rfqEmailSent", { email: success.buyerEmail })}</p>
+            ) : null}
             {success.channel === "whatsapp" ? (
               <p className="mt-2 text-sm font-medium text-brand-800">{t("waSavedInSubbie")}</p>
             ) : null}

@@ -3,7 +3,7 @@
  */
 import { Link, useSearchParams } from "react-router-dom";
 import { useStore } from "../hooks/useStore";
-import { buildSupplierBankInfo, formatPrice, getProduct, getRfq, inboxStatus, requestRfqCancel, resubmitRfq, rfqDiscussEmailHref, rfqDiscussWhatsappText, openWhatsappChat, rfqProjectName, updateBuyerRfqDetails, buyerRfqDetailsLocked, lineMoq, createBuyerPurchaseOrder, quoteVersionList, quoteEffectiveVersionNo, getEffectiveQuoteVersion } from "../lib/store";
+import { buildSupplierBankInfo, formatPrice, getProduct, inboxStatus, requestRfqCancel, canBuyerRequestCancel, resubmitRfq, rfqDiscussEmailHref, rfqDiscussWhatsappText, openWhatsappChat, rfqProjectName, updateBuyerRfqDetails, buyerRfqDetailsLocked, lineMoq, createBuyerPurchaseOrder, quoteVersionList, quoteEffectiveVersionNo, getEffectiveQuoteVersion, rfqActivityLog, rfqLastActivity, rfqActivityLabel, formatQuoteVersionStamp, hydrateRfqDecisionActivity } from "../lib/store";
 import { useEffect, useMemo, useRef, useState } from "react";
 import SiteHeader from "../components/SiteHeader";
 import Seo from "../components/Seo";
@@ -16,6 +16,7 @@ import { DEMO_QUOTED_RFQ, buildPrototypeQuotes, buildSalesQuote } from "./rfqs-p
 import QuoteVariant from "./rfqs-prototype/QuoteCompareVariantA";
 import RfqStepBar, { RFQ_PHASE_STEPS } from "./rfqs-prototype/RfqStepBar";
 import QuoteVersionSelect from "../components/QuoteVersionSelect";
+import RfqActivityLog from "../components/RfqActivityLog";
 
 function isCodPaymentTerm(value) {
   const raw = String(value || "").toLowerCase();
@@ -44,7 +45,7 @@ function downloadRfq(rfq) {
     `Mattex Marketplace — RFQ`,
     `ID: ${rfq.id}`,
     `Status: ${rfq.status}`,
-    `Submitted: ${new Date(rfq.submittedAt).toLocaleString()}`,
+    `Submitted: ${formatQuoteVersionStamp(rfq.submittedAt)}`,
     rfq.responseDate ? `Quotation deadline: ${rfq.responseDate}` : null,
     rfq.deliveryDate ? `Requested delivery: ${rfq.deliveryDate}` : null,
     `Delivery: ${rfq.deliveryMode === "partial" ? "partial" : "one-time"}`,
@@ -58,6 +59,12 @@ function downloadRfq(rfq) {
     rfq.address ? `Address: ${rfq.address}` : null,
     `Substitutes: ${rfq.acceptSubstitutes ? "accepted (buyer must still confirm)" : "not accepted"}`,
     rfq.note ? `Note: ${rfq.note}` : null,
+    "",
+    "Activity",
+    "--------",
+    ...rfqActivityLog(rfq, { audience: "buyer" }).map(
+      (event) => `${formatQuoteVersionStamp(event.at)} — ${rfqActivityLabel(event, "en")}`
+    ),
     "",
     "Line items",
     "---------",
@@ -134,7 +141,7 @@ function RfqDetailsSummary({ rfq, t }) {
       <div className="mt-3 border-t border-line pt-3 space-y-3">
         {locked ? <p className="text-xs text-mute">{t("rfqDetailsLocked")}</p> : null}
         <div className="space-y-1">
-          <p className="text-xs text-mute">Submitted {new Date(rfq.submittedAt).toLocaleString()}</p>
+          <p className="text-xs text-mute">{t("submitted")} {formatQuoteVersionStamp(rfq.submittedAt)}</p>
           {rfq.responseDate ? (
             <p className="text-sm text-ink">
               <span className="text-mute">{t("quotationDeadlineLabel")}</span> {rfq.responseDate}
@@ -549,6 +556,8 @@ function RfqDocSwitcher({ list, selectedId, onSelect, onViewQuote, acceptedByRfq
                         <span className="mt-0.5 block text-xs text-mute truncate">{rfqLineSummary(rfq, t)}</span>
                         <span className="mt-0.5 block text-[11px] text-mute truncate">
                           {rfqProjectName(rfq) || t("filterProjectUnassigned")}
+                          {" · "}
+                          {formatQuoteVersionStamp(rfqLastActivity(rfq, { audience: "buyer" })?.at || rfq.submittedAt)}
                         </span>
                       </span>
                       <span className="shrink-0 text-right">
@@ -628,15 +637,15 @@ export default function RfqsPage() {
   const [focusQuoteId, setFocusQuoteId] = useState(null);
   const [focusTick, setFocusTick] = useState(0);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [cancelFlash, setCancelFlash] = useState("");
   const [contactOpen, setContactOpen] = useState(false);
   const [quoteViewVersion, setQuoteViewVersion] = useState("");
   const contactRef = useRef(null);
 
   const selected = useMemo(() => {
-    if (!selectedId) return null;
-    if (selectedId === DEMO_QUOTED_RFQ.id) return DEMO_QUOTED_RFQ;
-    return getRfq(selectedId);
-  }, [selectedId, storedList]);
+    if (selectedId === DEMO_QUOTED_RFQ.id) return usingDemo ? DEMO_QUOTED_RFQ : null;
+    return list.find((rfq) => rfq.id === selectedId) || list[0] || null;
+  }, [selectedId, list, usingDemo]);
 
   const quotes = useMemo(() => {
     if (!SHOW_RFQ_QUOTES || !selected) return [];
@@ -663,6 +672,11 @@ export default function RfqsPage() {
   useEffect(() => {
     setQuoteViewVersion(selectedEffectiveNo ? String(selectedEffectiveNo) : "");
   }, [selected?.id, selectedEffectiveNo]);
+
+  useEffect(() => {
+    setCancelFlash("");
+    setConfirmCancel(false);
+  }, [selected?.id]);
 
   const acceptance = selected ? acceptedByRfq[selected.id] || null : null;
   const hasAccepted = Boolean(acceptance);
@@ -753,6 +767,10 @@ export default function RfqsPage() {
   }, [selected?.id]);
 
   useEffect(() => {
+    if (selected?.id) hydrateRfqDecisionActivity(selected.id);
+  }, [selected?.id]);
+
+  useEffect(() => {
     setFocusQuoteId(null);
     setConfirmCancel(false);
     setContactOpen(false);
@@ -807,9 +825,24 @@ export default function RfqsPage() {
         ) : null}
       </div>
 
+      {!list.length ? (
+        <section className="bg-white border border-line rounded-xl px-6 py-16 sm:py-20 text-center">
+          <h2 className="text-lg font-semibold text-brand-800">{t("noRfqs")}</h2>
+          <p className="mt-2 text-sm text-mute">{t("noRfqsHint")}</p>
+          <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+            <Link to={withLocale(lang, "/rfq")} className="btn-primary">
+              {t("openRfqDraftBtn")}
+            </Link>
+            <Link to={withLocale(lang, "/")} className="btn-soft">
+              {t("browseCatalog")}
+            </Link>
+          </div>
+        </section>
+      ) : (
+        <>
       <RfqDocSwitcher
         list={list}
-        selectedId={selectedId}
+        selectedId={selected?.id || selectedId}
         onSelect={setSelectedId}
         onViewQuote={viewQuote}
         acceptedByRfq={acceptedByRfq}
@@ -828,14 +861,21 @@ export default function RfqsPage() {
                   <p className="mt-0.5 text-xs text-mute">
                     {rfqProjectName(selected) || t("filterProjectUnassigned")}
                     {" · "}
-                    {new Date(selected.submittedAt).toLocaleDateString()}
-                    {" · "}
                     {selected.lines.length === 1
                       ? t("rfqLineCountOne")
                       : t("rfqLineCount", { n: selected.lines.length })}
                     {" · "}
                     {formatPrice(rfqListSubtotal(selected))}
                   </p>
+                  {(() => {
+                    const last = rfqLastActivity(selected, { audience: "buyer" });
+                    if (!last) return null;
+                    return (
+                      <p className="mt-1 text-xs text-ink">
+                        {t("rfqActivityLast")} · {rfqActivityLabel(last, lang)} · {formatQuoteVersionStamp(last.at)}
+                      </p>
+                    );
+                  })()}
                 </div>
                   <div className="flex flex-col items-end gap-2 shrink-0">
                   <div className="flex flex-wrap justify-end gap-2">
@@ -889,13 +929,7 @@ export default function RfqsPage() {
                     >
                       {t("rfqDownload")}
                     </button>
-                    {selected.id !== DEMO_QUOTED_RFQ.id &&
-                    selected.cancelStatus !== "requested" &&
-                    selected.cancelStatus !== "accepted" &&
-                    inbox !== "cancelled" &&
-                    inbox !== "accepted" &&
-                    inbox !== "rejected" &&
-                    inbox !== "no_offer" ? (
+                    {selected.id !== DEMO_QUOTED_RFQ.id && canBuyerRequestCancel(selected) ? (
                       <button
                         type="button"
                         className="inline-flex items-center border border-red-300 bg-white px-4 py-2.5 text-sm font-semibold text-red-700 hover:bg-red-50"
@@ -908,14 +942,7 @@ export default function RfqsPage() {
                       </button>
                     ) : null}
                   </div>
-                  {confirmCancel &&
-                  selected.id !== DEMO_QUOTED_RFQ.id &&
-                  selected.cancelStatus !== "requested" &&
-                  selected.cancelStatus !== "accepted" &&
-                  inbox !== "cancelled" &&
-                  inbox !== "accepted" &&
-                  inbox !== "rejected" &&
-                  inbox !== "no_offer" ? (
+                  {confirmCancel && selected.id !== DEMO_QUOTED_RFQ.id && canBuyerRequestCancel(selected) ? (
                     <div className="max-w-xs rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-right">
                       <p className="text-xs text-amber-900">{t("rfqCancelHint")}</p>
                       <div className="mt-2 flex justify-end gap-2">
@@ -926,8 +953,9 @@ export default function RfqsPage() {
                           type="button"
                           className="rounded-lg bg-red-700 px-3 py-1.5 text-xs font-semibold text-white"
                           onClick={() => {
-                            requestRfqCancel(selected.id);
+                            const result = requestRfqCancel(selected.id);
                             setConfirmCancel(false);
+                            if (result?.ok) setCancelFlash(t("rfqCancelNotified"));
                           }}
                         >
                           {t("rfqCancelConfirm")}
@@ -960,6 +988,9 @@ export default function RfqsPage() {
               {inboxStatus(selected) === "accepted" ? (
                 <p className="mt-2 text-xs text-mute">{SHOW_RFQ_QUOTES ? t("rfqAcceptedLocked") : t("rfqInReviewHint")}</p>
               ) : null}
+              {cancelFlash ? (
+                <p className="mt-3 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-sm text-brand-900">{cancelFlash}</p>
+              ) : null}
               {selected.cancelStatus === "requested" ? (
                 <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
                   {t("rfqCancelRequestedHint")}
@@ -971,6 +1002,10 @@ export default function RfqsPage() {
               {selected.cancelStatus === "declined" ? (
                 <p className="mt-3 rounded-lg border border-line bg-paper px-3 py-2 text-sm text-mute">{t("rfqCancelDeclined")}</p>
               ) : null}
+
+              <div className="mt-3">
+                <RfqActivityLog rfq={selected} lang={lang} audience="buyer" title={t("rfqActivityTitle")} />
+              </div>
 
               <RfqDetailsSummary rfq={selected} t={t} />
 
@@ -1084,6 +1119,8 @@ export default function RfqsPage() {
             <p className="text-sm text-mute">{t("selectRfqHint")}</p>
           )}
         </section>
+        </>
+      )}
     </Shell>
   );
 }

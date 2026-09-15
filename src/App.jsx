@@ -13,6 +13,7 @@ import RfqsPage from "./pages/RfqsPage";
 import WhatsappPage from "./pages/WhatsappPage";
 import WhatsappChatPage from "./pages/WhatsappChatPage";
 import EmailSentPage from "./pages/EmailSentPage";
+import EmailPreviewPage from "./pages/EmailPreviewPage";
 import SupplierPage from "./pages/SupplierPage";
 import AdminPortal from "./pages/admin/AdminPortal";
 import StaffSetPasswordPage from "./pages/admin/StaffSetPasswordPage";
@@ -106,6 +107,8 @@ export default function App() {
           <Route path="/whatsapp-chat/:rfqId" element={<LegacyParam prefix="whatsapp-chat" />} />
           <Route path="/email-sent/:rfqId" element={<LegacyParam prefix="email-sent" />} />
           <Route path="/quote/:token" element={<QuoteLegacyRedirect />} />
+          <Route path="/emails" element={<EmailPreviewPage />} />
+          <Route path="/emails/:id" element={<EmailPreviewPage />} />
 
           <Route path="/:lang" element={<LangLayout />}>
             <Route index element={<HomePage />} />

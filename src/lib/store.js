@@ -3,6 +3,20 @@ import { collectAttachmentUrls, collectProductImageUrls, fitWhatsappUrls, upload
 import { buildQuotePdf, canSharePdfFile, downloadBlob, sharePdfFile } from "./quotePdf.js";
 import { fetchRemoteState, isSupabaseConfigured, persistKv } from "./supabasePersist.js";
 import { adminOrigin, marketplaceOrigin } from "./origins.js";
+import {
+  accountCreatedEmailHtml,
+  buyerRejectedEmailHtml,
+  rfqAcceptedEmailHtml,
+  rfqCancelAcceptedEmailHtml,
+  rfqCancelDeclinedEmailHtml,
+  rfqCancelRequestedEmailHtml,
+  rfqNoOfferEmailHtml,
+  rfqSubmittedEmailHtml,
+  salesNewRfqEmailHtml,
+  staffInviteEmailHtml,
+  wrapEmailPreview,
+  wrapEmailSend,
+} from "./mailTemplate.js";
 
 const HIDDEN_CATEGORY_IDS = new Set(["service", "computer", "hardware"]);
 const SYNTHETIC_CATEGORY_IDS = new Set(["service", "computer", "hardware"]);
@@ -1010,10 +1024,8 @@ async function hydrateStore() {
       PRODUCTS.splice(0, PRODUCTS.length, ...remote.products.map(normalizeProductRecord));
     }
     const overlayKeys = [
-      PRODUCT_PATCH_KEY,
       CUSTOM_CATEGORIES_KEY,
       CATEGORY_ADMIN_KEY,
-      STAFF_KEY,
       REPORTS_KEY,
       ADMIN_ALERTS_KEY,
     ];
@@ -1021,6 +1033,12 @@ async function hydrateStore() {
       if (remote.kv[key] == null) return;
       writeLocalOnly(key, remote.kv[key]);
     });
+    if (remote.kv[STAFF_KEY] != null) {
+      writeLocalOnly(STAFF_KEY, mergeStaffLists(readJson(STAFF_KEY, []), remote.kv[STAFF_KEY]));
+    }
+    if (remote.kv[PRODUCT_PATCH_KEY] != null) {
+      writeLocalOnly(PRODUCT_PATCH_KEY, mergeProductPatchMaps(readJson(PRODUCT_PATCH_KEY, {}), remote.kv[PRODUCT_PATCH_KEY]));
+    }
     [REPORT_SEQ_KEY, TMP_SEQ_KEY, TMS_SEQ_KEY].forEach((key) => {
       const remoteN = Number(remote.kv[key] || 0);
       let localN = 0;
@@ -1872,6 +1890,14 @@ function submitRfq(productIds, options = {}) {
     buyerPhoneWhatsapp: Boolean(user?.phoneWhatsapp),
     buyerKind,
   };
+  Object.assign(
+    rfq,
+    pushRfqActivity(rfq, "submitted", {
+      at: rfq.submittedAt,
+      channel,
+      detail: channel === "whatsapp" || channel === "email" ? channel : "",
+    })
+  );
   const map = getRfqsMap();
   const list = Array.isArray(map[email]) ? map[email] : [];
   list.unshift(rfq);
@@ -1884,6 +1910,10 @@ function submitRfq(productIds, options = {}) {
     body: `${rfq.buyerName || rfq.buyerEmail || "Buyer"} submitted ${(rfq.lines || []).length} line(s) from Mattex Marketplace.`,
     href: `${adminOrigin()}/?rfq=${encodeURIComponent(rfq.id)}`,
   });
+  if (channel !== "whatsapp") {
+    deliverRfqSubmittedEmail(rfq);
+    deliverRfqToSalesEmail(rfq);
+  }
   return { ok: true, rfq };
 }
 
@@ -2080,6 +2110,7 @@ function registerUser(profile) {
     body: `${account.companyName || "Company"} · ${account.name || ""} · ${account.email}`.replace(/ · $/, ""),
     href: `${adminOrigin()}/?buyer=${encodeURIComponent(account.email)}`,
   });
+  deliverAccountCreatedEmail(account);
   return { ok: true, pending: false, loggedIn: true, email };
 }
 
@@ -3017,6 +3048,24 @@ const TMP_SEQ_KEY = "subbie_tmp_sku_seq";
 const BOOTSTRAP_STAFF_EMAIL = "supabase@mattex.com.hk";
 const LEGACY_BOOTSTRAP_STAFF_EMAIL = "sales@mattex.com";
 
+function mergeStaffLists(local, remote) {
+  const byEmail = new Map();
+  const add = (row) => {
+    if (!row?.email) return;
+    const email = normalizeEmail(row.email);
+    const prev = byEmail.get(email) || {};
+    byEmail.set(email, { ...prev, ...row, email });
+  };
+  (Array.isArray(remote) ? remote : []).forEach(add);
+  (Array.isArray(local) ? local : []).forEach(add);
+  if (!byEmail.has(BOOTSTRAP_STAFF_EMAIL) && byEmail.has(LEGACY_BOOTSTRAP_STAFF_EMAIL)) {
+    const legacy = byEmail.get(LEGACY_BOOTSTRAP_STAFF_EMAIL);
+    byEmail.delete(LEGACY_BOOTSTRAP_STAFF_EMAIL);
+    byEmail.set(BOOTSTRAP_STAFF_EMAIL, { ...legacy, email: BOOTSTRAP_STAFF_EMAIL, name: legacy.name || "Supabase", bootstrap: true });
+  }
+  return [...byEmail.values()];
+}
+
 function getStaffList() {
   const seeded = [
     { email: BOOTSTRAP_STAFF_EMAIL, name: "Supabase", password: "mattex", enabled: true, bootstrap: true },
@@ -3053,7 +3102,17 @@ function requireStaff() {
   const session = getStaffSession();
   if (!session?.email) return { ok: false, error: "staff" };
   const account = getStaffAccount(session.email);
-  if (!account || !account.enabled) return { ok: false, error: "staff" };
+  if (account && !account.enabled) return { ok: false, error: "staff" };
+  if (!account) {
+    return {
+      ok: true,
+      account: {
+        email: normalizeEmail(session.email),
+        name: String(session.name || session.email).trim() || session.email,
+        enabled: true,
+      },
+    };
+  }
   return { ok: true, account };
 }
 
@@ -3143,7 +3202,7 @@ function createStaff({ email, name }) {
   list.unshift(account);
   setStaffList(list);
   emitStoreChange();
-  openMailto(invite.mailto);
+  deliverStaffInviteEmail({ email: nextEmail, name: nextName, href: invite.href });
   return { ok: true, mailto: invite.mailto, href: invite.href, email: nextEmail };
 }
 
@@ -3156,7 +3215,7 @@ function resendStaffInvite(email) {
   const invite = issueStaffInvite(target);
   setStaffList(list);
   emitStoreChange();
-  openMailto(invite.mailto);
+  deliverStaffInviteEmail({ email: target.email, name: target.name, href: invite.href });
   return { ok: true, mailto: invite.mailto, href: invite.href, email: target.email };
 }
 
@@ -3316,28 +3375,272 @@ function markBuyerReviewed(email) {
   return { ok: true };
 }
 
-function buyerRejectMailHref(buyer, reason) {
-  const email = String(buyer?.email || "").trim();
+function isDeliverableEmail(email) {
+  const value = normalizeEmail(email);
+  if (!value || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) return false;
+  if (value === "guest@subbie.store" || value.startsWith("guest@")) return false;
+  return true;
+}
+
+function isLocalBrowserHost() {
+  if (typeof window === "undefined") return true;
+  const host = String(window.location?.hostname || "");
+  return host === "localhost" || host === "127.0.0.1";
+}
+
+function shouldSendViaResend() {
+  return !isLocalBrowserHost();
+}
+
+function mattexLogoUrl() {
+  return `${marketplaceOrigin()}/assets/mattex-logo.png`;
+}
+
+function rfqMailContext(rfq) {
+  const shop = marketplaceOrigin();
+  const admin = adminOrigin();
+  const id = rfq?.id || "RFQ";
+  return {
+    logoUrl: mattexLogoUrl(),
+    salesEmail: SALES_EMAIL,
+    name: String(rfq?.buyerName || "there").trim() || "there",
+    rfqId: id,
+    buyerName: String(rfq?.buyerName || "Buyer").trim() || "Buyer",
+    buyerEmail: rfq?.buyerEmail || "",
+    project: String(rfq?.project || "").trim(),
+    lineCount: (rfq?.lines || []).length,
+    reason: String(rfq?.reason || "").trim(),
+    rfqsHref: `${shop}/zh/rfqs`,
+    shopHref: `${shop}/zh`,
+    portalHref: `${admin}/?rfq=${encodeURIComponent(id)}`,
+    toEmail: rfq?.buyerEmail,
+  };
+}
+
+function buildLifecycleEmail(rfq, kind) {
+  const ctx = rfqMailContext(rfq);
+  if (kind === "sales-new-rfq") {
+    return {
+      to: SALES_EMAIL,
+      subject: `New RFQ ${ctx.rfqId} from Marketplace`,
+      innerHtml: salesNewRfqEmailHtml(ctx),
+    };
+  }
+  if (kind === "rfq-accepted") {
+    return {
+      to: ctx.toEmail,
+      subject: `Your RFQ ${ctx.rfqId} is in review`,
+      innerHtml: rfqAcceptedEmailHtml(ctx),
+    };
+  }
+  if (kind === "rfq-no-offer") {
+    return {
+      to: ctx.toEmail,
+      subject: `No offer on RFQ ${ctx.rfqId}`,
+      innerHtml: rfqNoOfferEmailHtml(ctx),
+    };
+  }
+  if (kind === "rfq-cancel-requested") {
+    return {
+      to: SALES_EMAIL,
+      subject: `Cancel requested for RFQ ${ctx.rfqId}`,
+      innerHtml: rfqCancelRequestedEmailHtml(ctx),
+    };
+  }
+  if (kind === "rfq-cancel-accepted") {
+    return {
+      to: ctx.toEmail,
+      subject: `RFQ ${ctx.rfqId} was cancelled`,
+      innerHtml: rfqCancelAcceptedEmailHtml(ctx),
+    };
+  }
+  if (kind === "rfq-cancel-declined") {
+    return {
+      to: ctx.toEmail,
+      subject: `RFQ ${ctx.rfqId} remains open`,
+      innerHtml: rfqCancelDeclinedEmailHtml(ctx),
+    };
+  }
+  return null;
+}
+
+function inferRfqEmailPreviewKind(rfq) {
+  const status = inboxStatus(rfq);
+  if (rfq?.cancelStatus === "requested") return "rfq-cancel-requested";
+  if (status === "cancelled") return "rfq-cancel-accepted";
+  if (status === "no_offer" || status === "rejected") return "rfq-no-offer";
+  if (rfq?.cancelStatus === "declined") return "rfq-cancel-declined";
+  if (status === "accepted" || status === "quoted") return "rfq-accepted";
+  return "";
+}
+
+function openHtmlEmail({ to, subject, innerHtml }) {
+  if (typeof document === "undefined") return { ok: false };
+  const html = wrapEmailPreview({ to, subject, innerHtml, fontBase: marketplaceOrigin() });
+  const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.target = "_blank";
+  link.rel = "noopener";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+  return { ok: true };
+}
+
+async function postResendEmail({ to, subject, innerHtml }) {
+  if (!shouldSendViaResend()) return { ok: true, skipped: true };
+  if (!isDeliverableEmail(to)) return { ok: false, error: "email" };
+  const html = wrapEmailSend({ subject, innerHtml, fontBase: marketplaceOrigin() });
+  try {
+    const res = await fetch("/api/send-email", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ to: normalizeEmail(to), subject, html }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data?.ok === false) return { ok: false, error: data?.error || "send" };
+    return { ok: true, skipped: Boolean(data?.skipped) };
+  } catch {
+    return { ok: false, error: "network" };
+  }
+}
+
+function deliverHtmlEmail({ to, subject, innerHtml }) {
+  if (!isDeliverableEmail(to)) return { ok: false, error: "email" };
+  const log = readJson("subbie_buyer_mail_log", []);
+  writeJson(
+    "subbie_buyer_mail_log",
+    [{ to: normalizeEmail(to), subject, at: new Date().toISOString(), html: true }, ...(Array.isArray(log) ? log : [])].slice(0, 40)
+  );
+  openHtmlEmail({ to: normalizeEmail(to), subject, innerHtml });
+  return { ok: true };
+}
+
+async function deliverSalesToBuyerEmail({ to, subject, innerHtml, openHtml = false }) {
+  if (!isDeliverableEmail(to)) return { ok: false, error: "email" };
+  const log = readJson("subbie_buyer_mail_log", []);
+  writeJson(
+    "subbie_buyer_mail_log",
+    [{ to: normalizeEmail(to), subject, at: new Date().toISOString(), html: true }, ...(Array.isArray(log) ? log : [])].slice(0, 40)
+  );
+  if (openHtml) openHtmlEmail({ to: normalizeEmail(to), subject, innerHtml });
+  return postResendEmail({ to, subject, innerHtml });
+}
+
+function openRfqEmailPreview(rfq, kind) {
+  const nextKind = kind || inferRfqEmailPreviewKind(rfq);
+  const mail = buildLifecycleEmail(rfq, nextKind);
+  if (!mail) return { ok: false, error: "none" };
+  return openHtmlEmail(mail);
+}
+
+function deliverRfqSubmittedEmail(rfq) {
+  const name = String(rfq?.buyerName || "there").trim() || "there";
+  const id = rfq?.id || "RFQ";
+  const n = (rfq?.lines || []).length;
+  const project = String(rfq?.project || "").trim();
+  return deliverHtmlEmail({
+    to: rfq?.buyerEmail,
+    subject: `We received your RFQ ${id}`,
+    innerHtml: rfqSubmittedEmailHtml({
+      logoUrl: mattexLogoUrl(),
+      salesEmail: SALES_EMAIL,
+      name,
+      rfqId: id,
+      project,
+      lineCount: n,
+      rfqsHref: `${marketplaceOrigin()}/zh/rfqs`,
+      shopHref: `${marketplaceOrigin()}/zh`,
+      toEmail: rfq?.buyerEmail,
+    }),
+  });
+}
+
+function deliverRfqToSalesEmail(rfq) {
+  const mail = buildLifecycleEmail(rfq, "sales-new-rfq");
+  if (!mail) return { ok: false };
+  openHtmlEmail(mail);
+  return { ok: true };
+}
+
+async function deliverRfqAcceptedEmail(rfq) {
+  const mail = buildLifecycleEmail(rfq, "rfq-accepted");
+  if (!mail) return { ok: false, error: "email" };
+  return deliverSalesToBuyerEmail({ ...mail, openHtml: false });
+}
+
+async function deliverRfqNoOfferEmail(rfq) {
+  const mail = buildLifecycleEmail(rfq, "rfq-no-offer");
+  if (!mail) return { ok: false, error: "email" };
+  return deliverSalesToBuyerEmail({ ...mail, openHtml: true });
+}
+
+async function deliverRfqCancelAcceptedEmail(rfq) {
+  const mail = buildLifecycleEmail(rfq, "rfq-cancel-accepted");
+  if (!mail) return { ok: false, error: "email" };
+  return deliverSalesToBuyerEmail({ ...mail, openHtml: true });
+}
+
+async function deliverRfqCancelDeclinedEmail(rfq) {
+  const mail = buildLifecycleEmail(rfq, "rfq-cancel-declined");
+  if (!mail) return { ok: false, error: "email" };
+  return deliverSalesToBuyerEmail({ ...mail, openHtml: true });
+}
+
+function deliverAccountCreatedEmail(account) {
+  const name = String(account?.name || "there").trim() || "there";
+  const company = String(account?.companyName || "").trim();
+  const email = account?.email;
+  return deliverHtmlEmail({
+    to: email,
+    subject: "Your Mattex Marketplace account is ready",
+    innerHtml: accountCreatedEmailHtml({
+      logoUrl: mattexLogoUrl(),
+      salesEmail: SALES_EMAIL,
+      name,
+      email,
+      company,
+      shopHref: `${marketplaceOrigin()}/zh`,
+    }),
+  });
+}
+
+function deliverStaffInviteEmail({ email, name, href }) {
+  const who = String(name || "there").trim() || "there";
+  return deliverHtmlEmail({
+    to: email,
+    subject: "Set your Mattex Sales portal password",
+    innerHtml: staffInviteEmailHtml({
+      logoUrl: mattexLogoUrl(),
+      salesEmail: SALES_EMAIL,
+      name: who,
+      setPasswordHref: href,
+      toEmail: email,
+      portalHref: `${adminOrigin()}/`,
+    }),
+  });
+}
+
+function deliverBuyerRejectedEmail(buyer, reason) {
   const name = String(buyer?.name || "there").trim() || "there";
   const company = String(buyer?.companyName || "").trim();
-  const why = String(reason || "").trim();
-  const subject = "Your Mattex Marketplace account application";
-  const body = [
-    `Hello ${name},`,
-    "",
-    `Thank you for applying for a Mattex Marketplace account${company ? ` for ${company}` : ""}.`,
-    "",
-    "We are unable to approve your application at this time.",
-    "",
-    "Reason:",
-    why,
-    "",
-    "If you have questions, reply to this email.",
-    "",
-    "Mattex Marketplace",
-    SALES_EMAIL,
-  ].join("\n");
-  return `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  return deliverSalesToBuyerEmail({
+    to: buyer?.email,
+    subject: "Your Mattex Marketplace account application",
+    innerHtml: buyerRejectedEmailHtml({
+      logoUrl: mattexLogoUrl(),
+      salesEmail: SALES_EMAIL,
+      name,
+      company,
+      reason,
+      shopHref: `${marketplaceOrigin()}/zh`,
+      toEmail: buyer?.email,
+    }),
+    openHtml: true,
+  });
 }
 
 function openMailto(href) {
@@ -3463,9 +3766,8 @@ function rejectBuyer(email, { reason } = {}) {
   map[key].rejectReason = why;
   setAccountsMap(map);
   emitStoreChange();
-  const mailto = buyerRejectMailHref(map[key], why);
-  openMailto(mailto);
-  return { ok: true, mailto };
+  deliverBuyerRejectedEmail(map[key], why);
+  return { ok: true };
 }
 
 function getAllRfqs() {
@@ -3589,12 +3891,23 @@ function setRfqLineNoOffer(id, productId, noOffer = true) {
         : line
     );
     const allNoOffer = lines.length > 0 && lines.every((line) => line.noOffer);
-    return {
+    const wasNoOffer = inboxStatus(rfq) === "no_offer";
+    const reason = allNoOffer ? rfq.reason || "No offer" : rfq.reason;
+    const next = {
       ...rfq,
       lines,
       reviewStatus: allNoOffer ? "no_offer" : rfq.reviewStatus === "no_offer" ? "accepted" : rfq.reviewStatus,
-      reason: allNoOffer ? rfq.reason || "No offer" : rfq.reason,
+      reason,
     };
+    if (allNoOffer && !wasNoOffer) {
+      const at = new Date().toISOString();
+      return pushRfqActivity({ ...next, noOfferAt: at }, "no_offer", {
+        at,
+        detail: reason,
+        by: gate.account.email,
+      });
+    }
+    return next;
   });
 }
 
@@ -3617,14 +3930,20 @@ function assignRfqToBuyer(id, buyerEmail) {
   });
   if (!found) return { ok: false, error: "missing" };
   const dest = normalizeEmail(buyer.email);
-  const next = {
-    ...found,
-    buyerEmail: buyer.email,
-    buyerName: buyer.name || found.buyerName || "",
-    buyerKind: "member",
-    buyerPhone: found.buyerPhone || buyer.phone || "",
-    assignedFromGuest: Boolean(fromKey && fromKey !== dest),
-  };
+  const assignedAt = new Date().toISOString();
+  const next = pushRfqActivity(
+    {
+      ...found,
+      buyerEmail: buyer.email,
+      buyerName: buyer.name || found.buyerName || "",
+      buyerKind: "member",
+      buyerPhone: found.buyerPhone || buyer.phone || "",
+      assignedFromGuest: Boolean(fromKey && fromKey !== dest),
+      assignedAt,
+    },
+    "assigned",
+    { at: assignedAt, detail: buyer.email, by: gate.account.email }
+  );
   map[dest] = [next, ...(Array.isArray(map[dest]) ? map[dest] : [])];
   setRfqsMap(map);
   emitStoreChange();
@@ -3742,6 +4061,196 @@ function formatQuoteVersionStamp(iso) {
   if (Number.isNaN(d.getTime())) return String(iso).slice(0, 16).replace("T", " ");
   const pad = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+const BUYER_ACTIVITY_KINDS = new Set([
+  "submitted",
+  "accepted",
+  "no_offer",
+  "returned",
+  "resubmitted",
+  "cancel_requested",
+  "cancel_accepted",
+  "cancel_declined",
+  "quoted",
+  "whatsapp_quote",
+  "po_created",
+]);
+
+function activityDedupeKey(entry) {
+  return `${entry?.kind || ""}|${entry?.detail || ""}|${String(entry?.at || "").slice(0, 16)}`;
+}
+
+function pushRfqActivity(rfq, kind, extra = {}) {
+  if (!rfq || !kind) return rfq;
+  const at = extra.at || new Date().toISOString();
+  const entry = {
+    id: extra.id || `act-${kind}-${at}`,
+    kind,
+    at,
+    by: extra.by || "",
+    detail: extra.detail || "",
+    channel: extra.channel || rfq.channel || "",
+  };
+  const prev = Array.isArray(rfq.activity) ? rfq.activity : [];
+  const last = prev[prev.length - 1];
+  if (last && activityDedupeKey(last) === activityDedupeKey(entry)) return rfq;
+  return { ...rfq, activity: [...prev, entry] };
+}
+
+function mailLogStampForRfq(rfq, kind) {
+  const id = String(rfq?.id || "");
+  if (!id) return "";
+  const rows = readJson("subbie_buyer_mail_log", []);
+  if (!Array.isArray(rows)) return "";
+  const hit = rows.find((row) => {
+    const subject = String(row?.subject || "");
+    if (!subject.includes(id)) return false;
+    if (kind === "accepted") return /in review/i.test(subject);
+    if (kind === "no_offer") return /no offer/i.test(subject);
+    if (kind === "cancel_accepted") return /was cancelled/i.test(subject);
+    if (kind === "cancel_declined") return /remains open/i.test(subject);
+    return false;
+  });
+  return hit?.at ? String(hit.at) : "";
+}
+
+function inferRfqActivity(rfq) {
+  if (!rfq) return [];
+  const events = [];
+  const status = inboxStatus(rfq);
+  const submittedAt = rfq.submittedAt || rfq.createdAt;
+  if (submittedAt) {
+    const channel = rfq.channel || "rfq";
+    events.push({
+      kind: "submitted",
+      at: submittedAt,
+      channel,
+      detail: channel === "whatsapp" || channel === "email" ? channel : "",
+    });
+  }
+  const acceptedAt = rfq.acceptedAt || mailLogStampForRfq(rfq, "accepted");
+  if (acceptedAt && (status === "accepted" || status === "quoted" || rfq.acceptedAt)) {
+    events.push({ kind: "accepted", at: acceptedAt, by: rfq.acceptedBy || "" });
+  }
+  const noOfferAt = rfq.noOfferAt || mailLogStampForRfq(rfq, "no_offer");
+  if (noOfferAt && (status === "no_offer" || rfq.noOfferAt)) {
+    events.push({ kind: "no_offer", at: noOfferAt, detail: String(rfq.reason || "").trim() });
+  }
+  if (rfq.returnedAt) events.push({ kind: "returned", at: rfq.returnedAt, detail: String(rfq.reason || "").trim() });
+  if (rfq.resubmittedAt) events.push({ kind: "resubmitted", at: rfq.resubmittedAt });
+  if (rfq.cancelRequestedAt) events.push({ kind: "cancel_requested", at: rfq.cancelRequestedAt });
+  if (rfq.cancelledAt) events.push({ kind: "cancel_accepted", at: rfq.cancelledAt, by: rfq.cancelledBy || "" });
+  if (rfq.cancelDeclinedAt) events.push({ kind: "cancel_declined", at: rfq.cancelDeclinedAt });
+  quoteVersionList(rfq).forEach((version) => {
+    events.push({
+      kind: version.channel === "whatsapp" ? "whatsapp_quote" : "quoted",
+      at: version.createdAt,
+      detail: `v${version.version}`,
+    });
+  });
+  if (rfq.quoteDeliveredAt && rfq.quoteDelivery === "whatsapp" && !quoteVersionList(rfq).some((row) => row.channel === "whatsapp")) {
+    events.push({ kind: "whatsapp_quote", at: rfq.quoteDeliveredAt });
+  }
+  if (rfq.quotedAt && !quoteVersionList(rfq).length) {
+    events.push({ kind: "quoted", at: rfq.quotedAt });
+  }
+  if (rfq.tmsOpenedAt && rfq.tmsDocumentNo) {
+    events.push({ kind: "tms", at: rfq.tmsOpenedAt, detail: rfq.tmsDocumentNo });
+  }
+  if (rfq.assignedAt) events.push({ kind: "assigned", at: rfq.assignedAt, detail: rfq.buyerEmail || "" });
+  if (rfq.buyerPo?.createdAt) {
+    events.push({ kind: "po_created", at: rfq.buyerPo.createdAt, detail: rfq.buyerPo.id || "" });
+  }
+  return events.filter((row) => row.at);
+}
+
+function rfqActivityLog(rfq, { audience } = {}) {
+  const stored = (Array.isArray(rfq?.activity) ? rfq.activity : []).filter((row) => row?.kind && row?.at);
+  const seen = new Set(stored.map(activityDedupeKey));
+  const extra = inferRfqActivity(rfq).filter((row) => {
+    const key = activityDedupeKey(row);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  let log = [...stored, ...extra].sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0));
+  if (audience === "buyer") log = log.filter((row) => BUYER_ACTIVITY_KINDS.has(row.kind));
+  return log;
+}
+
+function rfqLastActivity(rfq, opts) {
+  const log = rfqActivityLog(rfq, opts);
+  return log.length ? log[log.length - 1] : null;
+}
+
+function hydrateRfqDecisionActivity(id) {
+  const current = getAllRfqs().find((r) => r.id === id);
+  if (!current) return { ok: false, error: "missing" };
+  const status = inboxStatus(current);
+  const acceptedMail = current.acceptedAt ? "" : mailLogStampForRfq(current, "accepted");
+  const noOfferMail = current.noOfferAt ? "" : mailLogStampForRfq(current, "no_offer");
+  const needAccepted = (status === "accepted" || status === "quoted") && !current.acceptedAt && acceptedMail;
+  const needNoOffer = status === "no_offer" && !current.noOfferAt && noOfferMail;
+  if (!needAccepted && !needNoOffer) return { ok: true, rfq: current };
+  return patchRfqById(id, (rfq) => {
+    let next = rfq;
+    if (needAccepted) {
+      next = pushRfqActivity({ ...next, acceptedAt: acceptedMail }, "accepted", { at: acceptedMail });
+    }
+    if (needNoOffer) {
+      next = pushRfqActivity({ ...next, noOfferAt: noOfferMail }, "no_offer", {
+        at: noOfferMail,
+        detail: String(rfq.reason || "").trim(),
+      });
+    }
+    return next;
+  });
+}
+
+function rfqActivityLabel(event, lang = "en") {
+  const zh = lang === "zh";
+  const kind = event?.kind;
+  const detail = String(event?.detail || "").trim();
+  const channel = event?.channel || "";
+  switch (kind) {
+    case "submitted":
+      if (detail === "whatsapp" || channel === "whatsapp") return zh ? "已用 WhatsApp 送出問價" : "Submitted on WhatsApp";
+      if (detail === "email" || channel === "email") return zh ? "已用電郵送出問價" : "Submitted by email";
+      return zh ? "已提交問價" : "RFQ submitted";
+    case "accepted":
+      return zh ? "銷售已接收（處理中）" : "Sales accepted — in review";
+    case "no_offer":
+      return detail ? (zh ? `不報價：${detail}` : `No offer: ${detail}`) : zh ? "不報價" : "No offer";
+    case "returned":
+      return zh ? "銷售要求補充資料" : "Sales asked for more information";
+    case "resubmitted":
+      return zh ? "已重新提交" : "Resubmitted";
+    case "cancel_requested":
+      return zh ? "買家申請取消" : "Cancel requested";
+    case "cancel_accepted":
+      return zh ? "取消已接受" : "Cancellation accepted";
+    case "cancel_declined":
+      return zh ? "取消未獲接受，RFQ 繼續處理" : "Cancellation declined — RFQ kept open";
+    case "quoted":
+      return detail ? (zh ? `已提交報價 ${detail}` : `Quote sent to buyer ${detail}`) : zh ? "已提交報價" : "Quote sent to buyer";
+    case "whatsapp_quote":
+      return detail
+        ? zh
+          ? `已用 WhatsApp 送出報價 ${detail}`
+          : `Quote sent on WhatsApp ${detail}`
+        : zh
+          ? "已用 WhatsApp 送出報價"
+          : "Quote sent on WhatsApp";
+    case "tms":
+      return detail ? (zh ? `已建立 TMS iRFQ ${detail}` : `TMS iRFQ created ${detail}`) : zh ? "已建立 TMS iRFQ" : "TMS iRFQ created";
+    case "assigned":
+      return detail ? (zh ? `已指派予會員 ${detail}` : `Assigned to member ${detail}`) : zh ? "已指派予註冊會員" : "Assigned to a registered member";
+    case "po_created":
+      return detail ? (zh ? `已建立採購單 ${detail}` : `Purchase order created ${detail}`) : zh ? "已建立採購單" : "Purchase order created";
+    default:
+      return kind || "";
+  }
 }
 
 function formatQuoteVersionOption(version, { effectiveVersion, currentLabel = "Current" } = {}) {
@@ -3967,7 +4476,9 @@ function markGuestQuoteWhatsappSent(id) {
       quoteDelivery: "whatsapp",
       quoteDeliveredAt: sentAt,
     };
-    if (already) return base;
+    if (already) {
+      return pushRfqActivity(base, "whatsapp_quote", { at: sentAt, by: gate.account.email });
+    }
     const snapshot = token ? getGuestQuoteSnapshot(token) : null;
     const version = snapshot
       ? buildDeliveredQuoteVersion(rfq, {
@@ -3978,7 +4489,11 @@ function markGuestQuoteWhatsappSent(id) {
           createdAt: sentAt,
         })
       : buildDeliveredQuoteVersion(rfq, { channel: "whatsapp", token, createdAt: sentAt });
-    return applyDeliveredQuoteVersion(base, version);
+    return pushRfqActivity(applyDeliveredQuoteVersion(base, version), "whatsapp_quote", {
+      at: sentAt,
+      detail: `v${version.version}`,
+      by: gate.account.email,
+    });
   });
 }
 
@@ -4001,23 +4516,28 @@ function createBuyerPurchaseOrder(id, payload = {}) {
         lineTotal: line.lineTotal != null ? Number(line.lineTotal) : Number(line.quotedUnitPrice) * (Number(line.qty) || 0),
       }))
     : null;
-  return patchRfqById(id, (rfq) => ({
-    ...rfq,
-    buyerPo: {
-      id: poId,
-      createdAt: rfq.buyerPo?.createdAt || new Date().toISOString(),
-      confirmedAt: new Date().toISOString(),
-      lines: poFromEffective || (Array.isArray(payload.lines) ? payload.lines : rfq.buyerPo?.lines || []),
-      total: poFromEffective
-        ? Number(effective.quotedSubtotal) || poFromEffective.reduce((sum, line) => sum + (Number(line.lineTotal) || 0), 0)
-        : payload.total != null
-          ? Number(payload.total)
-          : rfq.buyerPo?.total || 0,
-      label: String(payload.label || rfq.buyerPo?.label || (effective ? `v${effective.version}` : "")).trim(),
-      status: "created",
-      quoteVersion: effective?.version || null,
-    },
-  }));
+  return patchRfqById(id, (rfq) => {
+    const createdAt = rfq.buyerPo?.createdAt || new Date().toISOString();
+    const next = {
+      ...rfq,
+      buyerPo: {
+        id: poId,
+        createdAt,
+        confirmedAt: new Date().toISOString(),
+        lines: poFromEffective || (Array.isArray(payload.lines) ? payload.lines : rfq.buyerPo?.lines || []),
+        total: poFromEffective
+          ? Number(effective.quotedSubtotal) || poFromEffective.reduce((sum, line) => sum + (Number(line.lineTotal) || 0), 0)
+          : payload.total != null
+            ? Number(payload.total)
+            : rfq.buyerPo?.total || 0,
+        label: String(payload.label || rfq.buyerPo?.label || (effective ? `v${effective.version}` : "")).trim(),
+        status: "created",
+        quoteVersion: effective?.version || null,
+      },
+    };
+    if (rfq.buyerPo?.id) return next;
+    return pushRfqActivity(next, "po_created", { at: createdAt, detail: poId });
+  });
 }
 
 function quoteRfqToBuyer(id, { linePrices, note } = {}) {
@@ -4056,12 +4576,16 @@ function quoteRfqToBuyer(id, { linePrices, note } = {}) {
       note: quoteNote,
       createdAt: sentAt,
     });
-    return applyDeliveredQuoteVersion(rfq, version, {
-      reviewStatus: "quoted",
-      quotedAt: sentAt,
-      quoteNote,
-      lines,
-    });
+    return pushRfqActivity(
+      applyDeliveredQuoteVersion(rfq, version, {
+        reviewStatus: "quoted",
+        quotedAt: sentAt,
+        quoteNote,
+        lines,
+      }),
+      "quoted",
+      { at: sentAt, detail: `v${version.version}`, by: gate.account.email }
+    );
   });
 }
 
@@ -4076,17 +4600,40 @@ function decideRfq(id, { decision, reason } = {}) {
     const status = inboxStatus(rfq);
     if (status === "cancelled") return rfq;
     if (rfq.cancelStatus === "requested" && nextDecision === "accepted") return rfq;
+    const at = new Date().toISOString();
+    const by = gate.account.email;
     if (nextDecision === "no_offer") {
       if (status === "no_offer") return rfq;
-      return {
-        ...rfq,
-        reviewStatus: "no_offer",
-        reviewingBy: "",
-        reason: String(reason || "No offer").trim(),
-        lines: (rfq.lines || []).map((line) => ({ ...line, noOffer: true, quotedUnitPrice: null })),
-      };
+      const why = String(reason || "No offer").trim();
+      return pushRfqActivity(
+        {
+          ...rfq,
+          reviewStatus: "no_offer",
+          reviewingBy: "",
+          reason: why,
+          noOfferAt: at,
+          lines: (rfq.lines || []).map((line) => ({ ...line, noOffer: true, quotedUnitPrice: null })),
+        },
+        "no_offer",
+        { at, detail: why, by }
+      );
     }
     if (status === "accepted" || status === "quoted" || status === "no_offer") return rfq;
+    if (nextDecision === "accepted") {
+      return pushRfqActivity(
+        { ...rfq, reviewStatus: "accepted", reviewingBy: "", reason: "", acceptedAt: at, acceptedBy: by },
+        "accepted",
+        { at, by }
+      );
+    }
+    if (nextDecision === "returned") {
+      const why = String(reason || "").trim();
+      return pushRfqActivity(
+        { ...rfq, reviewStatus: "returned", reviewingBy: "", reason: why, returnedAt: at },
+        "returned",
+        { at, detail: why, by }
+      );
+    }
     return {
       ...rfq,
       reviewStatus: nextDecision,
@@ -4096,20 +4643,48 @@ function decideRfq(id, { decision, reason } = {}) {
   });
 }
 
+function rfqHasPurchaseOrder(rfq) {
+  return Boolean(rfq?.buyerPo?.id || rfq?.buyerPo?.status === "created" || rfq?.buyerPo?.confirmedAt);
+}
+
+function canBuyerRequestCancel(rfq) {
+  if (!rfq) return false;
+  const status = inboxStatus(rfq);
+  if (status === "no_offer" || status === "cancelled") return false;
+  if (rfq.cancelStatus === "requested" || rfq.cancelStatus === "accepted") return false;
+  if (rfqHasPurchaseOrder(rfq)) return false;
+  return true;
+}
+
 function requestRfqCancel(id) {
   const user = getUser();
   if (!user?.email) return { ok: false, error: "auth" };
   const current = getAllRfqs().find((r) => r.id === id);
   if (!current) return { ok: false, error: "missing" };
   if (normalizeEmail(current.buyerEmail) !== normalizeEmail(user.email)) return { ok: false, error: "auth" };
-  const status = inboxStatus(current);
-  if (status === "accepted" || status === "no_offer" || status === "cancelled") return { ok: false, error: "locked" };
   if (current.cancelStatus === "requested") return { ok: true, rfq: current };
-  return patchRfqById(id, (rfq) => ({
-    ...rfq,
-    cancelStatus: "requested",
-    cancelRequestedAt: new Date().toISOString(),
-  }));
+  if (!canBuyerRequestCancel(current)) return { ok: false, error: "locked" };
+  const result = patchRfqById(id, (rfq) => {
+    const at = new Date().toISOString();
+    return pushRfqActivity(
+      {
+        ...rfq,
+        cancelStatus: "requested",
+        cancelRequestedAt: at,
+      },
+      "cancel_requested",
+      { at }
+    );
+  });
+  if (result.ok) {
+    notifyAdmins({
+      kind: "rfq",
+      title: `Cancel requested ${id}`,
+      body: `${current.buyerName || current.buyerEmail || "Buyer"} asked to cancel ${id}.`,
+      href: `${adminOrigin()}/?rfq=${encodeURIComponent(id)}`,
+    });
+  }
+  return result;
 }
 
 function decideRfqCancel(id, { accept } = {}) {
@@ -4118,19 +4693,29 @@ function decideRfqCancel(id, { accept } = {}) {
   return patchRfqById(id, (rfq) => {
     if (rfq.cancelStatus !== "requested") return rfq;
     if (accept) {
-      return {
-        ...rfq,
-        cancelStatus: "accepted",
-        reviewStatus: "cancelled",
-        cancelledAt: new Date().toISOString(),
-        cancelledBy: gate.account.email,
-      };
+      const at = new Date().toISOString();
+      return pushRfqActivity(
+        {
+          ...rfq,
+          cancelStatus: "accepted",
+          reviewStatus: "cancelled",
+          cancelledAt: at,
+          cancelledBy: gate.account.email,
+        },
+        "cancel_accepted",
+        { at, by: gate.account.email }
+      );
     }
-    return {
-      ...rfq,
-      cancelStatus: "declined",
-      cancelDeclinedAt: new Date().toISOString(),
-    };
+    const at = new Date().toISOString();
+    return pushRfqActivity(
+      {
+        ...rfq,
+        cancelStatus: "declined",
+        cancelDeclinedAt: at,
+      },
+      "cancel_declined",
+      { at, by: gate.account.email }
+    );
   });
 }
 
@@ -4192,30 +4777,36 @@ function uploadRfqToTms(id, { fail, whatsappPdfName, tms } = {}) {
         whatsappPdfName: whatsappPdfName || rfq.whatsappPdfName || "",
       };
     }
-    return {
-      ...rfq,
-      lastTmsError: "",
-      tmsOpenedAt: new Date().toISOString(),
-      tmsId: tms?.id || rfq.tmsId || "",
-      tmsDocumentNo: tms?.documentNo || rfq.tmsDocumentNo || "",
-      tmsUrl: tms?.url || rfq.tmsUrl || "",
-      whatsappPdfName: tms?.fileName || whatsappPdfName || rfq.whatsappPdfName || "",
-      tmsPayload: {
-        model: "inbound_request_for_quotes",
-        source: "mattex-marketplace",
-        rfqId: rfq.id,
+    const tmsOpenedAt = new Date().toISOString();
+    const documentNo = tms?.documentNo || rfq.tmsDocumentNo || "";
+    return pushRfqActivity(
+      {
+        ...rfq,
+        lastTmsError: "",
+        tmsOpenedAt,
         tmsId: tms?.id || rfq.tmsId || "",
-        documentNo: tms?.documentNo || rfq.tmsDocumentNo || "",
-        buyerEmail: rfq.buyerEmail,
-        buyerName: rfq.buyerName,
-        project: rfq.project || "",
-        address: rfq.address || "",
-        channel: rfq.channel || "rfq",
-        askKind: rfq.askKind || "quote",
-        lines: rfq.lines,
+        tmsDocumentNo: documentNo,
+        tmsUrl: tms?.url || rfq.tmsUrl || "",
         whatsappPdfName: tms?.fileName || whatsappPdfName || rfq.whatsappPdfName || "",
+        tmsPayload: {
+          model: "inbound_request_for_quotes",
+          source: "mattex-marketplace",
+          rfqId: rfq.id,
+          tmsId: tms?.id || rfq.tmsId || "",
+          documentNo,
+          buyerEmail: rfq.buyerEmail,
+          buyerName: rfq.buyerName,
+          project: rfq.project || "",
+          address: rfq.address || "",
+          channel: rfq.channel || "rfq",
+          askKind: rfq.askKind || "quote",
+          lines: rfq.lines,
+          whatsappPdfName: tms?.fileName || whatsappPdfName || rfq.whatsappPdfName || "",
+        },
       },
-    };
+      "tms",
+      { at: tmsOpenedAt, detail: documentNo, by: gate.account.email }
+    );
   });
 }
 
@@ -4225,12 +4816,18 @@ function resubmitRfq(id, lines) {
   return patchRfqById(id, (rfq, owner) => {
     if (normalizeEmail(owner) !== email && rfq.buyerEmail !== email) return rfq;
     if (inboxStatus(rfq) !== "returned") return rfq;
-    return {
-      ...rfq,
-      reviewStatus: "received",
-      reviewingBy: "",
-      lines: Array.isArray(lines) && lines.length ? lines : rfq.lines,
-    };
+    const at = new Date().toISOString();
+    return pushRfqActivity(
+      {
+        ...rfq,
+        reviewStatus: "received",
+        reviewingBy: "",
+        resubmittedAt: at,
+        lines: Array.isArray(lines) && lines.length ? lines : rfq.lines,
+      },
+      "resubmitted",
+      { at }
+    );
   });
 }
 
@@ -4385,7 +4982,31 @@ function fixProductReport(id, { hold, markChain, patch, note, unpublish } = {}) 
   return { ok: true, product };
 }
 
+function readRemovedProductIds(patches) {
+  const raw = patches && typeof patches === "object" ? patches.__removed : [];
+  return Array.isArray(raw) ? raw.map(String).filter(Boolean) : [];
+}
+
+function mergeProductPatchMaps(local, remote) {
+  const left = local && typeof local === "object" ? local : {};
+  const right = remote && typeof remote === "object" ? remote : {};
+  const merged = { ...right, ...left };
+  const removed = [...new Set([...readRemovedProductIds(right), ...readRemovedProductIds(left)])];
+  merged.__removed = removed;
+  const createdById = new Map();
+  [...(Array.isArray(right.__created) ? right.__created : []), ...(Array.isArray(left.__created) ? left.__created : [])].forEach((row) => {
+    if (row?.id && !removed.includes(String(row.id))) createdById.set(String(row.id), row);
+  });
+  merged.__created = [...createdById.values()];
+  removed.forEach((id) => {
+    delete merged[id];
+  });
+  return merged;
+}
+
 function persistProductPatches() {
+  const prev = readJson(PRODUCT_PATCH_KEY, {});
+  const removed = readRemovedProductIds(prev);
   const created = PRODUCTS.filter((p) => String(p.id || "").startsWith("p-new-") || String(p.id || "").startsWith("p-xls-"));
   const patches = {};
   PRODUCTS.forEach((p) => {
@@ -4418,15 +5039,23 @@ function persistProductPatches() {
     };
   });
   patches.__created = created;
+  patches.__removed = removed;
   writeJson(PRODUCT_PATCH_KEY, patches);
 }
 
 function applySavedProductPatches() {
   const patches = readJson(PRODUCT_PATCH_KEY, {});
+  const removed = new Set(readRemovedProductIds(patches));
+  if (removed.size) {
+    for (let i = PRODUCTS.length - 1; i >= 0; i -= 1) {
+      if (removed.has(String(PRODUCTS[i].id))) PRODUCTS.splice(i, 1);
+    }
+  }
   PRODUCTS.forEach((p) => {
     if (patches[p.id]) Object.assign(p, normalizeProductRecord({ ...p, ...patches[p.id] }));
   });
   (patches.__created || []).forEach((row) => {
+    if (!row?.id || removed.has(String(row.id))) return;
     if (!PRODUCTS.some((p) => p.id === row.id)) PRODUCTS.push(normalizeProductRecord(row));
   });
 }
@@ -4552,7 +5181,7 @@ function publishWarnBlockers(product) {
   return publishBlockers(product).filter((key) => PUBLISH_WARN_KEYS.includes(key));
 }
 
-/** Published = live. Unpublish = complete but not live. Draft = incomplete. Soft deleted is never live. */
+/** Published = live. Unpublish = complete but not live. Draft = incomplete. Trash is never live. */
 function productCatalogStatus(product) {
   if (!product || product.deleted) return "deleted";
   if (product.published && !product.held) return "published";
@@ -4638,6 +5267,33 @@ function softDeleteAdminProduct(id) {
   persistProductPatches();
   emitStoreChange();
   return { ok: true, product };
+}
+
+function canDeleteProductForever(product) {
+  const status = productCatalogStatus(product);
+  return status === "unpublished" || status === "draft" || status === "deleted";
+}
+
+function hardDeleteAdminProduct(id) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const idx = PRODUCTS.findIndex((p) => p.id === id);
+  if (idx < 0) return { ok: false, error: "missing" };
+  const product = PRODUCTS[idx];
+  if (!canDeleteProductForever(product)) return { ok: false, error: "published" };
+  const prev = readJson(PRODUCT_PATCH_KEY, {});
+  const removed = new Set(readRemovedProductIds(prev));
+  removed.add(String(product.id));
+  PRODUCTS.splice(idx, 1);
+  const next = { ...prev, __removed: [...removed] };
+  delete next[product.id];
+  if (Array.isArray(next.__created)) {
+    next.__created = next.__created.filter((row) => String(row?.id) !== String(product.id));
+  }
+  writeJson(PRODUCT_PATCH_KEY, next);
+  persistProductPatches();
+  emitStoreChange();
+  return { ok: true };
 }
 
 function isAdminCreatedProduct(p) {
@@ -4961,6 +5617,23 @@ function applySharedStore(kv) {
       return;
     }
     const nextRaw = JSON.stringify(value);
+    if (key === STAFF_KEY) {
+      const merged = mergeStaffLists(readJson(STAFF_KEY, []), value);
+      if (JSON.stringify(merged) !== JSON.stringify(readJson(STAFF_KEY, []))) {
+        writeLocalOnly(STAFF_KEY, merged);
+        changed = true;
+      }
+      return;
+    }
+    if (key === PRODUCT_PATCH_KEY) {
+      const merged = mergeProductPatchMaps(readJson(PRODUCT_PATCH_KEY, {}), value);
+      if (JSON.stringify(merged) !== JSON.stringify(readJson(PRODUCT_PATCH_KEY, {}))) {
+        writeLocalOnly(PRODUCT_PATCH_KEY, merged);
+        applySavedProductPatches();
+        changed = true;
+      }
+      return;
+    }
     if (nextRaw !== localStorage.getItem(key)) {
       writeLocalOnly(key, value);
       if (key === PRODUCT_PATCH_KEY) applySavedProductPatches();
@@ -5154,7 +5827,14 @@ export {
   startRfqReview,
   decideRfq,
   requestRfqCancel,
+  canBuyerRequestCancel,
   decideRfqCancel,
+  openRfqEmailPreview,
+  inferRfqEmailPreviewKind,
+  deliverRfqAcceptedEmail,
+  deliverRfqNoOfferEmail,
+  deliverRfqCancelAcceptedEmail,
+  deliverRfqCancelDeclinedEmail,
   rfqDiscussWhatsappText,
   rfqDiscussEmailHref,
   openWhatsappChat,
@@ -5168,6 +5848,10 @@ export {
   getEffectiveQuoteVersion,
   formatQuoteVersionOption,
   formatQuoteVersionStamp,
+  rfqActivityLog,
+  rfqLastActivity,
+  rfqActivityLabel,
+  hydrateRfqDecisionActivity,
   quoteDraftIsDirty,
   rfqLinesForQuoteVersion,
   loadQuoteVersionIntoDraft,
@@ -5207,6 +5891,8 @@ export {
   productSkuId,
   holdAdminProduct,
   softDeleteAdminProduct,
+  hardDeleteAdminProduct,
+  canDeleteProductForever,
   importAdminCsv,
   adminCsvTemplate,
   listAdminAlerts,

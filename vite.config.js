@@ -30,6 +30,12 @@ function jsonPlugin() {
           res.end(JSON.stringify(handleSharedStoreGet()));
           return;
         }
+        if (path === "/api/send-email" && req.method === "POST") {
+          res.statusCode = 200;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify({ ok: true, skipped: true, reason: "local" }));
+          return;
+        }
         if (path === "/api/shared-store" && req.method === "POST") {
           let body = {};
           try {

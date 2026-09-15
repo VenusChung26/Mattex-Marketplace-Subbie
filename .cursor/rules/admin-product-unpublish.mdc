@@ -1,5 +1,5 @@
 ---
-description: Mattex product Publish / Unpublish / Draft / Soft delete
+description: Mattex product Publish / Unpublish / Draft / Trash / Delete forever
 alwaysApply: true
 ---
 
@@ -8,15 +8,18 @@ alwaysApply: true
 - **Published** = live on MM.
 - **Unpublish** = complete, not live.
 - **Draft** = incomplete, not live. Publish is allowed after listing missing MOQ/lead.
-- **Soft delete** = never live. Restore first (becomes Draft or Unpublish). `publishAdminProduct` must return `{ error: "deleted" }`.
+- **Trash** (Move to trash) = never live. Restore first (becomes Draft or Unpublish). `publishAdminProduct` must return `{ error: "deleted" }`.
+- **Delete forever** = gone from catalog. Only Unpublish / Draft / Trash. Published must Unpublish first. Confirm popup. Old RFQs keep the sent SKU text.
 
 Hard block Publish: official SKU, name, unit, category, duplicate SKU. Warn only: MOQ, lead.
 
 ```jsx
 // ❌ BAD
-publishAdminProduct(softDeleted.id);
+publishAdminProduct(trashed.id);
+hardDeleteAdminProduct(published.id);
 
 // ✅ GOOD
 <button disabled={product.deleted} onClick={() => requestPublish(product)}>Publish</button>
 <button onClick={() => restoreAdminProduct(product.id)}>Restore</button>
+<button disabled={!canDeleteProductForever(product)}>Delete forever</button>
 ```

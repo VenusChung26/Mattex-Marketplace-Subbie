@@ -24,6 +24,48 @@ export const CUSTOM_PLACEMENT = {
   C: "drawer",
 };
 
+function firstImageAttachment(files) {
+  const list = Array.isArray(files) ? files : [];
+  const found = list.find((file) => {
+    const type = String(file?.type || "");
+    const url = String(file?.url || file?.href || "");
+    const name = String(file?.name || "");
+    return (
+      file?.kind === "image" ||
+      type.startsWith("image/") ||
+      url.startsWith("data:image/") ||
+      /\.(png|jpe?g|webp|gif|svg)(\?|$)/i.test(url) ||
+      /\.(png|jpe?g|webp|gif|svg)$/i.test(name)
+    );
+  });
+  return found?.url || found?.href || "";
+}
+
+function lineThumb(line) {
+  const direct = String(line?.image || "").trim();
+  if (direct) return direct;
+  const fromFile = firstImageAttachment(line?.attachments);
+  if (fromFile) return fromFile;
+  if (line?.custom) return "";
+  return String(getProduct(line?.productId)?.image || "").trim();
+}
+
+function LineThumb({ line, className = "h-16 w-16 sm:h-[4.5rem] sm:w-24" }) {
+  const { t } = useLanguage();
+  const src = lineThumb(line);
+  return (
+    <span className={`${className} shrink-0 overflow-hidden rounded-md border border-line bg-paper`}>
+      {src ? (
+        <img src={src} alt={line?.name || ""} className="h-full w-full object-cover" />
+      ) : (
+        <span className="flex h-full w-full items-center justify-center px-1 text-center text-[9px] font-bold uppercase leading-tight text-brand-700">
+          {line?.custom ? t("customItem") : ""}
+        </span>
+      )}
+    </span>
+  );
+}
+
 function GreenProductTag({ t, className = "" }) {
   return (
     <span
@@ -541,23 +583,26 @@ export function ConfirmRfqView(props) {
             const belowMoq = !l.custom && Number(l.qty) < moq;
             return (
               <li key={l.productId} className="px-4 sm:px-5 py-3 flex flex-wrap justify-between gap-3 text-sm">
-                <span className="min-w-0 flex-1">
-                  <span className="font-semibold text-ink">{l.name}</span>
-                  {l.green ? (
-                    <span className="ml-1.5 align-middle">
-                      <GreenProductTag t={t} />
-                    </span>
-                  ) : null}
-                  {l.custom ? <span className="text-mute"> · {t("customItem")}</span> : null}
-                  {hasLowerAsk(l) ? (
-                    <span className="block text-xs font-normal text-mute mt-0.5">
-                      {t("listedPrice")} {formatPrice(l.unitPrice)} · {t("requestedPrice")} {formatPrice(l.requestedUnitPrice)}
-                    </span>
-                  ) : null}
-                  <AttachmentLinks files={l.attachments} />
-                  {belowMoq ? (
-                    <p className="mt-1 text-xs font-medium text-amber-800">{t("qtyBelowMoq", { n: moq })}</p>
-                  ) : null}
+                <span className="min-w-0 flex-1 flex items-center gap-3">
+                  <LineThumb line={l} />
+                  <span className="min-w-0">
+                    <span className="font-semibold text-ink">{l.name}</span>
+                    {l.green ? (
+                      <span className="ml-1.5 align-middle">
+                        <GreenProductTag t={t} />
+                      </span>
+                    ) : null}
+                    {l.custom ? <span className="text-mute"> · {t("customItem")}</span> : null}
+                    {hasLowerAsk(l) ? (
+                      <span className="block text-xs font-normal text-mute mt-0.5">
+                        {t("listedPrice")} {formatPrice(l.unitPrice)} · {t("requestedPrice")} {formatPrice(l.requestedUnitPrice)}
+                      </span>
+                    ) : null}
+                    <AttachmentLinks files={l.attachments} />
+                    {belowMoq ? (
+                      <p className="mt-1 text-xs font-medium text-amber-800">{t("qtyBelowMoq", { n: moq })}</p>
+                    ) : null}
+                  </span>
                 </span>
                 <span className="shrink-0 flex flex-col items-end gap-1.5 w-[13rem] max-w-full">
                   <span className="font-semibold text-right w-full">
@@ -1104,13 +1149,7 @@ function LinesList({
                   </div>
                 ) : (
                   <>
-                    <div className="w-11 h-11 shrink-0 border border-line bg-brand-50 overflow-hidden flex items-center justify-center text-[9px] font-bold uppercase text-brand-700 text-center px-0.5">
-                      {l.image ? (
-                        <img src={l.image} alt="" draggable={false} className="w-full h-full object-cover pointer-events-none" />
-                      ) : l.custom ? (
-                        t("customItem")
-                      ) : null}
-                    </div>
+                    <LineThumb line={l} className="h-14 w-14 sm:h-16 sm:w-20" />
                     <div className="flex-1 min-w-0">
                       <div className="flex flex-wrap items-center gap-1.5">
                         <p className="font-semibold text-ink text-sm truncate">{l.name}</p>

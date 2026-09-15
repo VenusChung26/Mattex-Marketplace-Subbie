@@ -49,8 +49,13 @@ export default function StaffSetPasswordPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-charcoal px-4 py-12 text-white">
       <div className="w-full max-w-md rounded-2xl bg-white p-6 text-ink shadow-[0_24px_60px_rgba(16,21,19,0.25)]">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-brand-600">Sales portal</p>
-        <h1 className="mt-2 font-display text-2xl text-brand-900">Set your password</h1>
+        <div className="flex items-center gap-2.5">
+          <img src="/assets/mattex-logo.png" alt="" className="h-8 w-auto shrink-0" />
+          <span className="text-[15px] sm:text-lg font-semibold leading-tight tracking-tight text-brand-900">
+            Mattex Marketplace Admin Portal
+          </span>
+        </div>
+        <h1 className="mt-5 font-display text-2xl text-brand-900">Set your password</h1>
         {!invite ? (
           <p className="mt-3 text-sm text-mute">This invite link is not valid. Ask a teammate to send a new invite.</p>
         ) : invite.expired ? (

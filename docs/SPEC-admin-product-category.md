@@ -1,15 +1,15 @@
 # Spec — Product Category admin page
 
-Products nav third tab: **Mattex Products | Product Category | Mattex Chain Products**.
+Products third tab: **Mattex Products | Product Category | Mattex Chain Products**.
 
-- Add / rename / delete categories (seed and custom). Delete only when **count is 0**, including soft-deleted products.
-- List shows **count** (includes soft-deleted). Click a category to see its products.
+- Add / rename / delete categories (seed and custom). Delete only when **count is 0**, including Trash products. The last remaining category cannot be deleted.
+- Disabled Delete shows a **visible hover tooltip** (not native `title`): why it cannot delete (products still assigned, or last category).
+- List shows **count** (includes Trash). Click a category to see its products.
+- Each product row has an **open** icon → Mattex Products **Edit** for that SKU.
 - One product, one category. Select products and **Move** to another category. **Add products** searches the rest of the catalog and assigns them here.
 - Do **not** leave a product with no category.
-- Soft-deleted rows are grey and read-only (no move, no Publish). Restore on Mattex Products → Soft deleted.
+- Trash rows are grey and read-only (no move, no Publish). Restore on Mattex Products → Trash.
 - Product add/edit form still has Category dropdown **and Add category**.
-
-This replaces the old lock that forbade a standalone Category page.
 
 ```jsx
 // ❌ BAD
@@ -17,6 +17,6 @@ deleteAdminCategory(categoryWithProducts.id);
 assignAdminProductsCategory(ids, "");
 
 // ✅ GOOD
-if (adminProductsInCategory(name).length) return { error: "in_use" };
+<button disabled={category.count > 0 || categories.length <= 1}>Delete</button>
 assignAdminProductsCategory(ids, otherCategoryName);
 ```

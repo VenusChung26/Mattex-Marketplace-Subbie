@@ -7,7 +7,7 @@ alwaysApply: true
 
 Products third tab: Mattex Products | **Product Category** | Mattex Chain Products.
 
-Add / rename / delete. Delete blocked while any product (including soft-deleted) still uses that category. Counts include soft-deleted. Select products to move; Add products assigns from the rest of the catalog. One product, one category. Never unassign to empty. Soft-deleted rows are read-only. Product form still has Add category.
+Add / rename / delete. Delete blocked while any product (including Trash) still uses that category, and blocked for the last category. Disabled Delete uses a visible hover tooltip. Counts include Trash. Row open icon jumps to Mattex Products Edit. Select products to move; Add products assigns from the rest of the catalog. One product, one category. Never unassign to empty. Trash rows are read-only. Product form still has Add category.
 
 ```jsx
 // ❌ BAD
@@ -15,6 +15,6 @@ deleteAdminCategory(id); // while products remain
 assignAdminProductsCategory(ids, "");
 
 // ✅ GOOD
-<button disabled={category.count > 0}>Delete</button>
+<button disabled={category.count > 0 || categories.length <= 1}>Delete</button>
 assignAdminProductsCategory(ids, otherCategoryName);
 ```
