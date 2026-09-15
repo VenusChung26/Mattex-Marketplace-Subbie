@@ -708,7 +708,7 @@ export function VariantB(props) {
               <p className="text-xs text-mute uppercase tracking-wide">{t("sectionBuy")}</p>
               <p className="text-xl font-bold text-brand-600 mt-1">{formatPrice(buyTotals.pricedSubtotal)}</p>
               {formErrorKind === "buy" && formError ? (
-                <p className="mt-2 text-sm text-red-700 font-medium">{formError}</p>
+                <p data-form-alert className="mt-2 text-sm text-red-700 font-medium">{formError}</p>
               ) : null}
               <div className="mt-3 flex flex-wrap gap-2">
                 <button
@@ -726,7 +726,7 @@ export function VariantB(props) {
               <p className="text-xs text-mute uppercase tracking-wide">{t("sectionQuote")}</p>
               <p className="text-xl font-bold text-brand-600 mt-1">{formatPrice(quoteTotals.pricedSubtotal)}</p>
               {formErrorKind === "quote" && formError ? (
-                <p className="mt-2 text-sm text-red-700 font-medium">{formError}</p>
+                <p data-form-alert className="mt-2 text-sm text-red-700 font-medium">{formError}</p>
               ) : null}
               <div className="mt-3 flex flex-wrap gap-2">
                 <button
@@ -913,7 +913,11 @@ export function VariantC(props) {
             <p className="mt-4 text-lg font-bold text-brand-700">
               Subtotal {formatPrice(selectedTotals.pricedSubtotal)}
             </p>
-            {formError ? <p className="mt-2 text-sm text-red-700 font-medium">{formError}</p> : null}
+            {formError ? (
+              <p data-form-alert className="mt-2 text-sm text-red-700 font-medium">
+                {formError}
+              </p>
+            ) : null}
             <div className="mt-5 flex justify-between gap-2">
               <button type="button" className="btn-soft !px-5" onClick={() => setWizardStep(2)}>
                 Back
@@ -1370,6 +1374,7 @@ function DatePickerField({ value, onChange, min, invalid, className = "" }) {
             }
           }}
           className={`${invalidFieldClass(invalid, className)} pr-10`}
+          aria-invalid={invalid ? true : undefined}
         />
         <button
           type="button"
@@ -1460,7 +1465,11 @@ function DatePickerField({ value, onChange, min, invalid, className = "" }) {
 
 function FieldError({ show, children }) {
   if (!show) return null;
-  return <span className="mt-1 block text-xs font-medium text-red-700">{children}</span>;
+  return (
+    <span data-form-alert className="mt-1 block text-xs font-medium text-red-700">
+      {children}
+    </span>
+  );
 }
 
 function MetaForm({
@@ -1617,6 +1626,7 @@ function MetaForm({
                 <DatePickerField
                   value={lot.date || ""}
                   min={today}
+                  invalid={lotsInvalid && index === 0}
                   onChange={(next) => {
                     const lots = (deliveryLots || []).map((row, i) =>
                       i === index ? { ...row, date: next } : row
@@ -1697,6 +1707,7 @@ function MetaForm({
           }}
           placeholder={t("addressPlaceholder")}
           className={invalidFieldClass(addressInvalid, "w-full")}
+          aria-invalid={addressInvalid ? true : undefined}
         />
         <FieldError show={addressInvalid}>{t("addressRequired")}</FieldError>
       </label>
@@ -1798,7 +1809,11 @@ function SubmitBar({
           )}
         </div>
       </div>
-      {formError ? <p className="mt-3 text-sm text-red-700 font-medium">{formError}</p> : null}
+      {formError ? (
+        <p data-form-alert className="mt-3 text-sm text-red-700 font-medium">
+          {formError}
+        </p>
+      ) : null}
     </div>
   );
 }

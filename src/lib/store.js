@@ -3280,24 +3280,55 @@ function disableStaff(email) {
   if (list.filter((s) => s.enabled).length <= 1 && target.enabled) return { ok: false, error: "last" };
   target.enabled = false;
   setStaffList(list);
+  releaseStaffHeldWork(target);
+  if (normalizeEmail(getStaffSession()?.email) === target.email) localStorage.removeItem(STAFF_AUTH_KEY);
+  emitStoreChange();
+  return { ok: true };
+}
+
+function releaseStaffHeldWork(target) {
+  const staffEmail = normalizeEmail(target?.email);
+  if (!staffEmail) return;
+  const who = String(target.name || target.email || staffEmail).trim() || staffEmail;
+  const at = new Date().toISOString();
   const map = getRfqsMap();
-  Object.values(map || {}).forEach((listRows) => {
-    (Array.isArray(listRows) ? listRows : []).forEach((rfq) => {
-      if (rfq.reviewingBy === target.email) {
-        rfq.reviewingBy = "";
-        if (inboxStatus(rfq) === "reviewing") rfq.reviewStatus = "received";
-      }
+  Object.keys(map || {}).forEach((key) => {
+    const rows = Array.isArray(map[key]) ? map[key] : [];
+    map[key] = rows.map((rfq) => {
+      if (normalizeEmail(rfq.reviewingBy) !== staffEmail) return rfq;
+      let next = { ...rfq, reviewingBy: "" };
+      if (next.reviewStatus === "reviewing" || inboxStatus(next) === "reviewing") next.reviewStatus = "received";
+      return pushRfqActivity(next, "released", { at, by: staffEmail, detail: who });
     });
   });
   setRfqsMap(map);
   getReports().forEach((r) => {
-    if (r.lookingBy === target.email) {
+    if (normalizeEmail(r.lookingBy) === staffEmail) {
       r.lookingBy = "";
       if (r.status === "looking") r.status = "open";
     }
   });
   writeJson(REPORTS_KEY, getReports());
-  if (getStaffSession()?.email === target.email) localStorage.removeItem(STAFF_AUTH_KEY);
+}
+
+function canDeleteStaffForever(account) {
+  if (!account || account.enabled) return false;
+  const sessionEmail = normalizeEmail(getStaffSession()?.email);
+  if (sessionEmail && sessionEmail === normalizeEmail(account.email)) return false;
+  return getStaffList().some((row) => row.enabled && normalizeEmail(row.email) !== normalizeEmail(account.email));
+}
+
+function hardDeleteStaff(email) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const list = getStaffList();
+  const key = normalizeEmail(email);
+  const target = list.find((s) => s.email === key);
+  if (!target) return { ok: false, error: "missing" };
+  if (target.enabled) return { ok: false, error: "active" };
+  if (normalizeEmail(gate.account.email) === key) return { ok: false, error: "self" };
+  if (!list.some((s) => s.enabled && s.email !== key)) return { ok: false, error: "last" };
+  setStaffList(list.filter((s) => s.email !== key));
   emitStoreChange();
   return { ok: true };
 }
@@ -3770,6 +3801,50 @@ function rejectBuyer(email, { reason } = {}) {
   return { ok: true };
 }
 
+function canDeleteBuyerForever(account) {
+  if (!account) return false;
+  return account.enabled === false || buyerApprovalStatus(account) === "rejected";
+}
+
+function hardDeleteBuyer(email) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const map = getAccountsMap();
+  const key = normalizeEmail(email);
+  const account = map[key];
+  if (!account) return { ok: false, error: "missing" };
+  if (!canDeleteBuyerForever({ ...account, enabled: account.enabled !== false, approvalStatus: buyerApprovalStatus(account) })) {
+    return { ok: false, error: "active" };
+  }
+  const rfqsMap = getRfqsMap();
+  const held = Array.isArray(rfqsMap[key]) ? rfqsMap[key] : [];
+  if (held.length) {
+    const orphan = `__deleted_buyer__:${key}:${Date.now()}`;
+    rfqsMap[orphan] = held.map((rfq) => ({
+      ...rfq,
+      buyerEmail: rfq.buyerEmail || account.email,
+      buyerName: rfq.buyerName || account.name || "",
+      buyerKind: rfq.buyerKind === "guest" ? "guest" : "member",
+    }));
+    delete rfqsMap[key];
+    setRfqsMap(rfqsMap);
+  }
+  delete map[key];
+  setAccountsMap(map);
+  try {
+    const session = JSON.parse(localStorage.getItem(AUTH_KEY) || "null");
+    if (session && normalizeEmail(session.email) === key) localStorage.removeItem(AUTH_KEY);
+  } catch {
+    /* ignore */
+  }
+  emitStoreChange();
+  return { ok: true };
+}
+
+function listAssignableBuyers() {
+  return listBuyers().filter((buyer) => buyer.enabled && buyer.approvalStatus !== "rejected");
+}
+
 function getAllRfqs() {
   const map = getRfqsMap();
   const out = [];
@@ -3914,7 +3989,7 @@ function setRfqLineNoOffer(id, productId, noOffer = true) {
 function assignRfqToBuyer(id, buyerEmail) {
   const gate = requireStaff();
   if (!gate.ok) return gate;
-  const buyer = listBuyers().find((b) => normalizeEmail(b.email) === normalizeEmail(buyerEmail));
+  const buyer = listAssignableBuyers().find((b) => normalizeEmail(b.email) === normalizeEmail(buyerEmail));
   if (!buyer) return { ok: false, error: "missing_buyer" };
   const map = getRfqsMap();
   let found = null;
@@ -3925,10 +4000,16 @@ function assignRfqToBuyer(id, buyerEmail) {
     if (idx < 0) return;
     found = list[idx];
     fromKey = key;
+  });
+  if (!found) return { ok: false, error: "missing" };
+  if (rfqBuyerKind(found) === "member") return { ok: false, error: "locked" };
+  Object.keys(map || {}).forEach((key) => {
+    const list = Array.isArray(map[key]) ? map[key] : [];
+    const idx = list.findIndex((r) => r.id === id);
+    if (idx < 0) return;
     list.splice(idx, 1);
     map[key] = list;
   });
-  if (!found) return { ok: false, error: "missing" };
   const dest = normalizeEmail(buyer.email);
   const assignedAt = new Date().toISOString();
   const next = pushRfqActivity(
@@ -4244,6 +4325,13 @@ function rfqActivityLabel(event, lang = "en") {
           : "Quote sent on WhatsApp";
     case "tms":
       return detail ? (zh ? `已建立 TMS iRFQ ${detail}` : `TMS iRFQ created ${detail}`) : zh ? "已建立 TMS iRFQ" : "TMS iRFQ created";
+    case "released": {
+      const who = detail || event?.by || "";
+      if (who) {
+        return zh ? `已從 ${who} 釋放（帳號已停用）` : `Released · ${who} (account disabled)`;
+      }
+      return zh ? "已釋放回共用佇列（銷售帳號已停用）" : "Released to the shared queue (sales account disabled)";
+    }
     case "assigned":
       return detail ? (zh ? `已指派予會員 ${detail}` : `Assigned to member ${detail}`) : zh ? "已指派予註冊會員" : "Assigned to a registered member";
     case "po_created":
@@ -5818,6 +5906,11 @@ export {
   updateStaff,
   disableStaff,
   enableStaff,
+  hardDeleteStaff,
+  canDeleteStaffForever,
+  hardDeleteBuyer,
+  canDeleteBuyerForever,
+  listAssignableBuyers,
   listBuyers,
   setBuyerEnabled,
   approveBuyer,

@@ -5,6 +5,7 @@ import { useStore } from "../hooks/useStore";
 import { useLanguage } from "../i18n";
 import { withLocale } from "../lib/locale";
 import { closeAuthModal, consumePendingAfterAuth, consumePendingInviteContinue, loginUser, MATTEX_CHAIN_URL, setAuthInviteHidden } from "../lib/store";
+import { useRevealFormIssue } from "../lib/formFocus";
 
 export default function AuthModal({ open, onClose }) {
   const { t, lang } = useLanguage();
@@ -15,6 +16,7 @@ export default function AuthModal({ open, onClose }) {
   const [error, setError] = useState("");
   const [dontShow, setDontShow] = useState(false);
   const closeReady = useRef(false);
+  const { formRef, revealIssue } = useRevealFormIssue();
   const invite = authModalMode !== "required";
 
   useEffect(() => {
@@ -77,6 +79,7 @@ export default function AuthModal({ open, onClose }) {
                     ? t("loginErrorMissing")
                     : t("loginErrorGeneric")
       );
+      revealIssue();
       return;
     }
     if (invite && dontShow) setAuthInviteHidden(true);
@@ -117,7 +120,17 @@ export default function AuthModal({ open, onClose }) {
             {invite ? t("authInviteBody") : t("authRequiredBody")}
           </p>
 
-          <form className="mt-5 space-y-3.5" onSubmit={onSubmit}>
+          <form ref={formRef} className="mt-5 space-y-3.5" onSubmit={onSubmit}>
+            {error ? (
+              <p
+                role="alert"
+                tabIndex={-1}
+                data-form-alert
+                className="text-sm font-medium text-red-700 outline-none"
+              >
+                {error}
+              </p>
+            ) : null}
             <label className="block">
               <span className="block text-sm font-medium mb-1">{t("email")}</span>
               <input
@@ -149,7 +162,6 @@ export default function AuthModal({ open, onClose }) {
                 autoComplete="current-password"
               />
             </label>
-            {error ? <p className="text-sm font-medium text-red-700">{error}</p> : null}
             <button type="submit" className="btn-primary w-full !py-2.5">
               {t("login")}
             </button>

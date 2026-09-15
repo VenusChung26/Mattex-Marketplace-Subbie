@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useRevealFormIssue } from "../lib/formFocus";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import SiteHeader from "../components/SiteHeader";
 import Seo from "../components/Seo";
@@ -44,6 +45,7 @@ export default function SignupPage() {
   const [error, setError] = useState("");
   const [fieldErrors, setFieldErrors] = useState({});
   const [submittedEmail, setSubmittedEmail] = useState("");
+  const { formRef, revealIssue } = useRevealFormIssue();
 
   useEffect(() => {
     closeAuthModal();
@@ -86,9 +88,7 @@ export default function SignupPage() {
     if (Object.keys(errors).length) {
       setFieldErrors(errors);
       setError(t("signupFixAlert"));
-      window.setTimeout(() => {
-        document.querySelector("[aria-invalid='true']")?.scrollIntoView({ behavior: "smooth", block: "center" });
-      }, 50);
+      revealIssue();
       return;
     }
     const result = registerUser(form);
@@ -118,6 +118,8 @@ export default function SignupPage() {
       };
       if (fieldMap[result.error]) {
         setFieldErrors({ [fieldMap[result.error]]: messages[result.error] || t("signupFixRequired") });
+      } else if (result.error === "exists" || result.error === "staff" || result.error === "pending") {
+        setFieldErrors({ email: messages[result.error] });
       } else {
         setFieldErrors({});
       }
@@ -126,9 +128,7 @@ export default function SignupPage() {
           ? messages[result.error]
           : t("signupFixAlert")
       );
-      window.setTimeout(() => {
-        document.querySelector("[aria-invalid='true']")?.scrollIntoView({ behavior: "smooth", block: "center" });
-      }, 50);
+      revealIssue();
       return;
     }
     setSubmittedEmail(result.email || form.email);
@@ -172,9 +172,14 @@ export default function SignupPage() {
                 showRequired
               />
 
-              <form className="mt-6 space-y-5" onSubmit={onSubmit} noValidate>
+              <form ref={formRef} className="mt-6 space-y-5" onSubmit={onSubmit} noValidate>
                 {error ? (
-                  <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-800">
+                  <div
+                    role="alert"
+                    tabIndex={-1}
+                    data-form-alert
+                    className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-800 outline-none"
+                  >
                     {error}
                   </div>
                 ) : null}

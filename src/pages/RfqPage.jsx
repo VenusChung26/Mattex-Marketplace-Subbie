@@ -38,6 +38,7 @@ import { allProductsTo, withLocale } from "../lib/locale";
 import Seo from "../components/Seo";
 import { VariantA, ConfirmRfqView, CUSTOM_PLACEMENT } from "./rfq-prototype/RfqDraftVariants";
 import { SHOW_RFQ } from "../lib/flags";
+import { useRevealFormIssue } from "../lib/formFocus";
 
 export default function RfqPage() {
   const { user, draft } = useStore();
@@ -70,6 +71,7 @@ export default function RfqPage() {
   const [showAddCustom, setShowAddCustom] = useState(false);
   const [confirmKind, setConfirmKind] = useState(null);
   const [confirmChannel, setConfirmChannel] = useState("rfq");
+  const { revealIssue } = useRevealFormIssue();
 
   const selectableLineIds = totals.lines
     .filter((line) => line.custom || isOrderable(getProduct(line.productId)))
@@ -295,6 +297,7 @@ export default function RfqPage() {
     if (!ids.length) {
       setFormErrorKind(kind);
       setFormError(t("noneSelected"));
+      revealIssue();
       return;
     }
     const blocked = ids.filter((id) => {
@@ -304,6 +307,7 @@ export default function RfqPage() {
     if (blocked.length) {
       setFormErrorKind(kind);
       setFormError(t("discontinuedSubmitError"));
+      revealIssue();
       return;
     }
     setFormError("");
@@ -348,9 +352,7 @@ export default function RfqPage() {
     if (under.length) {
       setFormErrorKind(kind);
       setFormError(t("qtyBelowMoq", { n: under[0].moq || 1 }));
-      window.setTimeout(() => {
-        document.getElementById("rfq-confirm-lines")?.scrollIntoView({ behavior: "smooth", block: "center" });
-      }, 50);
+      revealIssue();
       return;
     }
     setDraftNote(note);
@@ -374,11 +376,7 @@ export default function RfqPage() {
       else if (result.error === "none_selected") setFormError(t("noneSelected"));
       else if (result.error === "discontinued") setFormError(t("discontinuedSubmitError"));
       else setFormError(t("submitFailed"));
-      if (["response_date", "delivery_date", "delivery_lots", "address"].includes(result.error)) {
-        window.setTimeout(() => {
-          document.getElementById("rfq-details")?.scrollIntoView({ behavior: "smooth", block: "center" });
-        }, 50);
-      }
+      revealIssue();
       return;
     }
     const lines = totals.lines.filter((line) => ids.includes(String(line.productId)));

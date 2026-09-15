@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLanguage } from "../i18n";
 import { extractSpecItems, fileToAttachment, openUrlForAttachment } from "../lib/extractSpec";
+import { useRevealFormIssue } from "../lib/formFocus";
 import { QtyStepper } from "./ProductCard";
 import { getCategoryDefs } from "../lib/store";
 
@@ -97,6 +98,7 @@ export default function CustomProductForm({
   const [error, setError] = useState("");
   const [specOver, setSpecOver] = useState(false);
   const [imageOver, setImageOver] = useState(false);
+  const { formRef, revealIssue } = useRevealFormIssue();
 
   useEffect(() => {
     extractTokenRef.current += 1;
@@ -120,6 +122,7 @@ export default function CustomProductForm({
       setError("");
     } catch {
       setError(t("imageTooLarge"));
+      revealIssue();
     }
   }
 
@@ -136,6 +139,7 @@ export default function CustomProductForm({
     const remaining = SPEC_FILE_MAX - attachments.length;
     if (remaining <= 0) {
       setError(t("specFileMax"));
+      revealIssue();
       return;
     }
     const picked = Array.from(list || []);
@@ -143,6 +147,7 @@ export default function CustomProductForm({
     const allowed = picked.filter(isAllowedSpecFile);
     if (!allowed.length) {
       setError(t("specFileTypeError"));
+      revealIssue();
       return;
     }
     const unique = allowed.filter((file) => !attachments.some((row) => sameAttachment(row, file)));
@@ -191,11 +196,13 @@ export default function CustomProductForm({
     const trimmed = name.trim();
     if (!trimmed) {
       setError(t("customNameRequired"));
+      revealIssue();
       return;
     }
     const nextQty = Math.floor(Number(qty));
     if (!Number.isFinite(nextQty) || nextQty < 1) {
       setError(t("customQtyInvalid"));
+      revealIssue();
       return;
     }
     setError("");
@@ -220,9 +227,11 @@ export default function CustomProductForm({
 
   const specPreview = attachments.find((file) => file.kind === "image" && file.url);
   const specExt = String(attachments[0]?.name || "").split(".").pop()?.slice(0, 4);
+  const nameInvalid = Boolean(error) && !name.trim();
 
   return (
     <form
+      ref={formRef}
       onSubmit={handleSubmit}
       className={
         compact
@@ -365,9 +374,9 @@ export default function CustomProductForm({
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder={t("customProductNamePlaceholder")}
-            className="field-input"
+            className={`field-input ${nameInvalid ? "!border-red-500 ring-2 ring-red-200 bg-red-50" : ""}`}
             autoComplete="off"
-            required
+            aria-invalid={nameInvalid ? true : undefined}
           />
         </label>
         <div className="block min-w-0">
@@ -468,7 +477,11 @@ export default function CustomProductForm({
       </div>
       ) : null}
 
-      {error ? <p className="text-sm text-red-700 font-medium">{error}</p> : null}
+      {error ? (
+        <p role="alert" tabIndex={-1} data-form-alert className="text-sm text-red-700 font-medium outline-none">
+          {error}
+        </p>
+      ) : null}
       <div className="flex flex-wrap gap-2 pt-1">
         <button type="submit" className="btn-primary !px-4 !py-2.5" disabled={extracting}>
           {extracting ? t("extracting") : mode === "edit" ? t("saveChanges") : t("addToCart")}

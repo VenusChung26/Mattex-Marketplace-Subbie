@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { acceptStaffInvite, getStaffInvite } from "../../lib/store";
+import { useRevealFormIssue } from "../../lib/formFocus";
 
 function passwordChecks(password, confirmPassword) {
   const value = String(password || "");
@@ -21,15 +22,18 @@ export default function StaffSetPasswordPage() {
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState("");
   const pwd = passwordChecks(password, confirm);
+  const { formRef, revealIssue } = useRevealFormIssue();
 
   function onSubmit(e) {
     e.preventDefault();
     if (!pwd.length || !pwd.letter || !pwd.number) {
       setError("Password needs 8+ characters, a letter, and a number.");
+      revealIssue();
       return;
     }
     if (!pwd.match) {
       setError("Passwords do not match.");
+      revealIssue();
       return;
     }
     const result = acceptStaffInvite({ token, password });
@@ -41,6 +45,7 @@ export default function StaffSetPasswordPage() {
             ? "Password needs 8+ characters, a letter, and a number."
             : "This invite link is not valid."
       );
+      revealIssue();
       return;
     }
     window.location.assign("/");
@@ -66,7 +71,7 @@ export default function StaffSetPasswordPage() {
               {invite.name ? `${invite.name} · ` : ""}
               {invite.email}
             </p>
-            <form className="mt-5 space-y-3" onSubmit={onSubmit}>
+            <form ref={formRef} className="mt-5 space-y-3" onSubmit={onSubmit}>
               <label className="block text-sm font-medium">
                 New password
                 <input
@@ -78,6 +83,7 @@ export default function StaffSetPasswordPage() {
                     setError("");
                   }}
                   autoComplete="new-password"
+                  aria-invalid={error && (!pwd.length || !pwd.letter || !pwd.number) ? true : undefined}
                 />
               </label>
               <label className="block text-sm font-medium">
@@ -91,6 +97,7 @@ export default function StaffSetPasswordPage() {
                     setError("");
                   }}
                   autoComplete="new-password"
+                  aria-invalid={error && !pwd.match ? true : undefined}
                 />
               </label>
               <ul className="rounded-lg border border-line bg-paper/60 px-3 py-2 text-xs text-mute space-y-1">
@@ -99,7 +106,11 @@ export default function StaffSetPasswordPage() {
                 <li>{pwd.number ? "✓" : "○"} At least 1 number</li>
                 <li>{pwd.match ? "✓" : "○"} Passwords match</li>
               </ul>
-              {error ? <p className="text-sm font-medium text-red-700">{error}</p> : null}
+              {error ? (
+                <p role="alert" tabIndex={-1} data-form-alert className="text-sm font-medium text-red-700 outline-none">
+                  {error}
+                </p>
+              ) : null}
               <button type="submit" className="w-full rounded-lg bg-brand-600 py-2.5 text-sm font-semibold text-white">
                 Save password and enter portal
               </button>

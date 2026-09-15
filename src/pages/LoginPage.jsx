@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useRevealFormIssue } from "../lib/formFocus";
 import { Link, useNavigate } from "react-router-dom";
 import SiteHeader from "../components/SiteHeader";
 import MattexChainInvite from "../components/MattexChainInvite";
@@ -39,6 +40,7 @@ export default function LoginPage() {
   const [editing, setEditing] = useState(false);
   const [profile, setProfile] = useState(() => profileFromUser(user));
   const [saveMsg, setSaveMsg] = useState("");
+  const { formRef, revealIssue } = useRevealFormIssue();
 
   useEffect(() => {
     closeAuthModal();
@@ -61,8 +63,18 @@ export default function LoginPage() {
 
   function onSubmit(e) {
     e.preventDefault();
+    const nextErrors = {};
+    if (!String(email || "").trim()) nextErrors.email = t("signupFixRequired");
+    if (!String(password || "").trim()) nextErrors.password = t("signupFixRequired");
+    if (Object.keys(nextErrors).length) {
+      setFieldErrors(nextErrors);
+      setError(t("signupFixAlert"));
+      revealIssue();
+      return;
+    }
     const result = loginUser({ email, password });
     if (!result.ok) {
+      setFieldErrors({});
       setError(
         result.error === "password"
           ? t("loginErrorPassword")
@@ -78,6 +90,7 @@ export default function LoginPage() {
                     ? t("loginErrorMissing")
                     : t("loginErrorGeneric")
       );
+      revealIssue();
       return;
     }
     navigate(withLocale(lang, consumePendingAfterAuth() || "/"));
@@ -90,9 +103,7 @@ export default function LoginPage() {
     if (Object.keys(errors).length) {
       setFieldErrors(errors);
       setError(t("signupFixAlert"));
-      window.setTimeout(() => {
-        document.querySelector("[aria-invalid='true']")?.scrollIntoView({ behavior: "smooth", block: "center" });
-      }, 50);
+      revealIssue();
       return;
     }
     const result = updateUserProfile(profile);
@@ -106,6 +117,7 @@ export default function LoginPage() {
         setFieldErrors({ companyAddress: t("signupFixRequired") });
       }
       setError(messages[result.error] ? `${messages[result.error]} *` : t("saveErrorGeneric"));
+      revealIssue();
       return;
     }
     setError("");
@@ -130,12 +142,17 @@ export default function LoginPage() {
           {user ? (
             <div className="mt-6 space-y-5">
               {editing ? (
-                <form className="space-y-5" onSubmit={onSaveProfile} noValidate>
+                <form ref={formRef} className="space-y-5" onSubmit={onSaveProfile} noValidate>
                   <p className="rounded-lg border border-[#c5ccc8] bg-[#e6eae7] px-3 py-2 text-xs font-medium text-[#4a534e]">
                     {t("profileLockedHint")}
                   </p>
                   {error ? (
-                    <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-800">
+                    <div
+                      role="alert"
+                      tabIndex={-1}
+                      data-form-alert
+                      className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-800 outline-none"
+                    >
                       {error}
                     </div>
                   ) : null}
@@ -294,37 +311,55 @@ export default function LoginPage() {
             </div>
           ) : (
             <>
-              <form className="mt-6 space-y-4" onSubmit={onSubmit}>
-                <AccountField label={t("email")}>
+              <form ref={formRef} className="mt-6 space-y-4" onSubmit={onSubmit} noValidate>
+                {error ? (
+                  <div
+                    role="alert"
+                    tabIndex={-1}
+                    data-form-alert
+                    className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-800 outline-none"
+                  >
+                    {error}
+                  </div>
+                ) : null}
+                <AccountField label={t("email")} required error={fieldErrors.email}>
                   <input
                     type="email"
-                    required
                     value={email}
                     onChange={(e) => {
                       setEmail(e.target.value);
                       setError("");
+                      setFieldErrors((prev) => {
+                        if (!prev.email) return prev;
+                        const next = { ...prev };
+                        delete next.email;
+                        return next;
+                      });
                     }}
                     placeholder="you@company.com"
                     className="field-input"
                     autoComplete="email"
                   />
                 </AccountField>
-                <AccountField label={t("password")}>
+                <AccountField label={t("password")} required error={fieldErrors.password}>
                   <input
                     type="password"
-                    required
-                    minLength={4}
                     value={password}
                     onChange={(e) => {
                       setPassword(e.target.value);
                       setError("");
+                      setFieldErrors((prev) => {
+                        if (!prev.password) return prev;
+                        const next = { ...prev };
+                        delete next.password;
+                        return next;
+                      });
                     }}
                     placeholder="••••••••"
                     className="field-input"
                     autoComplete="current-password"
                   />
                 </AccountField>
-                {error ? <p className="text-sm font-medium text-red-700">{error}</p> : null}
                 <button type="submit" className="btn-primary w-full !py-3">
                   {t("login")}
                 </button>

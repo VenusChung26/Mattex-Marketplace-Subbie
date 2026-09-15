@@ -15,6 +15,11 @@ import {
   formatPrice,
   disableStaff,
   enableStaff,
+  hardDeleteStaff,
+  canDeleteStaffForever,
+  hardDeleteBuyer,
+  canDeleteBuyerForever,
+  listAssignableBuyers,
   dismissProductReport,
   fixProductReport,
   getAdminCategories,
@@ -2756,11 +2761,12 @@ function RfqLineRow({ rfq, line, showPricing, compact, note, readOnly = false })
 }
 
 function MemberAssignSearch({ rfqId, note, compact }) {
-  const members = listBuyers();
+  const members = listAssignableBuyers();
   const boxRef = useRef(null);
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
+  const [pending, setPending] = useState(null);
   const needle = searchNeedle(query);
   const matches = (needle ? members.filter((b) => matchesSearch(needle, ...accountSearchHay(b))) : members).slice(0, 12);
 
@@ -2773,15 +2779,28 @@ function MemberAssignSearch({ rfqId, note, compact }) {
   }, []);
 
   function pick(email) {
-    if (!email) return;
+    const buyer = members.find((b) => sameEmail(b.email, email));
+    if (!buyer) return;
     setQuery("");
     setOpen(false);
-    note?.(assignRfqToBuyer(rfqId, email), "RFQ assigned to member");
+    setPending(buyer);
+  }
+
+  function confirmAssign() {
+    if (!pending?.email) return;
+    const result = assignRfqToBuyer(rfqId, pending.email);
+    setPending(null);
+    if (!result?.ok && result?.error === "locked") {
+      note?.({ ok: false, error: "This RFQ already belongs to a marketplace account and cannot be reassigned." });
+      return;
+    }
+    note?.(result, "RFQ assigned to member");
   }
 
   return (
+    <>
     <label className={`block text-mute ${compact ? "text-[10px]" : "text-[11px]"}`}>
-      Assign to registered member to send the quote in marketplace
+      Assign to a registered buyer account
       <div ref={boxRef} className="relative mt-1">
         <input
           type="search"
@@ -2845,6 +2864,29 @@ function MemberAssignSearch({ rfqId, note, compact }) {
         ) : null}
       </div>
     </label>
+      {pending ? (
+        <AdminModal
+          title="Confirm assign buyer"
+          onClose={() => setPending(null)}
+          footer={
+            <div className="flex justify-end gap-2">
+              <button type="button" className="rounded-lg border border-line bg-white px-4 py-2 text-sm" onClick={() => setPending(null)}>
+                Cancel
+              </button>
+              <button type="button" className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white" onClick={confirmAssign}>
+                Confirm assign
+              </button>
+            </div>
+          }
+        >
+          <p className="text-sm text-ink">
+            Assign this guest RFQ to <span className="font-semibold">{pending.name || pending.email}</span>
+            {pending.companyName ? ` · ${pending.companyName}` : ""} ({pending.email})?
+          </p>
+          <p className="mt-2 text-sm text-mute">After confirm, the buyer cannot be changed. The RFQ moves to that member’s My RFQs.</p>
+        </AdminModal>
+      ) : null}
+    </>
   );
 }
 
@@ -2862,7 +2904,7 @@ function RfqBuyerMeta({ rfq, note, onOpenBuyer, compact }) {
         </span>
         <BuyerNameLink name={rfq.buyerName} email={rfq.buyerEmail} onOpen={onOpenBuyer} />
       </div>
-      {kind === "guest" && SHOW_RFQ_QUOTES ? <MemberAssignSearch rfqId={rfq.id} note={note} compact={compact} /> : null}
+      {kind === "guest" ? <MemberAssignSearch rfqId={rfq.id} note={note} compact={compact} /> : null}
     </div>
   );
 }
@@ -4256,7 +4298,7 @@ function RfqFollowUpContact({ rfq, account, note }) {
   );
 }
 
-function BuyerInfoModal({ email, note, onClose, onOpenRfq, onReject }) {
+function BuyerInfoModal({ email, note, onClose, onOpenRfq, onReject, onForever }) {
   const buyer = listBuyers().find((b) => sameEmail(b.email, email));
   const rfqs = getAllRfqs().filter((r) => sameEmail(r.buyerEmail, email));
   const hintName = buyer?.name || rfqs[0]?.buyerName || "";
@@ -4265,6 +4307,7 @@ function BuyerInfoModal({ email, note, onClose, onOpenRfq, onReject }) {
   const canEnable = Boolean(buyer && buyer.approvalStatus !== "rejected" && buyer.enabled === false);
   const canDisable = Boolean(buyer && buyer.enabled !== false && buyer.approvalStatus !== "rejected");
   const canReject = Boolean(buyer && buyer.approvalStatus !== "rejected");
+  const canForever = Boolean(buyer && canDeleteBuyerForever(buyer));
 
   return (
     <AdminModal
@@ -4302,6 +4345,15 @@ function BuyerInfoModal({ email, note, onClose, onOpenRfq, onReject }) {
               Enable
             </button>
           ) : null}
+          {canForever ? (
+            <button
+              type="button"
+              className="rounded-lg bg-red-700 px-4 py-2 text-sm font-semibold text-white"
+              onClick={() => onForever?.(buyer)}
+            >
+              Delete forever
+            </button>
+          ) : null}
         </div>
       }
     >
@@ -4312,6 +4364,9 @@ function BuyerInfoModal({ email, note, onClose, onOpenRfq, onReject }) {
           {signedUp ? <p className="mt-1 text-xs text-mute">Signed up {signedUp}</p> : null}
           {buyer && buyer.approvalStatus !== "rejected" && buyer.enabled !== false ? (
             <p className="mt-2 text-xs text-mute">Can log in now. Disable to pause, or Reject to refuse the account.</p>
+          ) : null}
+          {canForever ? (
+            <p className="mt-2 text-xs text-mute">Delete forever removes the login. RFQs stay with this name and email frozen.</p>
           ) : null}
         </div>
         <AccountStatusChip account={buyer} />
@@ -4419,6 +4474,14 @@ function AccountPanel({ note, kind = "sales", focusEmail = "", onOpenRfq }) {
       note({ ok: false, error: "Keep at least one active sales account." });
       return;
     }
+    if (!result?.ok && result?.error === "active") {
+      note({ ok: false, error: "Disable this account first." });
+      return;
+    }
+    if (!result?.ok && result?.error === "self") {
+      note({ ok: false, error: "Another sales account must Delete forever." });
+      return;
+    }
     if (!result?.ok && result?.error === "taken") {
       note({ ok: false, error: "That email is already in use." });
       return;
@@ -4492,8 +4555,8 @@ function AccountPanel({ note, kind = "sales", focusEmail = "", onOpenRfq }) {
           <h1 className="font-display text-2xl text-brand-900">{isSales ? "Sales" : "Buyer"}</h1>
           <p className="text-sm text-mute">
             {isSales
-              ? "Invite portal logins by email. They set a password from the invite link. Disable hides the account from sign-in."
-              : "New sign-ups can log in immediately. Disable to pause login, or Reject to refuse the account."}
+              ? "Invite portal logins by email. They set a password from the invite link. Disable hides sign-in. Delete forever is only on disabled accounts, with a confirm, and cannot remove the last active sales login."
+              : "New sign-ups can log in immediately. Disable to pause login, or Reject to refuse the account. Delete forever is only after Disable or Reject, and keeps historical RFQs."}
           </p>
         </div>
         {isSales ? (
@@ -4616,6 +4679,15 @@ function AccountPanel({ note, kind = "sales", focusEmail = "", onOpenRfq }) {
                           Enable
                         </button>
                       )}
+                      {(isSales ? canDeleteStaffForever(u) : canDeleteBuyerForever(u)) ? (
+                        <button
+                          type="button"
+                          className="text-xs font-semibold text-red-800 hover:underline"
+                          onClick={() => setModal({ type: "forever", account: u })}
+                        >
+                          Delete forever
+                        </button>
+                      ) : null}
                     </div>
                   </td>
                 </tr>
@@ -4643,6 +4715,7 @@ function AccountPanel({ note, kind = "sales", focusEmail = "", onOpenRfq }) {
           note={note}
           onClose={closeModal}
           onOpenRfq={onOpenRfq}
+          onForever={(account) => setModal({ type: "forever", account })}
           onReject={(email) => {
             setRejectReason("");
             setFormError("");
@@ -4695,7 +4768,49 @@ function AccountPanel({ note, kind = "sales", focusEmail = "", onOpenRfq }) {
           {formError ? <p className="mt-2 text-sm text-red-700">{formError}</p> : null}
         </AdminModal>
       ) : null}
-      {isSales && modal ? (
+      {modal?.type === "forever" ? (
+        <AdminModal
+          title="Delete forever"
+          onClose={closeModal}
+          footer={
+            <div className="flex justify-end gap-2">
+              <button type="button" className="rounded-lg border border-line bg-white px-4 py-2 text-sm" onClick={closeModal}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="rounded-lg bg-red-700 px-4 py-2 text-sm font-semibold text-white"
+                onClick={() => {
+                  const account = modal.account;
+                  const result = isSales ? hardDeleteStaff(account.email) : hardDeleteBuyer(account.email);
+                  if (isSales) staffNote(result, "Deleted forever");
+                  else {
+                    if (!result?.ok && result?.error === "active") {
+                      note({ ok: false, error: "Disable or Reject this buyer first." });
+                      return;
+                    }
+                    note(result, "Deleted forever");
+                  }
+                  if (result?.ok) closeModal();
+                }}
+              >
+                Delete forever
+              </button>
+            </div>
+          }
+        >
+          <p className="text-sm text-ink">
+            Delete <span className="font-semibold">{modal.account?.name || modal.account?.companyName || modal.account?.email}</span> ({modal.account?.email}) forever?
+          </p>
+          <p className="mt-2 text-sm text-mute">
+            {isSales
+              ? "They cannot log in. RFQs they were reviewing already returned to the shared queue when disabled. Activity still shows who handled each RFQ."
+              : "They cannot log in. RFQs and POs stay with this name and email frozen. The same email can register again as a new account and will not inherit old RFQs."}
+          </p>
+          <p className="mt-2 text-sm font-medium text-red-800">This cannot be undone.</p>
+        </AdminModal>
+      ) : null}
+      {isSales && (modal?.type === "invite" || modal?.type === "edit") ? (
         <AdminModal
           title={editing ? `Edit ${editing.name || editing.email}` : "Invite staff"}
           onClose={closeModal}
