@@ -1217,6 +1217,7 @@ const WHATSAPP_NUMBER = "85256013989";
 const WHATSAPP_DISPLAY = "852-56013989";
 const WHATSAPP_HREF = `https://wa.me/${WHATSAPP_NUMBER}`;
 const SALES_EMAIL = "sales@mattex.com.hk";
+const RESEND_ACCOUNT_EMAIL = "resend@mattex.com.hk";
 const MATTEX_CHAIN_URL = "https://uat-chain.mattex.com.hk/overview";
 const TMS_INBOUND_RFQ_URL = "https://uat-tms-v2.mattex.com.hk/inbound/inbound-rfq?current=1&pageSize=20";
 const MATTEX_SITE_URL = "https://www.mattex.com.hk/";
@@ -3521,8 +3522,8 @@ function openHtmlEmail({ to, subject, innerHtml }) {
   return { ok: true };
 }
 
-async function postResendEmail({ to, subject, innerHtml }) {
-  if (!shouldSendViaResend()) return { ok: true, skipped: true };
+async function postResendEmail({ to, subject, innerHtml, force = false }) {
+  if (!force && !shouldSendViaResend()) return { ok: true, skipped: true };
   if (!isDeliverableEmail(to)) return { ok: false, error: "email" };
   const html = wrapEmailSend({ subject, innerHtml, fontBase: marketplaceOrigin() });
   try {
@@ -3625,8 +3626,8 @@ function deliverAccountCreatedEmail(account) {
   const name = String(account?.name || "there").trim() || "there";
   const company = String(account?.companyName || "").trim();
   const email = account?.email;
-  return deliverHtmlEmail({
-    to: email,
+  const mail = {
+    to: RESEND_ACCOUNT_EMAIL,
     subject: "Your Mattex Marketplace account is ready",
     innerHtml: accountCreatedEmailHtml({
       logoUrl: mattexLogoUrl(),
@@ -3636,7 +3637,14 @@ function deliverAccountCreatedEmail(account) {
       company,
       shopHref: `${marketplaceOrigin()}/zh`,
     }),
-  });
+  };
+  if (isLocalBrowserHost()) openHtmlEmail(mail);
+  const log = readJson("subbie_buyer_mail_log", []);
+  writeJson(
+    "subbie_buyer_mail_log",
+    [{ to: RESEND_ACCOUNT_EMAIL, subject: mail.subject, at: new Date().toISOString(), html: true }, ...(Array.isArray(log) ? log : [])].slice(0, 40)
+  );
+  return postResendEmail({ ...mail, force: true });
 }
 
 function deliverStaffInviteEmail({ email, name, href }) {

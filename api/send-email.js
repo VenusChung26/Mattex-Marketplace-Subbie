@@ -1,9 +1,6 @@
-const FROM = process.env.RESEND_FROM || "Mattex Marketplace <sales@mattex.com.hk>";
+const FROM = process.env.RESEND_FROM || "Mattex Marketplace <resend@mattex.com.hk>";
 
 export async function handleSendEmail(body) {
-  if (!process.env.VERCEL) {
-    return { ok: true, skipped: true, reason: "local" };
-  }
   const key = String(process.env.RESEND_API_KEY || "").trim();
   if (!key) return { ok: false, error: "not_configured" };
   const to = String(body?.to || "")

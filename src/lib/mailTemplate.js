@@ -463,13 +463,13 @@ export function listPrototypeEmails({ marketplaceOrigin, adminOrigin, salesEmail
     {
       id: "account-created",
       label: "Buyer account created",
-      to: "venus@mattex.com.hk",
+      to: "resend@mattex.com.hk",
       subject: "Your Mattex Marketplace account is ready",
       innerHtml: accountCreatedEmailHtml({
         logoUrl,
         salesEmail,
         name: "Venus Chung",
-        email: "venus@mattex.com.hk",
+        email: "resend@mattex.com.hk",
         company: "Mattex Engineering",
         shopHref: `${shop}/zh`,
       }),

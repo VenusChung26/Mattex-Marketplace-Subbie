@@ -1,4 +1,5 @@
 import { BrowserRouter, Navigate, Outlet, Route, Routes, useParams, useSearchParams } from "react-router-dom";
+import GoogleAnalytics from "./components/GoogleAnalytics";
 import ScrollToTop from "./components/ScrollToTop";
 import { LanguageProvider } from "./i18n.jsx";
 import { SHOW_RFQ } from "./lib/flags";
@@ -87,6 +88,7 @@ export default function App() {
     <BrowserRouter>
       <LanguageProvider>
         <ScrollToTop />
+        <GoogleAnalytics />
         <Routes>
           <Route path="/" element={<Navigate to="/en" replace />} />
           <Route path="/green" element={<Navigate to="/en/green" replace />} />
