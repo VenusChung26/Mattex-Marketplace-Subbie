@@ -5,7 +5,7 @@
  */
 import { Link } from "react-router-dom";
 import { useEffect, useRef, useState } from "react";
-import { draftTotals, formatPrice, getEffectivePrice, getProduct, isDiscontinued, SAMPLE_PROJECTS } from "../../lib/store";
+import { draftTotals, formatPrice, getEffectivePrice, getProduct, isDiscontinued } from "../../lib/store";
 import CustomProductForm from "../../components/CustomProductForm";
 import CustomProductModal from "../../components/CustomProductModal";
 import AttachmentLinks from "../../components/AttachmentLinks";
@@ -1522,7 +1522,7 @@ function MetaForm({
     .split(" · ")
     .map((row) => row.trim())
     .filter(Boolean);
-  const projectOptions = [...new Set([...(profileProjects || []), ...SAMPLE_PROJECTS, ...selectedProjects])];
+  const projectOptions = [...new Set([...(profileProjects || []), ...selectedProjects])];
   const reqMark = requiredMarks ? <span className="text-brand-600">*</span> : null;
 
   function commitProjects(next) {

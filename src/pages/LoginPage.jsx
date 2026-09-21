@@ -3,12 +3,7 @@ import { useRevealFormIssue } from "../lib/formFocus";
 import { Link, useNavigate } from "react-router-dom";
 import SiteHeader from "../components/SiteHeader";
 import Seo from "../components/Seo";
-import {
-  AccountField,
-  AccountFormCard,
-  AccountFormHeader,
-  AccountSection,
-} from "../components/AccountForm";
+import { AccountField, AccountFormCard, AccountFormHeader, AccountSection, PasswordInput } from "../components/AccountForm";
 import { useStore } from "../hooks/useStore";
 import { useLanguage } from "../i18n";
 import { withLocale } from "../lib/locale";
@@ -333,14 +328,13 @@ export default function LoginPage() {
                         return next;
                       });
                     }}
-                    placeholder="you@company.com"
+                    placeholder={t("phEmail")}
                     className="field-input"
                     autoComplete="email"
                   />
                 </AccountField>
                 <AccountField label={t("password")} required error={fieldErrors.password}>
-                  <input
-                    type="password"
+                  <PasswordInput
                     value={password}
                     onChange={(e) => {
                       setPassword(e.target.value);
@@ -352,8 +346,7 @@ export default function LoginPage() {
                         return next;
                       });
                     }}
-                    placeholder="••••••••"
-                    className="field-input"
+                    placeholder={t("phPassword")}
                     autoComplete="current-password"
                   />
                 </AccountField>
@@ -361,6 +354,11 @@ export default function LoginPage() {
                   {t("login")}
                 </button>
               </form>
+              <p className="mt-3 text-sm">
+                <Link to={withLocale(lang, "/forgot-password")} className="font-semibold text-brand-600 hover:underline">
+                  {t("forgotPassword")}
+                </Link>
+              </p>
               <p className="mt-5 text-sm text-mute">
                 {t("noAccount")}{" "}
                 <Link to={withLocale(lang, "/signup")} className="font-semibold text-brand-600 hover:underline">

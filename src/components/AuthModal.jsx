@@ -6,6 +6,7 @@ import { useLanguage } from "../i18n";
 import { withLocale } from "../lib/locale";
 import { closeAuthModal, consumePendingAfterAuth, consumePendingInviteContinue, loginUser, setAuthInviteHidden } from "../lib/store";
 import { useRevealFormIssue } from "../lib/formFocus";
+import { PasswordInput } from "./AccountForm";
 
 export default function AuthModal({ open, onClose }) {
   const { t, lang } = useLanguage();
@@ -164,17 +165,13 @@ export default function AuthModal({ open, onClose }) {
             </label>
             <label className="block">
               <span className="block text-sm font-medium mb-1">{t("password")}</span>
-              <input
-                type="password"
-                required
-                minLength={4}
+              <PasswordInput
                 value={password}
                 onChange={(e) => {
                   setPassword(e.target.value);
                   setError("");
                 }}
-                placeholder="••••••••"
-                className="field-input"
+                placeholder={t("phPassword")}
                 autoComplete="current-password"
               />
             </label>
@@ -182,6 +179,16 @@ export default function AuthModal({ open, onClose }) {
               {t("login")}
             </button>
           </form>
+
+          <p className="mt-3 text-sm">
+            <Link
+              to={withLocale(lang, "/forgot-password")}
+              className="font-semibold text-brand-600 hover:underline"
+              onClick={() => finish()}
+            >
+              {t("forgotPassword")}
+            </Link>
+          </p>
 
           <p className="mt-4 text-sm text-mute">
             {t("noAccount")}{" "}

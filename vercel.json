@@ -8,6 +8,8 @@
     { "source": "/catalog/:slug", "destination": "/en/catalog/:slug", "statusCode": 301 },
     { "source": "/login", "destination": "/en/login", "statusCode": 301 },
     { "source": "/signup", "destination": "/en/signup", "statusCode": 301 },
+    { "source": "/forgot-password", "destination": "/en/forgot-password", "statusCode": 301 },
+    { "source": "/reset-password", "destination": "/en/reset-password", "statusCode": 301 },
     { "source": "/rfq", "destination": "/en/rfq", "statusCode": 301 },
     { "source": "/rfqs", "destination": "/en/rfqs", "statusCode": 301 },
     { "source": "/whatsapp", "destination": "/en/whatsapp", "statusCode": 301 },

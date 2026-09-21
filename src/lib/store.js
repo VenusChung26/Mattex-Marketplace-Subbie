@@ -17,6 +17,7 @@ import {
   rfqSubmittedEmailHtml,
   salesNewRfqEmailHtml,
   staffInviteEmailHtml,
+  passwordResetEmailHtml,
   wrapEmailSend,
 } from "./mailTemplate.js";
 
@@ -2477,6 +2478,64 @@ function updateUserProfile(patch = {}) {
   return { ok: true, user: getUser() };
 }
 
+function requestBuyerPasswordReset(email) {
+  const nextEmail = normalizeEmail(email);
+  if (!nextEmail) return { ok: false, error: "email" };
+  if (getStaffAccount(nextEmail)) return { ok: true };
+  persistLegacyBuyerAccess();
+  const map = getAccountsMap();
+  const account = map[nextEmail];
+  if (account && account.enabled !== false && buyerApprovalStatus(account) !== "rejected") {
+    const token = makeInviteToken();
+    map[nextEmail] = {
+      ...account,
+      resetToken: token,
+      resetExpiresAt: resetExpiryIso(),
+    };
+    setAccountsMap(map);
+    deliverBuyerResetEmail({
+      email: account.email,
+      name: account.name,
+      href: buyerResetPasswordHref(token),
+    });
+  }
+  return { ok: true };
+}
+
+function getBuyerReset(token) {
+  const value = String(token || "").trim();
+  if (!value) return null;
+  persistLegacyBuyerAccess();
+  const account = Object.values(getAccountsMap() || {}).find((row) => row?.resetToken === value) || null;
+  if (!account) return null;
+  return {
+    email: account.email,
+    name: account.name,
+    expired: tokenExpired(account.resetExpiresAt),
+  };
+}
+
+function resetBuyerPassword({ token, password }) {
+  const value = String(token || "").trim();
+  if (!value) return { ok: false, error: "token" };
+  if (!isSignupPasswordOk(password)) return { ok: false, error: "password" };
+  persistLegacyBuyerAccess();
+  const map = getAccountsMap();
+  const email = Object.keys(map || {}).find((key) => map[key]?.resetToken === value);
+  if (!email) return { ok: false, error: "token" };
+  const account = map[email];
+  if (tokenExpired(account.resetExpiresAt)) return { ok: false, error: "expired" };
+  map[email] = {
+    ...account,
+    password: String(password),
+    resetToken: "",
+    resetExpiresAt: "",
+  };
+  setAccountsMap(map);
+  emitStoreChange();
+  return { ok: true };
+}
+
 function loginUser({ email, password, name }) {
   const nextEmail = normalizeEmail(email);
   if (!nextEmail) return { ok: false, error: "email" };
@@ -3539,11 +3598,7 @@ function whatsappUrl() {
 
 function rfqProjectName(rfq) {
   if (!rfq) return "";
-  const named = joinProfileProjects(rfq.projects || rfq.project);
-  if (named) return named;
-  if (Object.prototype.hasOwnProperty.call(rfq, "project")) return "";
-  const digits = Number(String(rfq.id || "").replace(/\D/g, "")) || 0;
-  return SAMPLE_PROJECTS[Math.abs(digits) % SAMPLE_PROJECTS.length];
+  return joinProfileProjects(rfq.projects || rfq.project);
 }
 
 const STAFF_KEY = "subbie_staff";
@@ -3554,45 +3609,66 @@ const REPORT_SEQ_KEY = "subbie_report_seq";
 const TMS_SEQ_KEY = "subbie_tms_seq";
 const TMP_SEQ_KEY = "subbie_tmp_sku_seq";
 
-const BOOTSTRAP_STAFF_EMAIL = "supabase@mattex.com.hk";
-const LEGACY_BOOTSTRAP_STAFF_EMAIL = "sales@mattex.com";
+const BOOTSTRAP_STAFF_EMAIL = "sales@mattex.com.hk";
+const BOOTSTRAP_STAFF_PASSWORD = "MM@Admin1234";
+const LEGACY_BOOTSTRAP_STAFF_EMAILS = ["sales@mattex.com", "supabase@mattex.com.hk"];
+
+function migrateStaffRow(row) {
+  if (!row?.email) return row;
+  const email = normalizeEmail(row.email);
+  const legacy = LEGACY_BOOTSTRAP_STAFF_EMAILS.includes(email);
+  if (!legacy && email !== BOOTSTRAP_STAFF_EMAIL) return { ...row, email };
+  const next = {
+    ...row,
+    email: BOOTSTRAP_STAFF_EMAIL,
+    name: !row.name || row.name === "Supabase" ? "Sales" : row.name,
+    bootstrap: true,
+    enabled: row.enabled !== false,
+  };
+  if (!next.password || next.password === "mattex") next.password = BOOTSTRAP_STAFF_PASSWORD;
+  return next;
+}
 
 function mergeStaffLists(local, remote) {
   const byEmail = new Map();
   const add = (row) => {
-    if (!row?.email) return;
-    const email = normalizeEmail(row.email);
+    const migrated = migrateStaffRow(row);
+    if (!migrated?.email) return;
+    const email = normalizeEmail(migrated.email);
     const prev = byEmail.get(email) || {};
-    byEmail.set(email, { ...prev, ...row, email });
+    byEmail.set(email, { ...prev, ...migrated, email });
   };
   (Array.isArray(remote) ? remote : []).forEach(add);
   (Array.isArray(local) ? local : []).forEach(add);
-  if (!byEmail.has(BOOTSTRAP_STAFF_EMAIL) && byEmail.has(LEGACY_BOOTSTRAP_STAFF_EMAIL)) {
-    const legacy = byEmail.get(LEGACY_BOOTSTRAP_STAFF_EMAIL);
-    byEmail.delete(LEGACY_BOOTSTRAP_STAFF_EMAIL);
-    byEmail.set(BOOTSTRAP_STAFF_EMAIL, { ...legacy, email: BOOTSTRAP_STAFF_EMAIL, name: legacy.name || "Supabase", bootstrap: true });
+  if (!byEmail.has(BOOTSTRAP_STAFF_EMAIL)) {
+    byEmail.set(BOOTSTRAP_STAFF_EMAIL, {
+      email: BOOTSTRAP_STAFF_EMAIL,
+      name: "Sales",
+      password: BOOTSTRAP_STAFF_PASSWORD,
+      enabled: true,
+      bootstrap: true,
+    });
   }
   return [...byEmail.values()];
 }
 
 function getStaffList() {
   const seeded = [
-    { email: BOOTSTRAP_STAFF_EMAIL, name: "Supabase", password: "mattex", enabled: true, bootstrap: true },
+    { email: BOOTSTRAP_STAFF_EMAIL, name: "Sales", password: BOOTSTRAP_STAFF_PASSWORD, enabled: true, bootstrap: true },
     { email: "ops@mattex.com", name: "Second Sales", password: "mattex", enabled: true, bootstrap: false },
   ];
   const saved = readJson(STAFF_KEY, null);
-  if (Array.isArray(saved) && saved.length) {
-    let changed = false;
-    const next = saved.map((s) => {
-      if (normalizeEmail(s.email) !== LEGACY_BOOTSTRAP_STAFF_EMAIL) return s;
-      changed = true;
-      return { ...s, email: BOOTSTRAP_STAFF_EMAIL, name: s.name || "Supabase", bootstrap: true };
-    });
-    if (changed) writeJson(STAFF_KEY, next);
-    return changed ? next : saved;
+  const source = Array.isArray(saved) && saved.length ? saved : seeded;
+  const next = mergeStaffLists(source, []);
+  const fingerprint = (list) =>
+    (list || [])
+      .map((s) => `${normalizeEmail(s.email)}|${s.password || ""}|${s.name || ""}|${Boolean(s.bootstrap)}|${s.enabled !== false}`)
+      .sort()
+      .join(";");
+  if (!(Array.isArray(saved) && saved.length) || fingerprint(source) !== fingerprint(next)) {
+    writeJson(STAFF_KEY, next);
   }
-  writeJson(STAFF_KEY, seeded);
-  return seeded;
+  return next;
 }
 
 function setStaffList(list) {
@@ -3657,6 +3733,18 @@ function makeInviteToken() {
 
 function staffSetPasswordHref(token) {
   return `${adminOrigin()}/set-password?token=${encodeURIComponent(token)}`;
+}
+
+function buyerResetPasswordHref(token) {
+  return `${marketplaceOrigin()}/en/reset-password?token=${encodeURIComponent(token)}`;
+}
+
+function resetExpiryIso() {
+  return new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+}
+
+function tokenExpired(iso) {
+  return Boolean(iso) && new Date(iso).getTime() < Date.now();
 }
 
 function staffInviteMailHref({ email, name, href }) {
@@ -3748,7 +3836,7 @@ function acceptStaffInvite({ token, password }) {
   const list = getStaffList();
   const target = list.find((s) => s.inviteToken === value);
   if (!target) return { ok: false, error: "token" };
-  if (target.inviteExpiresAt && new Date(target.inviteExpiresAt).getTime() < Date.now()) {
+  if (tokenExpired(target.inviteExpiresAt)) {
     return { ok: false, error: "expired" };
   }
   target.password = String(password);
@@ -3759,6 +3847,64 @@ function acceptStaffInvite({ token, password }) {
   writeLocalOnly(STAFF_AUTH_KEY, { email: target.email, name: target.name, at: Date.now() });
   emitStoreChange();
   return { ok: true, staff: getStaffSession() };
+}
+
+function getStaffReset(token) {
+  const value = String(token || "").trim();
+  if (!value) return null;
+  const account = getStaffList().find((s) => s.resetToken === value) || null;
+  if (!account) return null;
+  return {
+    email: account.email,
+    name: account.name,
+    expired: tokenExpired(account.resetExpiresAt),
+    kind: "reset",
+  };
+}
+
+function getStaffPasswordLink(token) {
+  const invite = getStaffInvite(token);
+  if (invite) return { ...invite, kind: "invite" };
+  return getStaffReset(token);
+}
+
+function acceptStaffReset({ token, password }) {
+  const value = String(token || "").trim();
+  if (!value) return { ok: false, error: "token" };
+  if (!isSignupPasswordOk(password)) return { ok: false, error: "password" };
+  const list = getStaffList();
+  const target = list.find((s) => s.resetToken === value);
+  if (!target) return { ok: false, error: "token" };
+  if (tokenExpired(target.resetExpiresAt)) return { ok: false, error: "expired" };
+  target.password = String(password);
+  target.resetToken = "";
+  target.resetExpiresAt = "";
+  target.enabled = true;
+  setStaffList(list);
+  writeLocalOnly(STAFF_AUTH_KEY, { email: target.email, name: target.name, at: Date.now() });
+  emitStoreChange();
+  return { ok: true, staff: getStaffSession() };
+}
+
+function acceptStaffPasswordLink({ token, password }) {
+  if (getStaffInvite(token)) return acceptStaffInvite({ token, password });
+  return acceptStaffReset({ token, password });
+}
+
+function requestStaffPasswordReset(email) {
+  const nextEmail = normalizeEmail(email);
+  if (!nextEmail) return { ok: false, error: "email" };
+  const list = getStaffList();
+  const target = list.find((s) => s.email === nextEmail);
+  if (target && target.enabled && !staffNeedsInvite(target)) {
+    const token = makeInviteToken();
+    target.resetToken = token;
+    target.resetExpiresAt = resetExpiryIso();
+    setStaffList(list);
+    const href = staffSetPasswordHref(token);
+    deliverStaffResetEmail({ email: target.email, name: target.name, href });
+  }
+  return { ok: true };
 }
 
 function updateStaff(email, { name, password } = {}) {
@@ -4210,6 +4356,39 @@ function deliverStaffInviteEmail({ email, name, href }) {
       setPasswordHref: href,
       toEmail: email,
       portalHref: `${adminOrigin()}/`,
+    }),
+  });
+}
+
+function deliverStaffResetEmail({ email, name, href }) {
+  const who = String(name || "there").trim() || "there";
+  return deliverHtmlEmail({
+    to: email,
+    subject: "Reset your Mattex Sales portal password",
+    innerHtml: passwordResetEmailHtml({
+      logoUrl: mattexLogoUrl(),
+      salesEmail: SALES_EMAIL,
+      name: who,
+      resetHref: href,
+      toEmail: email,
+      portalHref: `${adminOrigin()}/`,
+      staff: true,
+    }),
+  });
+}
+
+function deliverBuyerResetEmail({ email, name, href }) {
+  const who = String(name || "there").trim() || "there";
+  return deliverHtmlEmail({
+    to: email,
+    subject: "Reset your Mattex Marketplace password",
+    innerHtml: passwordResetEmailHtml({
+      logoUrl: mattexLogoUrl(),
+      salesEmail: SALES_EMAIL,
+      name: who,
+      resetHref: href,
+      toEmail: email,
+      shopHref: `${marketplaceOrigin()}/en/login`,
     }),
   });
 }
@@ -6756,6 +6935,9 @@ export {
   saveRfq,
   reorderRfq,
   loginUser,
+  requestBuyerPasswordReset,
+  getBuyerReset,
+  resetBuyerPassword,
   registerUser,
   updateUserProfile,
   logoutUser,
@@ -6811,7 +6993,10 @@ export {
   createStaff,
   resendStaffInvite,
   getStaffInvite,
+  getStaffPasswordLink,
   acceptStaffInvite,
+  acceptStaffPasswordLink,
+  requestStaffPasswordReset,
   updateStaff,
   changeOwnStaffPassword,
   disableStaff,

@@ -58,7 +58,7 @@ export default function RfqPage() {
   const [deliveryDate, setDeliveryDate] = useState(totals.deliveryDate || "");
   const [deliveryMode, setDeliveryMode] = useState(totals.deliveryMode || "one_time");
   const [deliveryLots, setDeliveryLots] = useState(totals.deliveryLots || []);
-  const [project, setProject] = useState(totals.project || profileProjects.join(" · "));
+  const [project, setProject] = useState(totals.project || "");
   const [address, setAddress] = useState(totals.address || profileAddress);
   const [canonicalCategory, setCanonicalCategory] = useState(totals.canonicalCategory || "");
   const [acceptSubstitutes, setAcceptSubstitutes] = useState(Boolean(totals.acceptSubstitutes));
@@ -96,7 +96,7 @@ export default function RfqPage() {
     setDeliveryDate(totals.deliveryDate || "");
     setDeliveryMode(totals.deliveryMode || "one_time");
     setDeliveryLots(totals.deliveryLots || []);
-    setProject(totals.project || profileProjects.join(" · "));
+    setProject(totals.project || "");
     setAddress(totals.address || profileAddress);
     setCanonicalCategory(totals.canonicalCategory || "");
     setAcceptSubstitutes(Boolean(totals.acceptSubstitutes));
@@ -107,17 +107,11 @@ export default function RfqPage() {
     totals.deliveryMode,
     JSON.stringify(totals.deliveryLots || []),
     totals.project,
-    profileProjects.join(" · "),
     totals.address,
     profileAddress,
     totals.canonicalCategory,
     totals.acceptSubstitutes,
   ]);
-
-  useEffect(() => {
-    if (String(totals.project || "").trim() || !profileProjects.length) return;
-    setDraftProject(profileProjects.join(" · "));
-  }, [totals.project, profileProjects.join(" · ")]);
 
   useEffect(() => {
     if (String(totals.address || "").trim() || !profileAddress) return;

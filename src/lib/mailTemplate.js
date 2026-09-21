@@ -293,6 +293,34 @@ export function staffInviteEmailHtml({ logoUrl, salesEmail, name, setPasswordHre
   });
 }
 
+export function passwordResetEmailHtml({ logoUrl, salesEmail, name, resetHref, toEmail, shopHref, portalHref, staff }) {
+  return renderMattexEmail({
+    logoUrl,
+    brandName: staff ? "Mattex Marketplace Admin Portal" : "Mattex Marketplace",
+    salesEmail,
+    toEmail,
+    title: "Reset your password",
+    greeting: `Hello ${name},`,
+    paragraphs: [
+      staff
+        ? "Use the button below to choose a new Sales portal password."
+        : "Use the button below to choose a new Mattex Marketplace password.",
+    ],
+    buttonLabel: "Reset password",
+    buttonHref: resetHref,
+    footnote: "This link expires in 7 days. If you did not ask to reset your password, ignore the email.",
+    footerLinks: staff
+      ? [
+          { label: "Sales portal", href: portalHref || resetHref },
+          { label: "Contact", href: `mailto:${salesEmail}` },
+        ]
+      : [
+          { label: "Sign in", href: shopHref || resetHref },
+          { label: "Contact", href: `mailto:${salesEmail}` },
+        ],
+  });
+}
+
 export function buyerRejectedEmailHtml({ logoUrl, salesEmail, name, company, reason, shopHref, toEmail }) {
   return renderMattexEmail({
     logoUrl,

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useStore } from "../../hooks/useStore";
+import { PasswordInput } from "../../components/AccountForm";
 import { buildQuotePdf, downloadBlob } from "../../lib/quotePdf";
 import { compressImageFile, PRODUCT_IMAGE_MAX, productImageList } from "../../lib/compressImage";
 import { marketplaceHomeHref } from "../../lib/origins";
@@ -422,8 +423,8 @@ export default function AdminPortal() {
   const [accountSource, setAccountSource] = useState(focusBuyerParam && !focusRfqId ? "buyer" : "sales");
   const [accountsNavOpen, setAccountsNavOpen] = useState(Boolean(focusBuyerParam && !focusRfqId));
   const [focusBuyerEmail, setFocusBuyerEmail] = useState(focusBuyerParam && !focusRfqId ? focusBuyerParam : "");
-  const [email, setEmail] = useState("supabase@mattex.com.hk");
-  const [password, setPassword] = useState("mattex");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loginBusy, setLoginBusy] = useState(false);
   const [editing, setEditing] = useState("");
@@ -552,17 +553,34 @@ export default function AdminPortal() {
           >
             <label className="block text-sm font-medium">
               Email
-              <input value={email} onChange={(e) => setEmail(e.target.value)} className="mt-1 w-full rounded-lg border border-line px-3 py-2" />
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="sales@mattex.com.hk"
+                className="mt-1 w-full rounded-lg border border-line px-3 py-2"
+                autoComplete="username"
+              />
             </label>
             <label className="block text-sm font-medium">
               Password
-              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="mt-1 w-full rounded-lg border border-line px-3 py-2" />
+              <PasswordInput
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Password"
+                className="mt-1 w-full rounded-lg border border-line px-3 py-2"
+                autoComplete="current-password"
+              />
             </label>
             {error ? <p className="text-sm text-red-700">{error}</p> : null}
             <button className="w-full rounded-lg bg-brand-600 py-2.5 text-sm font-semibold text-white disabled:opacity-60" disabled={loginBusy}>
               {loginBusy ? "Signing in…" : "Enter portal"}
             </button>
-            <p className="text-xs text-mute">Demo: supabase@mattex.com.hk / mattex</p>
+            <p className="text-center">
+              <Link to="/forgot-password" className="text-sm font-semibold text-brand-700 hover:underline">
+                Forgot password?
+              </Link>
+            </p>
           </form>
         </main>
       </div>

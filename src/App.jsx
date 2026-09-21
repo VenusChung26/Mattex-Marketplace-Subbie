@@ -10,6 +10,8 @@ import CatalogPage from "./pages/CatalogPage";
 import DetailsPage from "./pages/DetailsPage";
 import LoginPage from "./pages/LoginPage";
 import SignupPage from "./pages/SignupPage";
+import ForgotPasswordPage from "./pages/ForgotPasswordPage";
+import ResetPasswordPage from "./pages/ResetPasswordPage";
 import RfqPage from "./pages/RfqPage";
 import RfqsPage from "./pages/RfqsPage";
 import WhatsappPage from "./pages/WhatsappPage";
@@ -17,6 +19,7 @@ import WhatsappChatPage from "./pages/WhatsappChatPage";
 import SupplierPage from "./pages/SupplierPage";
 import AdminPortal from "./pages/admin/AdminPortal";
 import StaffSetPasswordPage from "./pages/admin/StaffSetPasswordPage";
+import StaffForgotPasswordPage from "./pages/admin/StaffForgotPasswordPage";
 import PublicQuotePage from "./pages/PublicQuotePage";
 import { getCategoryByName } from "./lib/store";
 import { adminOrigin, isAdminSurface } from "./lib/origins";
@@ -101,6 +104,7 @@ export default function App() {
           <ScrollToTop />
           <Routes>
             <Route path="/set-password" element={<StaffSetPasswordPage />} />
+            <Route path="/forgot-password" element={<StaffForgotPasswordPage />} />
             <Route path="*" element={<AdminPortal />} />
           </Routes>
         </LanguageProvider>
@@ -123,6 +127,8 @@ export default function App() {
           <Route path="/catalog/:slug" element={<LegacyParam prefix="catalog" />} />
           <Route path="/login" element={<Navigate to="/en/login" replace />} />
           <Route path="/signup" element={<Navigate to="/en/signup" replace />} />
+          <Route path="/forgot-password" element={<Navigate to="/en/forgot-password" replace />} />
+          <Route path="/reset-password" element={<Navigate to="/en/reset-password" replace />} />
           <Route path="/rfq" element={<Navigate to="/en/rfq" replace />} />
           <Route path="/rfqs" element={<Navigate to={SHOW_RFQ ? "/en/rfqs" : "/en"} replace />} />
           <Route path="/whatsapp" element={<Navigate to="/en/whatsapp" replace />} />
@@ -144,6 +150,8 @@ export default function App() {
             <Route path="catalog/:slug" element={<CatalogPage />} />
             <Route path="login" element={<LoginPage />} />
             <Route path="signup" element={<SignupPage />} />
+            <Route path="forgot-password" element={<ForgotPasswordPage />} />
+            <Route path="reset-password" element={<ResetPasswordPage />} />
             <Route path="details/:id" element={<DetailsPage />} />
             <Route path="supplier/:slug" element={<SupplierPage />} />
             <Route path="rfq" element={<RfqPage />} />
