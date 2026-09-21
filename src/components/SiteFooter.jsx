@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { useLanguage } from "../i18n";
 import { allProductsTo, withLocale } from "../lib/locale";
-import { MATTEX_CHAIN_URL, MATTEX_SITE_URL, WHATSAPP_DISPLAY, WHATSAPP_HREF } from "../lib/store";
+import { MATTEX_SITE_URL, WHATSAPP_DISPLAY, WHATSAPP_HREF } from "../lib/store";
 import { SHOW_RFQ } from "../lib/flags";
 
 export default function SiteFooter() {
@@ -54,6 +54,11 @@ export default function SiteFooter() {
                 {t("allProducts")}
               </Link>
             </li>
+            <li>
+              <a href="/sitemap.xml" className="hover:text-white">
+                {t("footerSitemap")}
+              </a>
+            </li>
             {SHOW_RFQ ? null : (
               <li>
                 <Link to={lp("/rfq")} className="hover:text-white">
@@ -87,21 +92,6 @@ export default function SiteFooter() {
             <li>
               <a href={WHATSAPP_HREF} target="_blank" rel="noopener noreferrer" className="hover:text-white">
                 {t("whatsapp")} {WHATSAPP_DISPLAY}
-              </a>
-            </li>
-            <li>
-              <a href={MATTEX_CHAIN_URL} target="_blank" rel="noopener noreferrer" className="hover:text-white">
-                {t("openMarketplaceAccount")}
-              </a>
-            </li>
-            <li>
-              <a href={MATTEX_CHAIN_URL} target="_blank" rel="noopener noreferrer" className="hover:text-white">
-                {t("becomeSupplier")}
-              </a>
-            </li>
-            <li>
-              <a href={MATTEX_CHAIN_URL} target="_blank" rel="noopener noreferrer" className="hover:text-white">
-                {t("mattexChain")}
               </a>
             </li>
           </ul>

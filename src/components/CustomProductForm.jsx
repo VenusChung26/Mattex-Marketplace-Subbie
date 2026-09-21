@@ -4,10 +4,9 @@ import { extractSpecItems, fileToAttachment, openUrlForAttachment } from "../lib
 import { useRevealFormIssue } from "../lib/formFocus";
 import { QtyStepper } from "./ProductCard";
 import { getCategoryDefs } from "../lib/store";
+import { compressImageFile, PRODUCT_IMAGE_MAX } from "../lib/compressImage";
 
-const emptyForm = { name: "", description: "", qty: 1, image: "", category: "", attachments: [] };
-const IMAGE_MAX_BYTES = 800 * 1024;
-const IMAGE_MAX_SIDE = 1200;
+const emptyForm = { name: "", description: "", qty: 1, image: "", images: [], category: "", attachments: [] };
 export const SHOW_CUSTOM_FILE_UPLOADS = true;
 export const SHOW_CUSTOM_IMAGE_UPLOAD = true;
 export const SPEC_FILE_ACCEPT = ".jpg,.jpeg,.png,.pdf,.doc,.docx,.xls,.xlsx";
@@ -21,44 +20,6 @@ export function isAllowedSpecFile(file) {
 
 function sameAttachment(a, b) {
   return String(a?.name || "") === String(b?.name || "") && Number(a?.size || 0) === Number(b?.size || 0);
-}
-
-function dataUrlBytes(dataUrl) {
-  const base64 = String(dataUrl || "").split(",")[1] || "";
-  return Math.floor((base64.length * 3) / 4);
-}
-
-function compressImageFile(file, maxBytes = IMAGE_MAX_BYTES) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    const objectUrl = URL.createObjectURL(file);
-    img.onload = () => {
-      URL.revokeObjectURL(objectUrl);
-      const scale = Math.min(1, IMAGE_MAX_SIDE / Math.max(img.width, img.height, 1));
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.max(1, Math.round(img.width * scale));
-      canvas.height = Math.max(1, Math.round(img.height * scale));
-      const ctx = canvas.getContext("2d");
-      if (!ctx) {
-        reject(new Error("bad_image"));
-        return;
-      }
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      let quality = 0.86;
-      let dataUrl = canvas.toDataURL("image/jpeg", quality);
-      while (dataUrlBytes(dataUrl) > maxBytes && quality > 0.4) {
-        quality -= 0.08;
-        dataUrl = canvas.toDataURL("image/jpeg", quality);
-      }
-      if (dataUrlBytes(dataUrl) > maxBytes) reject(new Error("too_large"));
-      else resolve(dataUrl);
-    };
-    img.onerror = () => {
-      URL.revokeObjectURL(objectUrl);
-      reject(new Error("bad_image"));
-    };
-    img.src = objectUrl;
-  });
 }
 
 function detailsFromExtracted(items) {
@@ -90,7 +51,10 @@ export default function CustomProductForm({
   const [name, setName] = useState(initial.name || "");
   const [description, setDescription] = useState(initial.description || "");
   const [qty, setQty] = useState(initial.qty || 1);
-  const [image, setImage] = useState(initial.image || "");
+  const [images, setImages] = useState(() => {
+    const list = Array.isArray(initial.images) ? initial.images : [];
+    return [initial.image, ...list].filter(Boolean).slice(0, PRODUCT_IMAGE_MAX);
+  });
   const [category, setCategory] = useState(initial.category || "");
   const [attachments, setAttachments] = useState(initial.attachments || []);
   const [extracting, setExtracting] = useState(false);
@@ -105,7 +69,8 @@ export default function CustomProductForm({
     setName(initial.name || "");
     setDescription(initial.description || "");
     setQty(initial.qty || 1);
-    setImage(initial.image || "");
+    const list = Array.isArray(initial.images) ? initial.images : [];
+    setImages([initial.image, ...list].filter(Boolean).slice(0, PRODUCT_IMAGE_MAX));
     setCategory(initial.category || "");
     setAttachments(Array.isArray(initial.attachments) ? initial.attachments : []);
     setExtracting(false);
@@ -113,12 +78,21 @@ export default function CustomProductForm({
     setError("");
   }, [initial.name, initial.description, initial.qty, initial.image, initial.category, mode]);
 
-  async function handleImage(file) {
-    if (!file) return;
-    if (!String(file.type || "").startsWith("image/")) return;
+  async function handleImages(fileList) {
+    const picked = Array.from(fileList || []).filter((file) => String(file.type || "").startsWith("image/"));
+    if (!picked.length) return;
+    const remaining = PRODUCT_IMAGE_MAX - images.length;
+    if (remaining <= 0) {
+      setError(t("imageMaxCount"));
+      revealIssue();
+      return;
+    }
     try {
-      const dataUrl = await compressImageFile(file);
-      setImage(dataUrl);
+      const added = [];
+      for (const file of picked.slice(0, remaining)) {
+        added.push(await compressImageFile(file));
+      }
+      setImages((prev) => [...prev, ...added].slice(0, PRODUCT_IMAGE_MAX));
       setError("");
     } catch {
       setError(t("imageTooLarge"));
@@ -210,7 +184,8 @@ export default function CustomProductForm({
       name: trimmed,
       description: description.trim(),
       qty: nextQty,
-      image,
+      image: images[0] || "",
+      images,
       category,
       attachments,
     });
@@ -218,7 +193,7 @@ export default function CustomProductForm({
       setName("");
       setDescription("");
       setQty(1);
-      setImage("");
+      setImages([]);
       setCategory("");
       setAttachments([]);
       setFilledFrom("");
@@ -228,255 +203,212 @@ export default function CustomProductForm({
   const specPreview = attachments.find((file) => file.kind === "image" && file.url);
   const specExt = String(attachments[0]?.name || "").split(".").pop()?.slice(0, 4);
   const nameInvalid = Boolean(error) && !name.trim();
-
-  return (
-    <form
-      ref={formRef}
-      onSubmit={handleSubmit}
-      className={
-        compact
-          ? "space-y-3"
-          : "bg-white border border-line rounded-xl p-4 sm:p-5 space-y-3"
-      }
-    >
-      {!compact ? (
-        <div>
-          <p className="text-sm font-semibold text-brand-800">
-            {mode === "edit" ? t("editCustomProduct") : t("addCustomProduct")}
-          </p>
-          <p className="mt-0.5 text-xs text-mute">{t("customProductHint")}</p>
+  const imageBlock = SHOW_CUSTOM_IMAGE_UPLOAD ? (
+    <div>
+      <p className="text-sm font-medium text-ink">
+        {t("uploadCustomImage")}{" "}
+        <span className="font-normal text-mute">({t("optional")})</span>
+      </p>
+      <div
+        className={`mt-1 rounded-lg border border-dashed ${compact ? "p-2.5" : "p-3"} ${
+          imageOver ? "border-brand-600 bg-brand-50" : "border-line bg-paper/60"
+        }`}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setImageOver(true);
+        }}
+        onDragLeave={() => setImageOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setImageOver(false);
+          handleImages(e.dataTransfer.files);
+        }}
+      >
+        <div className="flex flex-wrap gap-2">
+          {images.map((src, index) => (
+            <span key={`${src.slice(-12)}-${index}`} className="relative">
+              <img
+                src={src}
+                alt=""
+                className="h-14 w-14 object-cover border border-line bg-white"
+              />
+              <button
+                type="button"
+                className="absolute top-1 right-1 bg-white/90 px-1 text-[10px] font-semibold text-mute hover:text-[#8a2b2b]"
+                onClick={() => setImages((prev) => prev.filter((_, i) => i !== index))}
+              >
+                {t("remove")}
+              </button>
+            </span>
+          ))}
+          {images.length < PRODUCT_IMAGE_MAX ? (
+            <button
+              type="button"
+              onClick={() => imageInputRef.current?.click()}
+              className="flex h-14 w-14 items-center justify-center border border-line bg-white text-2xl font-light text-mute"
+              aria-label={t("chooseProductImage")}
+            >
+              +
+            </button>
+          ) : null}
         </div>
-      ) : null}
+        <p className="mt-2 text-xs text-mute">{t("imageOptional")}</p>
+        <input
+          ref={imageInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="sr-only"
+          onChange={(e) => {
+            handleImages(e.target.files);
+            e.target.value = "";
+          }}
+        />
+      </div>
+    </div>
+  ) : null;
 
-      {SHOW_CUSTOM_FILE_UPLOADS ? (
-      <div>
-        <p className="text-sm font-medium text-ink">
-          {t("uploadSpecForItem")}{" "}
-          <span className="font-normal text-mute">({t("optional")})</span>
-        </p>
-        <div
-          className={`mt-1 flex items-center gap-3 rounded-lg border border-dashed ${
-            compact ? "p-2.5" : "p-3"
-          } ${specOver ? "border-brand-600 bg-brand-50" : "border-line bg-paper/60"} ${extracting ? "opacity-70" : ""}`}
-          onDragOver={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            if (!extracting) setSpecOver(true);
-          }}
-          onDragLeave={(e) => {
-            e.preventDefault();
-            if (!e.currentTarget.contains(e.relatedTarget)) setSpecOver(false);
-          }}
-          onDrop={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            setSpecOver(false);
-            if (!extracting) handleSpecFiles(e.dataTransfer.files);
-          }}
+  const attachmentBlock = SHOW_CUSTOM_FILE_UPLOADS ? (
+    <div>
+      <p className="text-sm font-medium text-ink">
+        {t("uploadSpecForItem")}{" "}
+        <span className="font-normal text-mute">({t("optional")})</span>
+      </p>
+      <div
+        className={`mt-1 flex items-center gap-3 rounded-lg border border-dashed ${
+          compact ? "p-2.5" : "p-3"
+        } ${specOver ? "border-brand-600 bg-brand-50" : "border-line bg-paper/60"} ${extracting ? "opacity-70" : ""}`}
+        onDragOver={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (!extracting) setSpecOver(true);
+        }}
+        onDragLeave={(e) => {
+          e.preventDefault();
+          if (!e.currentTarget.contains(e.relatedTarget)) setSpecOver(false);
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setSpecOver(false);
+          if (!extracting) handleSpecFiles(e.dataTransfer.files);
+        }}
+      >
+        <button
+          type="button"
+          disabled={extracting}
+          onClick={() => specInputRef.current?.click()}
+          className={`relative shrink-0 overflow-hidden border border-line bg-white ${compact ? "h-14 w-14" : "h-20 w-20"}`}
+          aria-label={attachments.length ? t("addMoreSpecFiles") : t("chooseSpecFiles")}
         >
+          {specPreview ? (
+            <img src={specPreview.url} alt="" className="h-full w-full object-cover" />
+          ) : attachments.length ? (
+            <span className="flex h-full w-full items-center justify-center text-[11px] font-bold uppercase text-mute">
+              {specExt || String(attachments.length)}
+            </span>
+          ) : (
+            <span className="flex h-full w-full items-center justify-center text-2xl font-light text-mute">+</span>
+          )}
+        </button>
+        <div className="min-w-0">
           <button
             type="button"
             disabled={extracting}
+            className="text-sm font-semibold text-brand-700 hover:text-brand-800 disabled:opacity-60"
             onClick={() => specInputRef.current?.click()}
-            className={`relative shrink-0 overflow-hidden border border-line bg-white ${
-              compact ? "h-14 w-14" : "h-20 w-20"
-            }`}
-            aria-label={attachments.length ? t("addMoreSpecFiles") : t("chooseSpecFiles")}
           >
-            {specPreview ? (
-              <img src={specPreview.url} alt="" className="h-full w-full object-cover" />
-            ) : attachments.length ? (
-              <span className="flex h-full w-full items-center justify-center text-[11px] font-bold uppercase text-mute">
-                {specExt || String(attachments.length)}
-              </span>
-            ) : (
-              <span className="flex h-full w-full items-center justify-center text-2xl font-light text-mute">
-                +
-              </span>
-            )}
+            {specOver ? t("specDropReady") : attachments.length ? t("addMoreSpecFiles") : t("chooseSpecFiles")}
           </button>
-          <div className="min-w-0">
-            <button
-              type="button"
-              disabled={extracting}
-              className="text-sm font-semibold text-brand-700 hover:text-brand-800 disabled:opacity-60"
-              onClick={() => specInputRef.current?.click()}
-            >
-              {specOver ? t("specDropReady") : attachments.length ? t("addMoreSpecFiles") : t("chooseSpecFiles")}
-            </button>
-            <p className={`mt-0.5 text-xs ${extracting || filledFrom ? "text-brand-800" : "text-mute"}`}>
-              {extracting
-                ? t("extracting")
-                : filledFrom
-                  ? t("filledFromSpec", { name: filledFrom })
-                  : t("dropSpecHere")}
-            </p>
-            {attachments.length ? (
-              <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                {attachments.map((file, i) => {
-                  const href = openUrlForAttachment(file);
-                  return (
-                    <span key={`${file.name}-${file.size}-${i}`} className="inline-flex max-w-full items-center gap-1.5 text-xs">
-                      {href ? (
-                        <a
-                          href={href}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="min-w-0 truncate text-brand-700 underline underline-offset-2 hover:text-brand-800"
-                          title={file.name}
-                        >
-                          {file.name}
-                        </a>
-                      ) : (
-                        <span className="min-w-0 truncate text-ink" title={file.name}>
-                          {file.name}
-                        </span>
-                      )}
-                      <button
-                        type="button"
-                        className="shrink-0 font-semibold text-mute hover:text-brand-700"
-                        onClick={() => removeAttachment(i)}
-                        aria-label={t("removeFileAria", { name: file.name })}
+          <p className={`mt-0.5 text-xs ${extracting || filledFrom ? "text-brand-800" : "text-mute"}`}>
+            {extracting ? t("extracting") : filledFrom ? t("filledFromSpec", { name: filledFrom }) : t("dropSpecHere")}
+          </p>
+          {attachments.length ? (
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+              {attachments.map((file, i) => {
+                const href = openUrlForAttachment(file);
+                return (
+                  <span key={`${file.name}-${file.size}-${i}`} className="inline-flex max-w-full items-center gap-1.5 text-xs">
+                    {href ? (
+                      <a
+                        href={href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="min-w-0 truncate text-brand-700 underline underline-offset-2 hover:text-brand-800"
+                        title={file.name}
                       >
-                        {t("remove")}
-                      </button>
-                    </span>
-                  );
-                })}
-              </div>
-            ) : (
-              <p className="mt-1 text-xs text-mute">{t("specFileTypes")}</p>
-            )}
-          </div>
-          <input
-            ref={specInputRef}
-            type="file"
-            multiple
-            accept={SPEC_FILE_ACCEPT}
-            disabled={extracting}
-            className="sr-only"
-            onChange={(e) => {
-              handleSpecFiles(e.target.files);
-              e.target.value = "";
-            }}
-          />
+                        {file.name}
+                      </a>
+                    ) : (
+                      <span className="min-w-0 truncate text-ink" title={file.name}>
+                        {file.name}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      className="shrink-0 font-semibold text-mute hover:text-brand-700"
+                      onClick={() => removeAttachment(i)}
+                      aria-label={t("removeFileAria", { name: file.name })}
+                    >
+                      {t("remove")}
+                    </button>
+                  </span>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="mt-1 text-xs text-mute">{t("specFileTypes")}</p>
+          )}
         </div>
+        <input
+          ref={specInputRef}
+          type="file"
+          multiple
+          accept={SPEC_FILE_ACCEPT}
+          disabled={extracting}
+          className="sr-only"
+          onChange={(e) => {
+            handleSpecFiles(e.target.files);
+            e.target.value = "";
+          }}
+        />
       </div>
-      ) : null}
+    </div>
+  ) : null;
 
-      <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_12rem] sm:items-end gap-3">
-        <label className="block min-w-0">
-          <span className="block text-sm font-semibold text-ink mb-1">
-            {t("customProductName")} <span className="text-brand-600">*</span>
-          </span>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder={t("customProductNamePlaceholder")}
-            className={`field-input ${nameInvalid ? "!border-red-500 ring-2 ring-red-200 bg-red-50" : ""}`}
-            autoComplete="off"
-            aria-invalid={nameInvalid ? true : undefined}
-          />
-        </label>
-        <div className="block min-w-0">
-          <QtyStepper
-            value={Math.max(1, Number(qty) || 1)}
-            min={1}
-            onChange={setQty}
-            size="card"
-            t={t}
-          />
-        </div>
+  const fieldsBlock = (
+    <div className="space-y-3">
+      <label className="block min-w-0">
+        <span className="block text-sm font-semibold text-ink mb-1">
+          {t("customProductName")} <span className="text-brand-600">*</span>
+        </span>
+        <input
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder={t("customProductNamePlaceholder")}
+          className={`field-input ${nameInvalid ? "!border-red-500 ring-2 ring-red-200 bg-red-50" : ""}`}
+          autoComplete="off"
+          aria-invalid={nameInvalid ? true : undefined}
+        />
+      </label>
+      <div className="block min-w-0">
+        <span className="block text-sm font-semibold text-ink mb-1">{t("qty")}</span>
+        <QtyStepper value={Math.max(1, Number(qty) || 1)} min={1} onChange={setQty} size="card" t={t} />
       </div>
-
       <label className="block">
         <span className="block text-sm font-medium text-ink mb-1">
-          {t("customProductDesc")}{" "}
-          <span className="font-normal text-mute">({t("optional")})</span>
+          {t("customProductDesc")} <span className="font-normal text-mute">({t("optional")})</span>
         </span>
         <textarea
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           placeholder={t("customProductDescPlaceholder")}
-          rows={2}
+          rows={compact ? 6 : 2}
           className="field-input resize-y"
         />
         <span className="mt-1 block text-xs text-mute">{t("customSpecHint")}</span>
       </label>
-
-      {SHOW_CUSTOM_IMAGE_UPLOAD ? (
-      <div>
-        <p className="text-sm font-medium text-ink">
-          {t("uploadCustomImage")}{" "}
-          <span className="font-normal text-mute">({t("optional")})</span>
-        </p>
-        <div
-          className={`mt-1 flex items-center gap-3 rounded-lg border border-dashed ${
-            compact ? "p-2.5" : "p-3"
-          } ${imageOver ? "border-brand-600 bg-brand-50" : "border-line bg-paper/60"}`}
-          onDragOver={(e) => {
-            e.preventDefault();
-            setImageOver(true);
-          }}
-          onDragLeave={() => setImageOver(false)}
-          onDrop={(e) => {
-            e.preventDefault();
-            setImageOver(false);
-            handleImage(e.dataTransfer.files?.[0]);
-          }}
-        >
-          <button
-            type="button"
-            onClick={() => imageInputRef.current?.click()}
-            className={`relative shrink-0 overflow-hidden border border-line bg-white ${
-              compact ? "h-14 w-14" : "h-20 w-20"
-            }`}
-            aria-label={image ? t("replaceProductImage") : t("chooseProductImage")}
-          >
-            {image ? (
-              <img src={image} alt="" className="h-full w-full object-cover" />
-            ) : (
-              <span className="flex h-full w-full items-center justify-center text-2xl font-light text-mute">
-                +
-              </span>
-            )}
-          </button>
-          <div className="min-w-0">
-            <button
-              type="button"
-              className="text-sm font-semibold text-brand-700 hover:text-brand-800"
-              onClick={() => imageInputRef.current?.click()}
-            >
-              {image ? t("replaceProductImage") : t("chooseProductImage")}
-            </button>
-            <p className="mt-0.5 text-xs text-mute">{t("dropImageHere")}</p>
-            {image ? (
-              <button
-                type="button"
-                className="mt-1 text-xs font-semibold text-mute hover:text-brand-700"
-                onClick={() => setImage("")}
-              >
-                {t("remove")}
-              </button>
-            ) : (
-              <p className="mt-1 text-xs text-mute">{t("imageOptional")}</p>
-            )}
-          </div>
-          <input
-            ref={imageInputRef}
-            type="file"
-            accept="image/*"
-            className="sr-only"
-            onChange={(e) => {
-              handleImage(e.target.files?.[0]);
-              e.target.value = "";
-            }}
-          />
-        </div>
-      </div>
-      ) : null}
-
       {error ? (
         <p role="alert" tabIndex={-1} data-form-alert className="text-sm text-red-700 font-medium outline-none">
           {error}
@@ -492,6 +424,38 @@ export default function CustomProductForm({
           </button>
         ) : null}
       </div>
+    </div>
+  );
+
+  return (
+    <form
+      ref={formRef}
+      onSubmit={handleSubmit}
+      className={compact ? "space-y-4" : "bg-white border border-line rounded-xl p-4 sm:p-5 space-y-3"}
+    >
+      {!compact ? (
+        <div>
+          <p className="text-sm font-semibold text-brand-800">
+            {mode === "edit" ? t("editCustomProduct") : t("addCustomProduct")}
+          </p>
+          <p className="mt-0.5 text-xs text-mute">{t("customProductHint")}</p>
+        </div>
+      ) : null}
+      {compact ? (
+        <div className="grid lg:grid-cols-2 gap-6 items-start">
+          <div className="space-y-4">
+            {imageBlock}
+            {attachmentBlock}
+          </div>
+          {fieldsBlock}
+        </div>
+      ) : (
+        <>
+          {attachmentBlock}
+          {imageBlock}
+          {fieldsBlock}
+        </>
+      )}
     </form>
   );
 }

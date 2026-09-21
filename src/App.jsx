@@ -1,4 +1,5 @@
-import { BrowserRouter, Navigate, Outlet, Route, Routes, useParams, useSearchParams } from "react-router-dom";
+import { BrowserRouter, Navigate, Outlet, Route, Routes, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useEffect } from "react";
 import GoogleAnalytics from "./components/GoogleAnalytics";
 import ScrollToTop from "./components/ScrollToTop";
 import { LanguageProvider } from "./i18n.jsx";
@@ -13,21 +14,44 @@ import RfqPage from "./pages/RfqPage";
 import RfqsPage from "./pages/RfqsPage";
 import WhatsappPage from "./pages/WhatsappPage";
 import WhatsappChatPage from "./pages/WhatsappChatPage";
-import EmailSentPage from "./pages/EmailSentPage";
-import EmailPreviewPage from "./pages/EmailPreviewPage";
 import SupplierPage from "./pages/SupplierPage";
 import AdminPortal from "./pages/admin/AdminPortal";
 import StaffSetPasswordPage from "./pages/admin/StaffSetPasswordPage";
 import PublicQuotePage from "./pages/PublicQuotePage";
 import { getCategoryByName } from "./lib/store";
 import { adminOrigin, isAdminSurface } from "./lib/origins";
+import { useStore } from "./hooks/useStore";
+
+function BuyerSessionGuard() {
+  const { user } = useStore();
+  const navigate = useNavigate();
+  const { lang } = useParams();
+  useEffect(() => {
+    let flagged = false;
+    try {
+      flagged = sessionStorage.getItem("subbie_disabled_kick") === "1";
+    } catch {
+      flagged = false;
+    }
+    if (!flagged || user) return;
+    const locale = lang === "zh" ? "zh" : "en";
+    const path = window.location.pathname || "";
+    if (!path.includes("/login")) navigate(`/${locale}/login`, { replace: true });
+  }, [user, lang, navigate]);
+  return null;
+}
 
 function LangLayout() {
   const { lang } = useParams();
   if (lang !== "en" && lang !== "zh") {
     return <Navigate to="/en" replace />;
   }
-  return <Outlet />;
+  return (
+    <>
+      <BuyerSessionGuard />
+      <Outlet />
+    </>
+  );
 }
 
 function QuoteLegacyRedirect() {
@@ -107,10 +131,10 @@ export default function App() {
           <Route path="/supplier/:slug" element={<LegacyParam prefix="supplier" />} />
           <Route path="/whatsapp/:id" element={<LegacyParam prefix="whatsapp" />} />
           <Route path="/whatsapp-chat/:rfqId" element={<LegacyParam prefix="whatsapp-chat" />} />
-          <Route path="/email-sent/:rfqId" element={<LegacyParam prefix="email-sent" />} />
+          <Route path="/email-sent/:rfqId" element={<Navigate to="/zh/rfqs" replace />} />
           <Route path="/quote/:token" element={<QuoteLegacyRedirect />} />
-          <Route path="/emails" element={<EmailPreviewPage />} />
-          <Route path="/emails/:id" element={<EmailPreviewPage />} />
+          <Route path="/emails" element={<Navigate to="/zh" replace />} />
+          <Route path="/emails/:id" element={<Navigate to="/zh" replace />} />
 
           <Route path="/:lang" element={<LangLayout />}>
             <Route index element={<HomePage />} />
@@ -128,7 +152,7 @@ export default function App() {
             <Route path="whatsapp/:id" element={<WhatsappPage />} />
             <Route path="whatsapp-chat" element={<WhatsappChatPage />} />
             <Route path="whatsapp-chat/:rfqId" element={<WhatsappChatPage />} />
-            <Route path="email-sent/:rfqId" element={<EmailSentPage />} />
+            <Route path="email-sent/:rfqId" element={<Navigate to="../rfqs" replace />} />
             <Route path="quote/:token" element={<PublicQuotePage />} />
             <Route path="*" element={<UnknownLangPath />} />
           </Route>

@@ -454,6 +454,73 @@ export function rfqCancelDeclinedEmailHtml({ logoUrl, salesEmail, name, rfqId, p
   });
 }
 
+export function rfqReverseRequestedEmailHtml({ logoUrl, salesEmail, rfqId, buyerName, buyerEmail, project, portalHref }) {
+  return renderMattexEmail({
+    logoUrl,
+    brandName: "Mattex Marketplace Admin Portal",
+    salesEmail,
+    toEmail: salesEmail,
+    title: "Buyer asked to reverse an RFQ",
+    greeting: "Hello Sales,",
+    paragraphs: ["Accept the reverse so the buyer can revise this RFQ, or keep it in review."],
+    details: [
+      { label: "RFQ", value: rfqId },
+      { label: "Buyer", value: buyerName },
+      { label: "Project", value: project },
+    ],
+    buttonLabel: "Open in portal",
+    buttonHref: portalHref,
+    footerLinks: [
+      { label: "Sales portal", href: portalHref },
+      { label: "Contact", href: `mailto:${salesEmail}` },
+    ],
+  });
+}
+
+export function rfqReverseAcceptedEmailHtml({ logoUrl, salesEmail, name, rfqId, project, rfqsHref, shopHref, toEmail }) {
+  return renderMattexEmail({
+    logoUrl,
+    salesEmail,
+    toEmail,
+    title: "You can revise your RFQ",
+    greeting: `Hello ${name},`,
+    paragraphs: ["Sales accepted your reverse request. This RFQ is in Revising — edit it, then resubmit."],
+    details: [
+      { label: "RFQ", value: rfqId },
+      { label: "Project", value: project },
+      { label: "Status", value: "Revising" },
+    ],
+    buttonLabel: "Revise your RFQ",
+    buttonHref: rfqsHref,
+    footerLinks: [
+      { label: "My RFQs", href: rfqsHref },
+      { label: "Marketplace", href: shopHref },
+    ],
+  });
+}
+
+export function rfqReverseDeclinedEmailHtml({ logoUrl, salesEmail, name, rfqId, project, rfqsHref, shopHref, toEmail }) {
+  return renderMattexEmail({
+    logoUrl,
+    salesEmail,
+    toEmail,
+    title: "Your RFQ remains in review",
+    greeting: `Hello ${name},`,
+    paragraphs: ["Sales kept this RFQ in review. The reverse request was not accepted."],
+    details: [
+      { label: "RFQ", value: rfqId },
+      { label: "Project", value: project },
+      { label: "Status", value: "In review" },
+    ],
+    buttonLabel: "View your RFQ",
+    buttonHref: rfqsHref,
+    footerLinks: [
+      { label: "My RFQs", href: rfqsHref },
+      { label: "Marketplace", href: shopHref },
+    ],
+  });
+}
+
 export function listPrototypeEmails({ marketplaceOrigin, adminOrigin, salesEmail = "sales@mattex.com.hk" } = {}) {
   const shop = String(marketplaceOrigin || "").replace(/\/$/, "") || "http://localhost:5178";
   const admin = String(adminOrigin || "").replace(/\/$/, "") || "http://localhost:5179";

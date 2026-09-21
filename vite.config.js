@@ -140,6 +140,33 @@ function jsonPlugin() {
   };
 }
 
+function publicSsrHtmlPlugin() {
+  let surface = "marketplace";
+  return {
+    name: "mattex-public-ssr-html",
+    configResolved(config) {
+      const raw = config.define?.["import.meta.env.VITE_SURFACE"];
+      if (typeof raw === "string") {
+        try {
+          surface = JSON.parse(raw);
+        } catch {
+          surface = raw.replace(/^"|"$/g, "");
+        }
+      }
+    },
+    transformIndexHtml: {
+      order: "post",
+      async handler(html, ctx) {
+        if (surface === "admin") return html;
+        if (!ctx.server) return html;
+        const url = String(ctx.originalUrl || ctx.path || "/").split("?")[0];
+        const { injectPublicDocument } = await import("./src/lib/ssrHtml.js");
+        return injectPublicDocument(html, url);
+      },
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   if (env.BLOB_READ_WRITE_TOKEN) process.env.BLOB_READ_WRITE_TOKEN = env.BLOB_READ_WRITE_TOKEN;
@@ -155,8 +182,10 @@ export default defineConfig(({ mode }) => {
   const supabaseAnon =
     process.env.VITE_SUPABASE_ANON_KEY ||
     env.VITE_SUPABASE_ANON_KEY ||
+    env.VITE_SUPABASE_PUBLISHABLE_KEY ||
     env.SUPABASE_ANON_KEY ||
     env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+    env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
     "";
   const gaMeasurementId =
     process.env.VITE_GA_MEASUREMENT_ID || env.VITE_GA_MEASUREMENT_ID || GA_MEASUREMENT_ID;
@@ -169,7 +198,7 @@ export default defineConfig(({ mode }) => {
     env.VITE_ADMIN_ORIGIN ||
     (mode === "production" ? "" : "http://localhost:5179");
   return {
-    plugins: [react(), jsonPlugin(), marketplaceGaHtmlPlugin()],
+    plugins: [react(), jsonPlugin(), marketplaceGaHtmlPlugin(), publicSsrHtmlPlugin()],
     define: {
       "import.meta.env.VITE_SUPABASE_URL": JSON.stringify(supabaseUrl),
       "import.meta.env.VITE_SUPABASE_ANON_KEY": JSON.stringify(supabaseAnon),

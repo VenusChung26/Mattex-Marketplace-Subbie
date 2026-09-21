@@ -11,6 +11,12 @@ function readEnv(name) {
     if (name === "VITE_SUPABASE_ANON_KEY" && meta.VITE_SUPABASE_ANON_KEY) {
       return String(meta.VITE_SUPABASE_ANON_KEY || "").trim();
     }
+    if (
+      (name === "VITE_SUPABASE_PUBLISHABLE_KEY" || name === "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY") &&
+      (meta.VITE_SUPABASE_PUBLISHABLE_KEY || meta.VITE_SUPABASE_ANON_KEY)
+    ) {
+      return String(meta.VITE_SUPABASE_PUBLISHABLE_KEY || meta.VITE_SUPABASE_ANON_KEY || "").trim();
+    }
     if (meta[name] != null) return String(meta[name] || "").trim();
   }
   if (typeof process !== "undefined" && process.env && process.env[name] != null) {
@@ -26,8 +32,10 @@ export function supabaseConfig() {
     readEnv("NEXT_PUBLIC_SUPABASE_URL");
   const anon =
     readEnv("VITE_SUPABASE_ANON_KEY") ||
+    readEnv("VITE_SUPABASE_PUBLISHABLE_KEY") ||
     readEnv("SUPABASE_ANON_KEY") ||
-    readEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY");
+    readEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY") ||
+    readEnv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY");
   const service = readEnv("SUPABASE_SERVICE_ROLE_KEY");
   return { url, anon, service };
 }

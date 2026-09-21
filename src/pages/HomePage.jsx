@@ -136,16 +136,21 @@ export default function HomePage() {
   useEffect(() => {
     const onScroll = () => {
       const section = document.getElementById("products");
-      if (!section) return;
+      const nav = document.getElementById("siteNav");
+      const bar = document.getElementById("catalog-toolbar");
+      if (!section || !bar) return;
+      const navH = nav ? Math.round(nav.getBoundingClientRect().height) : navHeight;
+      if (navH !== navHeight) setNavHeight(navH);
       const rect = section.getBoundingClientRect();
+      const barTop = bar.getBoundingClientRect().top;
       if (holdCatalogPinRef.current) {
         setCatalogStuck(true);
-        if (rect.top <= navHeight + 2) holdCatalogPinRef.current = false;
+        if (barTop <= navH + 2) holdCatalogPinRef.current = false;
         return;
       }
-      const inCatalog = rect.top <= navHeight && rect.bottom > navHeight + 140;
-      setCatalogStuck(inCatalog);
-      if (rect.top > navHeight + 8) setCatalogPinned(false);
+      const stuck = barTop <= navH + 1 && rect.bottom > navH + 80;
+      setCatalogStuck(stuck);
+      if (rect.top > navH + 8) setCatalogPinned(false);
     };
     onScroll();
     window.addEventListener("scroll", onScroll, { passive: true });
@@ -628,113 +633,100 @@ export default function HomePage() {
           className="pt-14 sm:pt-16"
           style={{ scrollMarginTop: navHeight }}
         >
+          <div className="bg-charcoal text-white">
+            <div className="max-w-7xl mx-auto px-4 pt-10 pb-5 sm:pt-12 sm:pb-6">
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-white/50">
+                {t("fullCatalog")}
+              </p>
+              <h2 className="mt-2 font-display text-4xl sm:text-5xl font-semibold tracking-tight">
+                {t("allProductsTitle")}
+              </h2>
+              <p className="mt-2 text-white/65 max-w-xl text-sm sm:text-base">
+                {t("searchHint")}
+              </p>
+            </div>
+          </div>
           <div
             id="catalog-toolbar"
-            className={`bg-charcoal text-white sticky z-30 transition-shadow ${
-              searchStuck ? "shadow-[0_12px_28px_rgba(0,0,0,0.35)]" : ""
+            className={`bg-charcoal text-white sticky z-30 ${
+              searchStuck ? "shadow-[0_8px_20px_rgba(0,0,0,0.28)]" : ""
             }`}
             style={{ top: navHeight }}
           >
-            <div
-              className={`max-w-7xl mx-auto px-4 ${
-                searchStuck ? "py-3 sm:py-3.5" : "py-10 sm:py-12"
-              }`}
-            >
-              {!searchStuck ? (
-                <>
-                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-white/50">
-                    {t("fullCatalog")}
-                  </p>
-                  <h2 className="mt-2 font-display text-4xl sm:text-5xl font-semibold tracking-tight">
-                    {t("allProductsTitle")}
-                  </h2>
-                  <p className="mt-2 text-white/65 max-w-xl text-sm sm:text-base">
-                    {t("searchHint")}
-                  </p>
-                </>
-              ) : (
-                <div className="mb-2.5 flex items-baseline justify-between gap-3">
-                  <h2 className="font-display text-lg sm:text-xl font-semibold tracking-tight">
-                    {t("allProductsTitle")}
-                  </h2>
-                  <p className="hidden sm:block text-xs text-white/50 truncate">
-                    {t("searchHint")}
-                  </p>
-                </div>
-              )}
-              <div className={`${searchStuck ? "mt-0" : "mt-6"} flex flex-col sm:flex-row gap-3`}>
-                <div className="flex flex-1 min-w-0 bg-white">
-                  <input
-                    id="catalog-search"
-                    type="search"
-                    value={searchQuery}
-                    onChange={(e) => onCatalogQueryChange(e.target.value)}
-                    placeholder={t("searchPlaceholder")}
-                    className={`field-input flex-1 !rounded-none !border-0 !bg-transparent !text-ink ${
-                      searchStuck ? "!py-2.5" : ""
-                    }`}
-                    autoComplete="off"
-                    aria-label={t("catalog")}
-                  />
-                  <span className="w-px self-stretch my-2 bg-line" aria-hidden />
-                  <SearchFieldsSelect
-                    selected={searchFields}
-                    onChange={(fields) => {
-                      setSearchFields(fields);
-                    }}
-                    compact={searchStuck}
+            <div className="max-w-7xl mx-auto px-4 py-2">
+              <div className="flex flex-col lg:flex-row lg:items-center gap-2">
+                <div className="flex flex-1 min-w-0 gap-2">
+                  <div className="flex flex-1 min-w-0 bg-white">
+                    <input
+                      id="catalog-search"
+                      type="search"
+                      value={searchQuery}
+                      onChange={(e) => onCatalogQueryChange(e.target.value)}
+                      placeholder={t("searchPlaceholder")}
+                      className="field-input flex-1 !rounded-none !border-0 !bg-transparent !text-ink !py-2"
+                      autoComplete="off"
+                      aria-label={t("catalog")}
+                    />
+                    <span className="w-px self-stretch my-1.5 bg-line" aria-hidden />
+                    <SearchFieldsSelect
+                      selected={searchFields}
+                      onChange={(fields) => {
+                        setSearchFields(fields);
+                      }}
+                      compact
+                    />
+                  </div>
+                  <CatalogViewToggle
+                    value={catalogView}
+                    onChange={setCatalogViewMode}
+                    tone="dark"
+                    compact
                   />
                 </div>
-                <CatalogViewToggle
-                  value={catalogView}
-                  onChange={setCatalogViewMode}
-                  tone="dark"
-                  compact={searchStuck}
-                />
-              </div>
-              <div className={`${searchStuck ? "mt-2.5" : "mt-3"} flex flex-wrap items-center gap-1.5`}>
-                {[
-                  ["all", t("priceFilterAll")],
-                  ["unpriced", t("priceFilterUnpriced")],
-                ].map(([id, label]) => (
+                <div className="flex flex-wrap items-center gap-1.5 lg:shrink-0">
+                  {[
+                    ["all", t("priceFilterAll")],
+                    ["unpriced", t("priceFilterUnpriced")],
+                  ].map(([id, label]) => (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => setPriceFilter(id)}
+                      className={`px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide border rounded-full ${
+                        priceFilter === id
+                          ? "bg-white text-charcoal border-white"
+                          : "border-white/30 text-white/75 hover:bg-white/10"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                  <span className="mx-1 hidden h-4 w-px bg-white/25 sm:inline-block" aria-hidden />
                   <button
-                    key={id}
                     type="button"
-                    onClick={() => setPriceFilter(id)}
+                    onClick={() => setGreenOnly((prev) => !prev)}
+                    aria-pressed={greenOnly}
                     className={`px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide border rounded-full ${
-                      priceFilter === id
+                      greenOnly
                         ? "bg-white text-charcoal border-white"
                         : "border-white/30 text-white/75 hover:bg-white/10"
                     }`}
                   >
-                    {label}
+                    {t("filterGreen")}
                   </button>
-                ))}
-                <span className="mx-1 hidden h-4 w-px bg-white/25 sm:inline-block" aria-hidden />
-                <button
-                  type="button"
-                  onClick={() => setGreenOnly((prev) => !prev)}
-                  aria-pressed={greenOnly}
-                  className={`px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide border rounded-full ${
-                    greenOnly
-                      ? "bg-white text-charcoal border-white"
-                      : "border-white/30 text-white/75 hover:bg-white/10"
-                  }`}
-                >
-                  {t("filterGreen")}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPriceFilter((prev) => (prev === "hot" ? "all" : "hot"))}
-                  aria-pressed={priceFilter === "hot"}
-                  className={`px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide border rounded-full ${
-                    priceFilter === "hot"
-                      ? "bg-white text-charcoal border-white"
-                      : "border-white/30 text-white/75 hover:bg-white/10"
-                  }`}
-                >
-                  {t("priceFilterHot")}
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => setPriceFilter((prev) => (prev === "hot" ? "all" : "hot"))}
+                    aria-pressed={priceFilter === "hot"}
+                    className={`px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide border rounded-full ${
+                      priceFilter === "hot"
+                        ? "bg-white text-charcoal border-white"
+                        : "border-white/30 text-white/75 hover:bg-white/10"
+                    }`}
+                  >
+                    {t("priceFilterHot")}
+                  </button>
+                </div>
               </div>
             </div>
           </div>

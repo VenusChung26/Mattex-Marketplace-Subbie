@@ -11,10 +11,12 @@ import {
   rfqCancelDeclinedEmailHtml,
   rfqCancelRequestedEmailHtml,
   rfqNoOfferEmailHtml,
+  rfqReverseAcceptedEmailHtml,
+  rfqReverseDeclinedEmailHtml,
+  rfqReverseRequestedEmailHtml,
   rfqSubmittedEmailHtml,
   salesNewRfqEmailHtml,
   staffInviteEmailHtml,
-  wrapEmailPreview,
   wrapEmailSend,
 } from "./mailTemplate.js";
 
@@ -22,26 +24,33 @@ const HIDDEN_CATEGORY_IDS = new Set(["service", "computer", "hardware"]);
 const SYNTHETIC_CATEGORY_IDS = new Set(["service", "computer", "hardware"]);
 
 const CATEGORY_DEFS = [
-  { id: "reinforcement-mesh", name: "Reinforcement Mesh", image: "/assets/prod-mesh.png", count: 12, unit: "sheet", base: 100, supplier: "Mattex", specs: ["Type: reinforcement mesh", "Size: 2.1m × 4.8m / custom", "Standard: BS4483 / BS4449", "Use: road / slab"] },
-  { id: "safety-net", name: "Dense Mesh Flame Retardant Safety Net", image: "/assets/prod-safetynet.png", count: 7, unit: "sheet", base: 100, supplier: "Mattex", specs: ["Type: dense mesh FR net", "Color: green / orange", "Use: edge protection", "Stock: HK / site lead"] },
-  { id: "gypsum-block", name: "Gypsum Block", image: "/assets/prod-gypsum-block.png", count: 3, unit: "m²", base: 100, supplier: "Mattex", specs: ["Material: gypsum block", "Size: 500 mm series", "Density: 1100–1200 kg/m³", "Use: partition"] },
-  { id: "xps-foam-board", name: "XPS Foam Board", image: "/assets/prod-xps.png", count: 21, unit: "sheet", base: 100, supplier: "Mattex", specs: ["Type: XPS foam board", "Grade: JL150–JL900", "Thickness: 50–100 mm", "Fire: B1 / B2"] },
-  { id: "tiles", name: "Tiles", image: "/assets/prod-tile.png", count: 152, unit: "m²", base: 100, supplier: "Mattex", specs: ["Material: sintered stone / porcelain", "Size: 600×600–1200×3000", "Finish: marble / texture / artistic", "Use: floor / wall"] },
-  { id: "vinyl", name: "Vinyl", image: "/assets/prod-vinyl.png", count: 2, unit: "m²", base: 100, supplier: "Mattex", specs: ["Type: homogeneous / heterogeneous vinyl", "Size: 2×20 m", "Thickness: 2–3 mm", "Use: flooring"] },
-  { id: "precasted-concrete", name: "Precasted Concrete", image: "/assets/prod-precast.png", count: 40, unit: "m³", base: 100, supplier: "Mattex", specs: ["Type: precast block", "Size: modular / custom", "Finish: structural", "Use: civil / building"] },
-  { id: "cat-ladder", name: "Cat Ladder", image: "/assets/prod-ironwork.png", count: 1, unit: "lot", base: 100, supplier: "Mattex", specs: ["Type: cat ladder", "Finish: galvanized", "Custom: by drawing"] },
-  { id: "steel-shelving", name: "Logistics Storage Platform & Steel Shelving", image: "/assets/prod-ironwork.png", count: 1, unit: "lot", base: 100, supplier: "Mattex", specs: ["Type: storage platform / shelving", "Custom: by drawing"] },
-  { id: "handrails", name: "Handrails", image: "/assets/prod-ironwork.png", count: 1, unit: "lot", base: 100, supplier: "Mattex", specs: ["Type: ball joint handrail", "Custom: by drawing"] },
-  { id: "balustrades", name: "Balustrades", image: "/assets/prod-ironwork.png", count: 4, unit: "lot", base: 100, supplier: "Mattex", specs: ["Type: carbon / stainless / disability", "Custom: by drawing"] },
-  { id: "forge-welded-grating", name: "Forge-welded Grating", image: "/assets/prod-grating.png", count: 5, unit: "m²", base: 100, supplier: "Mattex", specs: ["Type: forge-welded", "Material: galvanized steel", "Load: by drawing"] },
-  { id: "press-lock-grating", name: "Press-Lock Grating", image: "/assets/prod-grating.png", count: 6, unit: "m²", base: 100, supplier: "Mattex", specs: ["Type: press-lock", "Material: galvanized steel", "Load: by drawing"] },
-  { id: "gu-gratings", name: "GU Type Drainage Gratings", image: "/assets/prod-grating.png", count: 15, unit: "lot", base: 100, supplier: "Mattex", specs: ["Type: GU drainage grating", "Material: galvanized steel"] },
-  { id: "gt-gratings", name: "GT Type Drainage Gratings", image: "/assets/prod-grating.png", count: 24, unit: "lot", base: 100, supplier: "Mattex", specs: ["Type: GT drainage grating", "Material: galvanized steel"] },
-  { id: "gypsum-board", name: "Gypsum Board", image: "/assets/prod-gypsum-board.png", count: 4, unit: "m²", base: 100, supplier: "Mattex", specs: ["Type: fire-resistant gypsum board", "Size: 1220×2440", "Thickness: 9.5–15 mm"] },
-  { id: "service", name: "Service", image: "/assets/sensor.png", count: 3, unit: "lot", base: 1800, supplier: "SiteServe Contracting", specs: ["Type: survey / install / inspect", "Scope: labour + report", "Lead: scheduled", "Use: site support"] },
-  { id: "computer", name: "Computer", image: "/assets/plc.png", count: 3, unit: "pc", base: 920, supplier: "BuildIT Workstations", specs: ["Type: desktop / rugged laptop", "OS: Windows", "Use: site office / BIM", "Warranty: 3 year"] },
-  { id: "hardware", name: "Hardware", image: "/assets/gearbox.png", count: 4, unit: "pack", base: 48, supplier: "FixRight Hardware Co.", specs: ["Type: fixings / tools", "Grade: commercial", "Finish: zinc / stainless", "Use: install"] },
-  { id: "software", name: "Software", image: "/assets/vfd.png", count: 14, unit: "license", base: 240, supplier: "Mattex", specs: ["Type: construction software / platform", "Term: project / annual", "Use: site management / safety / BIM"] },
+  { id: "reinforcement-mesh", name: "鋼筋網, Reinforcement Mesh", nameEn: "Reinforcement Mesh", image: "/assets/prod-mesh.png", count: 12, unit: "sheet", base: 100, supplier: "Mattex", specs: ["Type: reinforcement mesh", "Size: 2.1m × 4.8m / custom", "Standard: BS4483 / BS4449", "Use: road / slab"] },
+  { id: "safety-net", name: "密目防燃安全網, Dense Mesh Flame Retardant Safety Net", nameEn: "Dense Mesh Flame Retardant Safety Net", image: "/assets/prod-safetynet.png", count: 7, unit: "sheet", base: 100, supplier: "Mattex", specs: ["Type: dense mesh FR net", "Color: green / orange", "Use: edge protection", "Stock: HK / site lead"] },
+  { id: "gypsum-block", name: "石膏磚, Gypsum Block", nameEn: "Gypsum Block", image: "/assets/prod-gypsum-block.png", count: 3, unit: "m²", base: 100, supplier: "Mattex", specs: ["Material: gypsum block", "Size: 500 mm series", "Density: 1100–1200 kg/m³", "Use: partition"] },
+  { id: "xps-foam-board", name: "擠塑板, XPS Foam Board", nameEn: "XPS Foam Board", image: "/assets/prod-xps.png", count: 21, unit: "sheet", base: 100, supplier: "Mattex", specs: ["Type: XPS foam board", "Grade: JL150–JL900", "Thickness: 50–100 mm", "Fire: B1 / B2"] },
+  { id: "tiles", name: "瓷磚, Tiles", nameEn: "Tiles", image: "/assets/prod-tile.png", count: 152, unit: "m²", base: 100, supplier: "Mattex", specs: ["Material: sintered stone / porcelain", "Size: 600×600–1200×3000", "Finish: marble / texture / artistic", "Use: floor / wall"] },
+  { id: "vinyl", name: "膠地板, Vinyl", nameEn: "Vinyl", image: "/assets/prod-vinyl.png", count: 2, unit: "m²", base: 100, supplier: "Mattex", specs: ["Type: homogeneous / heterogeneous vinyl", "Size: 2×20 m", "Thickness: 2–3 mm", "Use: flooring"] },
+  { id: "precasted-concrete", name: "預製混凝土, Precasted Concrete", nameEn: "Precasted Concrete", image: "/assets/prod-precast.png", count: 40, unit: "m³", base: 100, supplier: "Mattex", specs: ["Type: precast block", "Size: modular / custom", "Finish: structural", "Use: civil / building"] },
+  { id: "cat-ladder", name: "貓梯, Cat Ladder", nameEn: "Cat Ladder", image: "/assets/prod-ironwork.png", count: 1, unit: "lot", base: 100, supplier: "Mattex", specs: ["Type: cat ladder", "Finish: galvanized", "Custom: by drawing"] },
+  { id: "steel-shelving", name: "貨台同鋼層架, Logistics Storage Platform & Steel Shelving", nameEn: "Logistics Storage Platform & Steel Shelving", image: "/assets/prod-ironwork.png", count: 1, unit: "lot", base: 100, supplier: "Mattex", specs: ["Type: storage platform / shelving", "Custom: by drawing"] },
+  { id: "handrails", name: "扶手, Handrails", nameEn: "Handrails", image: "/assets/prod-ironwork.png", count: 1, unit: "lot", base: 100, supplier: "Mattex", specs: ["Type: ball joint handrail", "Custom: by drawing"] },
+  { id: "balustrades", name: "欄河, Balustrades", nameEn: "Balustrades", image: "/assets/prod-ironwork.png", count: 4, unit: "lot", base: 100, supplier: "Mattex", specs: ["Type: carbon / stainless / disability", "Custom: by drawing"] },
+  { id: "forge-welded-grating", name: "焊接鋼格板, Forge-welded Grating", nameEn: "Forge-welded Grating", image: "/assets/prod-grating.png", count: 5, unit: "m²", base: 100, supplier: "Mattex", specs: ["Type: forge-welded", "Material: galvanized steel", "Load: by drawing"] },
+  { id: "press-lock-grating", name: "壓鎖鋼格板, Press-Lock Grating", nameEn: "Press-Lock Grating", image: "/assets/prod-grating.png", count: 6, unit: "m²", base: 100, supplier: "Mattex", specs: ["Type: press-lock", "Material: galvanized steel", "Load: by drawing"] },
+  { id: "gu-gratings", name: "GU型去水溝蓋, GU Type Drainage Gratings", nameEn: "GU Type Drainage Gratings", image: "/assets/prod-grating.png", count: 15, unit: "lot", base: 100, supplier: "Mattex", specs: ["Type: GU drainage grating", "Material: galvanized steel"] },
+  { id: "gt-gratings", name: "GT型去水溝蓋, GT Type Drainage Gratings", nameEn: "GT Type Drainage Gratings", image: "/assets/prod-grating.png", count: 24, unit: "lot", base: 100, supplier: "Mattex", specs: ["Type: GT drainage grating", "Material: galvanized steel"] },
+  { id: "gypsum-board", name: "石膏板, Gypsum Board", nameEn: "Gypsum Board", image: "/assets/prod-gypsum-board.png", count: 4, unit: "m²", base: 100, supplier: "Mattex", specs: ["Type: fire-resistant gypsum board", "Size: 1220×2440", "Thickness: 9.5–15 mm"] },
+  { id: "oxygen-chamber", name: "氧氣艙, Oxygen Chamber", nameEn: "Oxygen Chamber", image: "/assets/sensor.png", count: 9, unit: "lot", base: 100, supplier: "Mattex", specs: ["Type: oxygen chamber", "Use: medical / site"] },
+  { id: "dowel-bar", name: "傳力桿, Dowel Bar", nameEn: "Dowel Bar", image: "/assets/prod-ironwork.png", count: 27, unit: "lot", base: 100, supplier: "Mattex", specs: ["Type: dowel bar", "Material: mild / stainless steel"] },
+  { id: "paint", name: "油漆, Paint", nameEn: "Paint", image: "/assets/prod-tile.png", count: 30, unit: "lot", base: 100, supplier: "Mattex", specs: ["Type: interior / exterior paint"] },
+  { id: "raised-access-floors", name: "架空地板, Raised Access Floors", nameEn: "Raised Access Floors", image: "/assets/prod-vinyl.png", count: 17, unit: "m²", base: 100, supplier: "Mattex", specs: ["Type: raised access floor"] },
+  { id: "aluminum-cladding", name: "鋁板飾面, Aluminum Cladding", nameEn: "Aluminum Cladding", image: "/assets/prod-ironwork.png", count: 13, unit: "m²", base: 100, supplier: "Mattex", specs: ["Type: aluminum cladding"] },
+  { id: "cable", name: "電線電纜, Cable", nameEn: "Cable", image: "/assets/gearbox.png", count: 5, unit: "m", base: 100, supplier: "Mattex", specs: ["Type: power cable"] },
+  { id: "shoe-washing-machines", name: "洗鞋機, Shoe Washing Machines", nameEn: "Shoe Washing Machines", image: "/assets/plc.png", count: 6, unit: "set", base: 100, supplier: "Mattex", specs: ["Type: shoe washing machine"] },
+  { id: "service", name: "Service", nameEn: "Service", image: "/assets/sensor.png", count: 3, unit: "lot", base: 1800, supplier: "SiteServe Contracting", specs: ["Type: survey / install / inspect", "Scope: labour + report", "Lead: scheduled", "Use: site support"] },
+  { id: "computer", name: "Computer", nameEn: "Computer", image: "/assets/plc.png", count: 3, unit: "pc", base: 920, supplier: "BuildIT Workstations", specs: ["Type: desktop / rugged laptop", "OS: Windows", "Use: site office / BIM", "Warranty: 3 year"] },
+  { id: "hardware", name: "Hardware", nameEn: "Hardware", image: "/assets/gearbox.png", count: 4, unit: "pack", base: 48, supplier: "FixRight Hardware Co.", specs: ["Type: fixings / tools", "Grade: commercial", "Finish: zinc / stainless", "Use: install"] },
+  { id: "software", name: "Software", nameEn: "Software", image: "/assets/vfd.png", count: 14, unit: "license", base: 240, supplier: "Mattex", specs: ["Type: construction software / platform", "Term: project / annual", "Use: site management / safety / BIM"] },
 ];
 
 const ALT_SUPPLIERS = {
@@ -253,6 +262,7 @@ function normalizeProductRecord(product) {
     remark: product.remark || "",
     needsChainImage: Boolean(product.needsChainImage),
     tailorMade: Boolean(product.tailorMade),
+    images: Array.isArray(product.images) ? product.images.filter(Boolean).slice(0, 5) : [],
     certFiles: Array.isArray(product.certFiles) ? product.certFiles : [],
     createdAt: Number(product.createdAt) > 0 ? Number(product.createdAt) : product.createdAt || 0,
   };
@@ -429,9 +439,38 @@ function buildProducts() {
   return applyMattexDemoPrices(MATTEX_PRODUCTS).concat(leftover);
 }
 
+function categoryKey(name) {
+  return String(name || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function categoryAliases(def) {
+  const names = [def?.name, def?.nameEn];
+  if (def?.name && String(def.name).includes(",")) {
+    const parts = String(def.name).split(",");
+    names.push(parts[0].trim(), parts.slice(1).join(",").trim());
+  }
+  return [...new Set(names.map((n) => String(n || "").trim()).filter(Boolean))];
+}
+
+function findCategoryDef(name) {
+  const n = categoryKey(name);
+  if (!n) return null;
+  const fromVisible = visibleCategoryDefs().find((c) => categoryAliases(c).some((alias) => categoryKey(alias) === n));
+  if (fromVisible) return fromVisible;
+  return CATEGORY_DEFS.find((c) => categoryAliases(c).some((alias) => categoryKey(alias) === n)) || null;
+}
+
+function productInNamedCategory(product, nameOrDef) {
+  const def = nameOrDef && typeof nameOrDef === "object" && nameOrDef.id ? nameOrDef : findCategoryDef(nameOrDef);
+  if (!def) return categoryKey(product?.category) === categoryKey(nameOrDef);
+  return categoryAliases(def).some((alias) => categoryKey(alias) === categoryKey(product?.category));
+}
+
 function categoryIdFromName(name) {
-  const found = visibleCategoryDefs().find((c) => c.name === name) || CATEGORY_DEFS.find((c) => c.name === name);
-  return found ? found.id : "";
+  return findCategoryDef(name)?.id || "";
 }
 
 let PRODUCTS = buildProducts().map(normalizeProductRecord);
@@ -440,7 +479,10 @@ const CATEGORIES = CATEGORY_DEFS.map((c) => c.name);
 
 function getCustomCategories() {
   const list = readJson(CUSTOM_CATEGORIES_KEY, []);
-  return Array.isArray(list) ? list.filter((c) => c && c.id && c.name) : [];
+  const valid = Array.isArray(list) ? list.filter((c) => c && c.id && c.name) : [];
+  const cleaned = valid.filter((c) => String(c.id) !== "234");
+  if (cleaned.length !== valid.length) writeJson(CUSTOM_CATEGORIES_KEY, cleaned);
+  return cleaned;
 }
 
 function visibleCategoryDefs() {
@@ -458,7 +500,7 @@ function getCategoryDefs() {
     id: c.id,
     name: c.name,
     image: c.image || "/assets/prod-mesh.png",
-    count: activeCatalog(PRODUCTS).filter((p) => p.category === c.name).length,
+    count: activeCatalog(PRODUCTS).filter((p) => productInNamedCategory(p, c)).length,
     custom: Boolean(c.custom),
   }));
 }
@@ -472,8 +514,10 @@ function getAdminCategories() {
 }
 
 function matchAdminCategory(name) {
-  const n = String(name || "").trim().toLowerCase().replace(/\s+/g, " ");
-  return getAdminCategories().find((c) => c.toLowerCase() === n) || null;
+  const found = findCategoryDef(name);
+  if (found) return found.name;
+  const n = categoryKey(name);
+  return getAdminCategories().find((c) => categoryKey(c) === n) || null;
 }
 
 function slugifyCategory(name) {
@@ -503,7 +547,7 @@ function addAdminCategory(name) {
 }
 
 function adminProductsInCategory(name) {
-  return PRODUCTS.filter((p) => p.category === name);
+  return PRODUCTS.filter((p) => productInNamedCategory(p, name));
 }
 
 function listAdminCategories() {
@@ -541,7 +585,7 @@ function renameAdminCategory(id, name) {
     writeCategoryAdminMeta(meta);
   }
   PRODUCTS.forEach((p) => {
-    if (p.category === current.name) p.category = nextName;
+    if (productInNamedCategory(p, current)) p.category = nextName;
   });
   persistProductPatches();
   emitStoreChange();
@@ -602,9 +646,9 @@ function getCategoryBySlug(slug) {
 }
 
 function getCategoryByName(name) {
-  const value = String(name || "").trim();
-  if (!value) return null;
-  return getCategoryDefs().find((c) => c.name === value) || null;
+  const found = findCategoryDef(name);
+  if (!found) return null;
+  return getCategoryDefs().find((c) => c.id === found.id) || null;
 }
 
 function catalogPathForCategory(nameOrSlug) {
@@ -643,8 +687,12 @@ function getProductsByCategory(category) {
       : [category];
   const source = activeCatalog(PRODUCTS);
   if (!names.length) return source.slice();
-  const set = new Set(names);
-  return source.filter((p) => set.has(p.category));
+  const defs = names.map((n) => findCategoryDef(n)).filter(Boolean);
+  if (!defs.length) {
+    const set = new Set(names.map(categoryKey));
+    return source.filter((p) => set.has(categoryKey(p.category)));
+  }
+  return source.filter((p) => defs.some((d) => productInNamedCategory(p, d)));
 }
 
 const CATEGORY_SEARCH_TERMS = {
@@ -664,29 +712,39 @@ const CATEGORY_SEARCH_TERMS = {
   "GU Type Drainage Gratings": ["GU grating", "drainage grating", "排水溝蓋"],
   "GT Type Drainage Gratings": ["GT grating", "drainage grating", "排水溝蓋"],
   "Gypsum Board": ["plasterboard", "drywall", "石膏板"],
+  "Oxygen Chamber": ["oxygen chamber", "hyperbaric", "氧氣艙"],
+  "Dowel Bar": ["dowel bar", "傳力桿", "銷釘"],
+  "Paint": ["paint", "coating", "油漆", "乳膠漆"],
+  "Raised Access Floors": ["raised floor", "access floor", "架空地板"],
+  "Aluminum Cladding": ["aluminum cladding", "aluminium cladding", "鋁板", "幕牆"],
+  "Cable": ["cable", "power cable", "電線", "電纜"],
+  "Shoe Washing Machines": ["shoe washing", "洗鞋機"],
   "Software": ["license", "BIM", "軟件授權"],
 };
+
+function categorySearchTerms(product) {
+  const def = findCategoryDef(product?.category);
+  const en = def?.nameEn || product?.category;
+  return CATEGORY_SEARCH_TERMS[en] || CATEGORY_SEARCH_TERMS[product?.category] || [];
+}
 
 function getProductRemarks(product) {
   if (!product) return [];
   if (Array.isArray(product.remarks) && product.remarks.length) {
     return product.remarks.map((term) => String(term).trim()).filter(Boolean);
   }
-  const fromName = String(product.name || "")
-    .split(/[—–,/()]+/)
-    .map((part) => part.trim())
-    .filter((part) => part.length > 1 && part.length < 48);
-  const fromCat = CATEGORY_SEARCH_TERMS[product.category] || [];
-  const extra = [product.productNo, product.standard].filter(Boolean);
+  const fromPurposes = purposesFromProduct(product);
+  const fromCat = categorySearchTerms(product);
+  const extra = [product.productNo, product.provisionalSku, product.standard].filter(Boolean);
   const seen = new Set();
   const out = [];
-  for (const term of [...fromName, ...fromCat, ...extra]) {
+  for (const term of [...fromPurposes, ...fromCat, ...extra]) {
     const key = String(term).toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(String(term));
   }
-  return out.slice(0, 14);
+  return out;
 }
 
 function productSearchBlob(product) {
@@ -694,6 +752,7 @@ function productSearchBlob(product) {
   return [
     product.id,
     product.productNo,
+    product.provisionalSku,
     product.name,
     product.category,
     product.supplier,
@@ -722,7 +781,7 @@ function productSearchText(product, fields) {
   const parts = [];
   if (selected.includes("name")) parts.push(product.name);
   if (selected.includes("category")) parts.push(product.category);
-  if (selected.includes("sku")) parts.push(product.productNo, product.id);
+  if (selected.includes("sku")) parts.push(product.productNo, product.provisionalSku, product.id);
   if (selected.includes("spec")) parts.push(specs, product.standard, product.description);
   if (selected.includes("supplier")) parts.push(product.supplier);
   if (selected.includes("remarks")) parts.push(getProductRemarks(product).join(" "), (product.purposes || []).join(" "));
@@ -960,6 +1019,9 @@ function mergeDraftMaps(local, remote) {
 }
 
 function rfqProgress(rfq) {
+  if (rfq?.cancelStatus === "accepted" || rfq?.reviewStatus === "cancelled") return 80;
+  if (rfq?.reviewStatus === "revising") return 55;
+  if (rfq?.reverseStatus === "requested" || rfq?.cancelStatus === "requested") return 52;
   const status = rfq?.reviewStatus || rfq?.status || "";
   return (
     {
@@ -977,15 +1039,34 @@ function rfqProgress(rfq) {
   );
 }
 
+function rfqPickStamp(rfq) {
+  let max = 0;
+  const consider = (iso) => {
+    const n = Date.parse(iso || "") || 0;
+    if (n > max) max = n;
+  };
+  consider(rfq?.submittedAt);
+  consider(rfq?.acceptedAt);
+  consider(rfq?.resubmittedAt);
+  consider(rfq?.reverseRequestedAt);
+  consider(rfq?.reverseDeclinedAt);
+  consider(rfq?.cancelledAt);
+  consider(rfq?.cancelRequestedAt);
+  consider(rfq?.quotedAt);
+  consider(rfq?.noOfferAt);
+  (Array.isArray(rfq?.activity) ? rfq.activity : []).forEach((row) => consider(row?.at));
+  return max;
+}
+
 function pickRfq(a, b) {
   if (!a) return b;
   if (!b) return a;
+  const tb = rfqPickStamp(b);
+  const ta = rfqPickStamp(a);
+  if (tb !== ta) return tb > ta ? b : a;
   const ra = rfqProgress(a);
   const rb = rfqProgress(b);
   if (rb !== ra) return rb > ra ? b : a;
-  const tb = Date.parse(b.submittedAt || "") || 0;
-  const ta = Date.parse(a.submittedAt || "") || 0;
-  if (tb !== ta) return tb > ta ? b : a;
   return JSON.stringify(b).length >= JSON.stringify(a).length ? b : a;
 }
 
@@ -1060,8 +1141,9 @@ async function hydrateStore() {
     Object.entries(remote.metrics || {}).forEach(([slug, metrics]) => {
       supplierMetricsBySlug.set(slug, metrics);
     });
+    if (remote.kv[DELETED_BUYERS_KEY]) mergeDeletedBuyers(remote.kv[DELETED_BUYERS_KEY]);
     if (remote.kv[ACCOUNTS_KEY]) {
-      writeLocalOnly(ACCOUNTS_KEY, { ...readJson(ACCOUNTS_KEY, {}), ...remote.kv[ACCOUNTS_KEY] });
+      writeLocalOnly(ACCOUNTS_KEY, stripDeletedBuyers({ ...readJson(ACCOUNTS_KEY, {}), ...remote.kv[ACCOUNTS_KEY] }));
     }
     if (remote.kv[DRAFTS_KEY]) {
       writeLocalOnly(DRAFTS_KEY, mergeDraftMaps(readJson(DRAFTS_KEY, {}), remote.kv[DRAFTS_KEY]));
@@ -1166,6 +1248,7 @@ function searchSupplierProducts(slugOrName, query) {
 const listeners = new Set();
 let authModalOpen = false;
 let authModalMode = "invite";
+let lastCartWhatsappResult = null;
 let storeSnapshot = {
   user: null,
   staff: null,
@@ -1177,6 +1260,7 @@ let storeSnapshot = {
   adminAlerts: [],
   authModalOpen: false,
   authModalMode: "invite",
+  lastCartWhatsappResult: null,
 };
 
 function refreshStoreSnapshot() {
@@ -1191,10 +1275,13 @@ function refreshStoreSnapshot() {
     adminAlerts: listAdminAlerts(),
     authModalOpen,
     authModalMode,
+    lastCartWhatsappResult,
   };
 }
 
 function emitStoreChange() {
+  kickDisabledBuyerIfNeeded();
+  restoreSessionBuyerAccount();
   refreshStoreSnapshot();
   listeners.forEach((l) => l());
 }
@@ -1207,7 +1294,9 @@ export function getStoreSnapshot() {
 }
 
 const AUTH_KEY = "subbie_auth";
+const DISABLED_KICK_KEY = "subbie_disabled_kick";
 const ACCOUNTS_KEY = "subbie_accounts";
+const DELETED_BUYERS_KEY = "subbie_deleted_buyers";
 const DRAFTS_KEY = "subbie_drafts_by_user";
 const RFQS_KEY = "subbie_rfqs_by_user";
 const QUOTE_SNAPSHOTS_KEY = "subbie_guest_quote_snapshots";
@@ -1227,19 +1316,25 @@ const PENDING_WA_RFQ_KEY = "subbie_pending_whatsapp_rfq";
 const PENDING_CUSTOM_KEY = "subbie_pending_custom";
 const PENDING_WA_ORDER_KEY = "subbie_pending_whatsapp_order";
 const PENDING_ROUTE_KEY = "subbie_pending_route";
+const PENDING_CART_WA_SUBMIT_KEY = "subbie_pending_cart_wa_submit";
 const AUTH_INVITE_HIDE_KEY = "subbie_hide_auth_invite_v2";
+const CART_AUTH_INVITE_SHOWN_KEY = "subbie_cart_auth_invite_shown_v1";
+
+function pendingPriceLabel() {
+  try {
+    return localStorage.getItem("subbie_lang") === "zh" ? "價格待定" : "Price Upon Request";
+  } catch {
+    return "Price Upon Request";
+  }
+}
 
 function formatPrice(price) {
-  if (price == null) {
-    try {
-      return localStorage.getItem("subbie_lang") === "zh" ? "價格待定" : "Price Upon Request";
-    } catch {
-      return "Price Upon Request";
-    }
-  }
+  if (price == null || price === "" || Number(price) === 0) return pendingPriceLabel();
+  const n = Number(price);
+  if (!Number.isFinite(n)) return pendingPriceLabel();
   return (
     "$" +
-    price.toLocaleString("en-US", {
+    n.toLocaleString("en-US", {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     })
@@ -1281,17 +1376,56 @@ function isLoggedIn() {
   return Boolean(data && data.email);
 }
 
+function normalizeProfileProjects(value) {
+  if (Array.isArray(value)) {
+    return [...new Set(value.map((row) => String(row || "").trim()).filter(Boolean))];
+  }
+  const one = String(value || "").trim();
+  return one ? [one] : [];
+}
+
 function normalizeProfileProject(value) {
-  return String(value || "").trim() || SAMPLE_PROJECTS[0];
+  return normalizeProfileProjects(value)[0] || "";
+}
+
+function joinProfileProjects(list) {
+  return normalizeProfileProjects(list).join(" · ");
 }
 
 function getUser() {
   const user = readJson(AUTH_KEY, null);
   if (!user) return null;
+  const projects = normalizeProfileProjects(user.projects || user.project);
   return {
     ...user,
-    project: normalizeProfileProject(user.project),
+    projects,
+    project: joinProfileProjects(projects),
   };
+}
+
+function kickDisabledBuyerIfNeeded() {
+  if (typeof window === "undefined") return false;
+  const user = getUser();
+  if (!user?.email) return false;
+  const account = getAccount(user.email);
+  if (!account || account.enabled !== false) return false;
+  try {
+    sessionStorage.setItem(DISABLED_KICK_KEY, "1");
+  } catch {
+    /* ignore */
+  }
+  localStorage.removeItem(AUTH_KEY);
+  return true;
+}
+
+function takeDisabledKick() {
+  try {
+    const flagged = sessionStorage.getItem(DISABLED_KICK_KEY) === "1";
+    if (flagged) sessionStorage.removeItem(DISABLED_KICK_KEY);
+    return flagged;
+  } catch {
+    return false;
+  }
 }
 
 function emptyDraft() {
@@ -1303,6 +1437,7 @@ function emptyDraft() {
     deliveryMode: "one_time",
     deliveryLots: [],
     project: "",
+    projects: [],
     address: "",
     canonicalCategory: "",
     acceptSubstitutes: false,
@@ -1314,16 +1449,19 @@ function normalizeDeliveryMode(value) {
 }
 
 function emptyDeliveryLot() {
-  return { date: "", note: "" };
+  return { date: "", note: "", address: "" };
 }
 
-function normalizeDeliveryLots(list, { mode, deliveryDate } = {}) {
+function normalizeDeliveryLots(list, { mode, deliveryDate, address } = {}) {
   const lots = (Array.isArray(list) ? list : []).map((lot) => ({
     date: String(lot?.date || "").trim(),
     note: String(lot?.note || "").trim(),
+    address: String(lot?.address || "").trim(),
   }));
   if (normalizeDeliveryMode(mode) !== "partial") return lots;
-  if (!lots.length) lots.push({ date: String(deliveryDate || "").trim(), note: "" });
+  if (!lots.length) {
+    lots.push({ date: String(deliveryDate || "").trim(), note: "", address: String(address || "").trim() });
+  }
   while (lots.length < 2) lots.push(emptyDeliveryLot());
   return lots;
 }
@@ -1340,7 +1478,8 @@ function normalizeDraft(draft) {
       mode: src.deliveryMode,
       deliveryDate: src.deliveryDate,
     }),
-    project: String(src.project || "").trim(),
+    project: joinProfileProjects(src.projects || src.project),
+    projects: normalizeProfileProjects(src.projects || src.project),
     address: src.address || "",
     canonicalCategory: src.canonicalCategory || "",
     acceptSubstitutes: Boolean(src.acceptSubstitutes),
@@ -1386,6 +1525,59 @@ function setDraft(draft) {
   emitStoreChange();
 }
 
+function pickFilledDraftValue(memberVal, guestVal) {
+  return String(memberVal || "").trim() || String(guestVal || "").trim() || "";
+}
+
+function mergeGuestCartIntoUser() {
+  if (!isLoggedIn()) return;
+  const email = accountKey();
+  if (!email || email === GUEST_KEY) return;
+  const map = getDraftsMap();
+  const guest = map[GUEST_KEY] ? normalizeDraft(map[GUEST_KEY]) : emptyDraft();
+  const member = map[email] ? normalizeDraft(map[email]) : emptyDraft();
+  if (!guest.lines.length) {
+    if (map[GUEST_KEY]) {
+      delete map[GUEST_KEY];
+      setDraftsMap(map);
+    }
+    return;
+  }
+  const lines = member.lines.map((line) => ({ ...line }));
+  for (const guestLine of guest.lines) {
+    if (guestLine.custom) {
+      lines.push({ ...guestLine });
+      continue;
+    }
+    const existing = lines.find((row) => !row.custom && String(row.productId) === String(guestLine.productId));
+    if (existing) {
+      existing.qty = (Number(existing.qty) || 0) + (Number(guestLine.qty) || 0);
+    } else {
+      lines.push({ ...guestLine });
+    }
+  }
+  map[email] = normalizeDraft({
+    ...member,
+    lines,
+    note: pickFilledDraftValue(member.note, guest.note),
+    responseDate: pickFilledDraftValue(member.responseDate, guest.responseDate),
+    deliveryDate: pickFilledDraftValue(member.deliveryDate, guest.deliveryDate),
+    address: pickFilledDraftValue(member.address, guest.address),
+    project: pickFilledDraftValue(member.project, guest.project),
+    projects: normalizeProfileProjects(pickFilledDraftValue(member.project, guest.project)),
+    canonicalCategory: pickFilledDraftValue(member.canonicalCategory, guest.canonicalCategory),
+    acceptSubstitutes: Boolean(member.acceptSubstitutes || guest.acceptSubstitutes),
+    deliveryMode: member.deliveryMode === "partial" || guest.deliveryMode === "partial" ? "partial" : member.deliveryMode || guest.deliveryMode,
+    deliveryLots:
+      (Array.isArray(member.deliveryLots) && member.deliveryLots.some((lot) => lot.date || lot.address || lot.note)
+        ? member.deliveryLots
+        : guest.deliveryLots) || [],
+  });
+  delete map[GUEST_KEY];
+  setDraftsMap(map);
+  emitStoreChange();
+}
+
 function getCart() {
   return getDraft().lines.map((line) => {
     if (line.custom) {
@@ -1418,13 +1610,10 @@ function newCustomProductId() {
   return `custom_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function addToCart(productId, { intent, qty } = {}) {
-  if (!isLoggedIn()) {
-    requireBuyerAuth({ productId, intent: intent || "quote", qty });
-    return getCart();
-  }
+function addToCart(productId, { intent, qty, silentInvite = false } = {}) {
   const product = getProduct(productId);
   if (!product || isDiscontinued(product) || !isOrderable(product)) return getCart();
+  const guest = !isLoggedIn();
   const draft = getDraft();
   const minQty = Math.max(1, Number(product.moq) || 1);
   const addQty = Math.max(minQty, Math.floor(Number(qty)) || minQty);
@@ -1437,6 +1626,7 @@ function addToCart(productId, { intent, qty } = {}) {
     draft.lines.push({ productId, qty: addQty, intent: nextIntent });
   }
   setDraft(draft);
+  if (guest && !silentInvite) maybeShowCartAuthInvite();
   return getCart();
 }
 
@@ -1619,7 +1809,9 @@ function setDraftAddress(value) {
 
 function setDraftProject(value) {
   const draft = getDraft();
-  draft.project = String(value || "").trim();
+  const projects = normalizeProfileProjects(value);
+  draft.projects = projects;
+  draft.project = joinProfileProjects(projects);
   setDraft(draft);
   return draft;
 }
@@ -1751,7 +1943,8 @@ function draftTotals(draft, productIds) {
       mode: draft.deliveryMode,
       deliveryDate: draft.deliveryDate,
     }),
-    project: String(draft.project || "").trim(),
+    project: String(draft.project || joinProfileProjects(draft.projects) || "").trim(),
+    projects: normalizeProfileProjects(draft.projects || draft.project),
     address: draft.address || "",
     canonicalCategory: draft.canonicalCategory || "",
     acceptSubstitutes: Boolean(draft.acceptSubstitutes),
@@ -1822,12 +2015,18 @@ function submitRfq(productIds, options = {}) {
   const deliveryLots = normalizeDeliveryLots(draft.deliveryLots, {
     mode: deliveryMode,
     deliveryDate: draft.deliveryDate,
+    address: draft.address,
   });
   if (!skipLogistics && deliveryMode === "partial") {
     const dated = deliveryLots.filter((lot) => lot.date);
     if (dated.length < 2) return { ok: false, error: "delivery_lots" };
+    if (dated.some((lot) => !lot.address)) return { ok: false, error: "address" };
   }
-  if (!skipLogistics && !String(draft.address || "").trim()) return { ok: false, error: "address" };
+  const siteAddress =
+    deliveryMode === "partial"
+      ? deliveryLots.find((lot) => lot.address)?.address || String(draft.address || "").trim()
+      : String(draft.address || "").trim();
+  if (!skipLogistics && !siteAddress) return { ok: false, error: "address" };
 
   const selectedIds =
     Array.isArray(productIds) && productIds.length
@@ -1842,8 +2041,9 @@ function submitRfq(productIds, options = {}) {
   const totals = draftTotals({ ...draft, lines: selectedLines });
   const channel =
     options.channel === "whatsapp" ? "whatsapp" : options.channel === "email" ? "email" : "rfq";
+  restoreSessionBuyerAccount();
   const buyerEmail = user?.email || "guest@subbie.store";
-  const buyerKind = rfqBuyerKind({ buyerEmail });
+  const buyerKind = user?.email ? "member" : "guest";
   const rfq = {
     id: nextRfqId(),
     status: channel === "whatsapp" ? "whatsapp_sent" : channel === "email" ? "email_sent" : "submitted",
@@ -1856,9 +2056,10 @@ function submitRfq(productIds, options = {}) {
     quotationDeadline: totals.responseDate,
     deliveryDate: deliveryMode === "partial" ? deliveryLots.find((lot) => lot.date)?.date || totals.deliveryDate : totals.deliveryDate,
     deliveryMode,
-    deliveryLots: deliveryMode === "partial" ? deliveryLots.filter((lot) => lot.date || lot.note) : [],
-    project: String(totals.project || "").trim(),
-    address: totals.address,
+    deliveryLots: deliveryMode === "partial" ? deliveryLots.filter((lot) => lot.date || lot.note || lot.address) : [],
+    project: joinProfileProjects(totals.projects || totals.project),
+    projects: normalizeProfileProjects(totals.projects || totals.project),
+    address: siteAddress,
     canonicalCategory: totals.canonicalCategory,
     acceptSubstitutes: Boolean(totals.acceptSubstitutes),
     lines: totals.lines.map((l) => ({
@@ -1891,6 +2092,9 @@ function submitRfq(productIds, options = {}) {
     buyerPhoneWhatsapp: Boolean(user?.phoneWhatsapp),
     buyerKind,
   };
+  const v1 = snapshotRfqRequest(rfq, { version: 1, createdAt: rfq.submittedAt });
+  rfq.requestVersions = [v1];
+  rfq.requestEffectiveVersion = 1;
   Object.assign(
     rfq,
     pushRfqActivity(rfq, "submitted", {
@@ -1916,6 +2120,34 @@ function submitRfq(productIds, options = {}) {
     deliverRfqToSalesEmail(rfq);
   }
   return { ok: true, rfq };
+}
+
+function takeLastCartWhatsappResult() {
+  const value = lastCartWhatsappResult;
+  lastCartWhatsappResult = null;
+  if (value) emitStoreChange();
+  return value;
+}
+
+function completeCartWhatsappSubmit(spec = {}, { announce = false } = {}) {
+  const kind = spec.kind === "buy" ? "buy" : "quote";
+  const ids = (Array.isArray(spec.ids) ? spec.ids : []).map(String).filter(Boolean);
+  const details = draftLogisticsForWhatsapp();
+  const submitted = submitRfq(ids, {
+    kind,
+    channel: "whatsapp",
+    skipLogistics: true,
+    allowGuest: !isLoggedIn(),
+  });
+  if (!submitted.ok) return submitted;
+  const lines = getDraft().lines.filter((line) => ids.includes(String(line.productId)));
+  openWhatsappDraft(lines, kind, { refNo: submitted.rfq.id, details });
+  removeLines(ids);
+  if (announce) {
+    lastCartWhatsappResult = { rfq: submitted.rfq, kind };
+    emitStoreChange();
+  }
+  return { ok: true, rfq: submitted.rfq, kind };
 }
 
 function sendImmediateQuote(productId, { qty, channel } = {}) {
@@ -1963,7 +2195,8 @@ function reorderRfq(id) {
       mode: src.deliveryMode,
       deliveryDate: src.deliveryDate,
     }),
-    project: String(src.project || "").trim(),
+    project: joinProfileProjects(src.projects || src.project),
+    projects: normalizeProfileProjects(src.projects || src.project),
     address: src.address || "",
     canonicalCategory: src.canonicalCategory || "",
     acceptSubstitutes: Boolean(src.acceptSubstitutes),
@@ -1991,12 +2224,57 @@ function reorderRfq(id) {
   return { ok: true };
 }
 
+function getDeletedBuyerSet() {
+  const list = readJson(DELETED_BUYERS_KEY, []);
+  return new Set((Array.isArray(list) ? list : []).map(normalizeEmail).filter(Boolean));
+}
+
+function persistDeletedBuyers(set) {
+  writeJson(DELETED_BUYERS_KEY, [...set]);
+}
+
+function mergeDeletedBuyers(remoteList) {
+  const next = getDeletedBuyerSet();
+  (Array.isArray(remoteList) ? remoteList : []).forEach((email) => {
+    const key = normalizeEmail(email);
+    if (key) next.add(key);
+  });
+  persistDeletedBuyers(next);
+  return next;
+}
+
+function rememberDeletedBuyer(email) {
+  const key = normalizeEmail(email);
+  if (!key) return;
+  const next = getDeletedBuyerSet();
+  next.add(key);
+  persistDeletedBuyers(next);
+}
+
+function forgetDeletedBuyer(email) {
+  const key = normalizeEmail(email);
+  if (!key) return;
+  const next = getDeletedBuyerSet();
+  if (!next.delete(key)) return;
+  persistDeletedBuyers(next);
+}
+
+function stripDeletedBuyers(map) {
+  const deleted = getDeletedBuyerSet();
+  if (!deleted.size) return map || {};
+  const next = { ...(map || {}) };
+  deleted.forEach((email) => {
+    delete next[email];
+  });
+  return next;
+}
+
 function getAccountsMap() {
-  return readJson(ACCOUNTS_KEY, {});
+  return stripDeletedBuyers(readJson(ACCOUNTS_KEY, {}));
 }
 
 function setAccountsMap(map) {
-  writeJson(ACCOUNTS_KEY, map);
+  writeJson(ACCOUNTS_KEY, stripDeletedBuyers(map || {}));
 }
 
 function getAccount(email) {
@@ -2024,8 +2302,40 @@ function publicUserFromAccount(account) {
     companyPhone: account.companyPhone || "",
     companyAddress: account.companyAddress || "",
     project: normalizeProfileProject(account.project),
+    projects: normalizeProfileProjects(account.projects || account.project),
     at: Date.now(),
   };
+}
+
+function restoreSessionBuyerAccount() {
+  if (typeof window === "undefined") return false;
+  const user = getUser();
+  const email = normalizeEmail(user?.email);
+  if (!email) return false;
+  if (getDeletedBuyerSet().has(email)) return false;
+  if (getAccount(email)) return false;
+  const now = new Date().toISOString();
+  const map = getAccountsMap();
+  map[email] = {
+    email,
+    name: String(user.name || "").trim(),
+    phone: String(user.phone || "").trim(),
+    phoneWhatsapp: Boolean(user.phoneWhatsapp || user.phone),
+    jobTitle: String(user.jobTitle || "").trim(),
+    companyName: String(user.companyName || "").trim(),
+    companyReg: String(user.companyReg || "").trim(),
+    companyPhone: String(user.companyPhone || "").trim(),
+    companyAddress: String(user.companyAddress || "").trim(),
+    project: joinProfileProjects(user.projects || user.project),
+    projects: normalizeProfileProjects(user.projects || user.project),
+    enabled: true,
+    approvalStatus: "approved",
+    needsReview: false,
+    createdAt: now,
+    approvedAt: now,
+  };
+  setAccountsMap(map);
+  return true;
 }
 
 function setSessionUser(user) {
@@ -2079,6 +2389,7 @@ function registerUser(profile) {
   if (!isSignupPasswordOk(profile.password)) return { ok: false, error: "password" };
 
   persistLegacyBuyerAccess();
+  forgetDeletedBuyer(email);
   const map = getAccountsMap();
   if (map[email]) return { ok: false, error: "exists" };
 
@@ -2094,7 +2405,8 @@ function registerUser(profile) {
     companyReg: String(profile.companyReg || "").trim(),
     companyPhone: String(profile.companyPhone || "").trim(),
     companyAddress: String(profile.companyAddress).trim(),
-    project: normalizeProfileProject(profile.project),
+    project: joinProfileProjects(profile.projects || profile.project),
+    projects: normalizeProfileProjects(profile.projects || profile.project),
     enabled: true,
     approvalStatus: "approved",
     needsReview: true,
@@ -2105,6 +2417,15 @@ function registerUser(profile) {
   map[email] = account;
   setAccountsMap(map);
   setSessionUser(publicUserFromAccount(account));
+  try {
+    sessionStorage.removeItem(PENDING_CART_KEY);
+    sessionStorage.removeItem(PENDING_WA_RFQ_KEY);
+    sessionStorage.removeItem(PENDING_CUSTOM_KEY);
+    sessionStorage.removeItem(PENDING_ROUTE_KEY);
+  } catch {
+    /* ignore */
+  }
+  mergeGuestCartIntoUser();
   notifyAdmins({
     kind: "buyer",
     title: "New marketplace buyer — review",
@@ -2129,7 +2450,8 @@ function updateUserProfile(patch = {}) {
     companyReg: String(current.companyReg ?? "").trim(),
     companyPhone: String(patch.companyPhone ?? current.companyPhone ?? "").trim(),
     companyAddress: String(patch.companyAddress ?? current.companyAddress ?? "").trim(),
-    project: normalizeProfileProject(patch.project ?? current.project),
+    projects: normalizeProfileProjects(patch.projects ?? patch.project ?? current.projects ?? current.project),
+    project: joinProfileProjects(patch.projects ?? patch.project ?? current.projects ?? current.project),
   };
   if (!next.name) return { ok: false, error: "name" };
   if (!next.companyName) return { ok: false, error: "companyName" };
@@ -2171,6 +2493,7 @@ function loginUser({ email, password, name }) {
     }
     authModalOpen = false;
     setSessionUser(publicUserFromAccount(account));
+    mergeGuestCartIntoUser();
     return { ok: true, user: publicUserFromAccount(account) };
   }
 
@@ -2232,6 +2555,40 @@ function setPendingRoute(path) {
   sessionStorage.setItem(PENDING_ROUTE_KEY, next);
 }
 
+function setPendingCartWhatsappSubmit({ kind, ids } = {}) {
+  const list = (Array.isArray(ids) ? ids : []).map(String).filter(Boolean);
+  if (!list.length) return;
+  try {
+    sessionStorage.setItem(
+      PENDING_CART_WA_SUBMIT_KEY,
+      JSON.stringify({ kind: kind === "buy" ? "buy" : "quote", ids: list })
+    );
+  } catch {
+    /* ignore */
+  }
+}
+
+function readPendingCartWhatsappSubmit() {
+  try {
+    const raw = sessionStorage.getItem(PENDING_CART_WA_SUBMIT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const ids = Array.isArray(parsed?.ids) ? parsed.ids.map(String).filter(Boolean) : [];
+    if (!ids.length) return null;
+    return { kind: parsed?.kind === "buy" ? "buy" : "quote", ids };
+  } catch {
+    return null;
+  }
+}
+
+function clearPendingCartWhatsappSubmit() {
+  try {
+    sessionStorage.removeItem(PENDING_CART_WA_SUBMIT_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
 function isAuthInviteHidden() {
   try {
     return localStorage.getItem(AUTH_INVITE_HIDE_KEY) === "1";
@@ -2249,9 +2606,31 @@ function setAuthInviteHidden(hidden) {
   }
 }
 
+function isCartAuthInviteShown() {
+  try {
+    return localStorage.getItem(CART_AUTH_INVITE_SHOWN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function markCartAuthInviteShown() {
+  try {
+    localStorage.setItem(CART_AUTH_INVITE_SHOWN_KEY, "1");
+  } catch {
+    /* ignore */
+  }
+}
+
+function maybeShowCartAuthInvite() {
+  if (isLoggedIn() || isCartAuthInviteShown()) return;
+  markCartAuthInviteShown();
+  openAuthModal("cart-invite");
+}
+
 function openAuthModal(mode = "required") {
   if (mode === "invite" && isAuthInviteHidden()) return;
-  authModalMode = mode === "invite" ? "invite" : "required";
+  authModalMode = mode === "cart-invite" || mode === "invite" ? mode : "required";
   authModalOpen = true;
   if (typeof window === "undefined") {
     emitStoreChange();
@@ -2291,10 +2670,10 @@ function addFromStorefront(productId, intent = "quote", qty, lang) {
     }
     return whatsappNow(productId, { qty, kind: "quote", lang, skipCart: true });
   }
-  if (!requireBuyerAuth({ productId, intent, qty })) {
-    return { ok: false, error: "not_logged_in" };
-  }
   if (intent === "buy-now") {
+    if (!requireBuyerAuth({ productId, intent, qty })) {
+      return { ok: false, error: "not_logged_in" };
+    }
     return whatsappNow(productId, { qty, kind: "buy", lang });
   }
   addToCart(productId, { intent, qty });
@@ -2302,6 +2681,12 @@ function addFromStorefront(productId, intent = "quote", qty, lang) {
 }
 
 function consumePendingInviteContinue() {
+  const pendingWaSubmit = readPendingCartWhatsappSubmit();
+  if (pendingWaSubmit) {
+    clearPendingCartWhatsappSubmit();
+    completeCartWhatsappSubmit(pendingWaSubmit, { announce: true });
+    return;
+  }
   const pendingCart = sessionStorage.getItem(PENDING_CART_KEY);
   sessionStorage.removeItem(PENDING_CART_KEY);
   if (!pendingCart) return;
@@ -2326,13 +2711,19 @@ function consumePendingAfterAuth() {
   const pendingWa = sessionStorage.getItem(PENDING_WA_RFQ_KEY);
   const pendingCustom = sessionStorage.getItem(PENDING_CUSTOM_KEY);
   const pendingRoute = sessionStorage.getItem(PENDING_ROUTE_KEY);
+  const pendingWaSubmit = readPendingCartWhatsappSubmit();
   sessionStorage.removeItem(PENDING_CART_KEY);
   sessionStorage.removeItem(PENDING_WA_RFQ_KEY);
   sessionStorage.removeItem(PENDING_CUSTOM_KEY);
   sessionStorage.removeItem(PENDING_ROUTE_KEY);
+  clearPendingCartWhatsappSubmit();
 
   let wentToRfq = false;
   let stayPut = false;
+  if (pendingWaSubmit) {
+    completeCartWhatsappSubmit(pendingWaSubmit, { announce: true });
+    stayPut = true;
+  }
   if (pendingCart) {
     let productId = pendingCart;
     let intent = "quote";
@@ -2354,15 +2745,14 @@ function consumePendingAfterAuth() {
       whatsappNow(productId, { qty, kind: "buy" });
       wentToRfq = true;
     } else {
-      addToCart(productId, { intent, qty });
-      wentToRfq = true;
+      addToCart(productId, { intent, qty, silentInvite: true });
     }
   }
   if (pendingWa) {
-    addToCart(pendingWa);
+    addToCart(pendingWa, { silentInvite: true });
     wentToRfq = true;
   }
-  if (pendingCustom && !wentToRfq) {
+  if (pendingCustom && !wentToRfq && !stayPut) {
     let customPayload = pendingCustom;
     try {
       customPayload = JSON.parse(pendingCustom);
@@ -2376,8 +2766,7 @@ function consumePendingAfterAuth() {
   }
   if (wentToRfq) return "/rfq";
   if (pendingRoute) return pendingRoute;
-  if (stayPut) return "";
-  return "/";
+  return "";
 }
 
 function enrichCartLine(line) {
@@ -2485,13 +2874,56 @@ function whatsappWrapList(list, kind, refNo) {
   return `${head}\n\n${list}\n\n${outro}`;
 }
 
-function whatsappPdfHintText(kind, refNo, pdfUrl) {
+function whatsappLogisticsBlock(details) {
+  if (!details || typeof details !== "object") return "";
+  const lines = [];
+  const project = String(details.project || "").trim();
+  const address = String(details.address || "").trim();
+  const responseDate = String(details.responseDate || "").trim();
+  const deliveryDate = String(details.deliveryDate || "").trim();
+  const note = String(details.note || "").trim();
+  const lots = Array.isArray(details.lots) ? details.lots : [];
+  if (project) lines.push(`項目：${project}`);
+  if (address) lines.push(`地址：${address}`);
+  if (responseDate) lines.push(`報價限期：${responseDate}`);
+  if (deliveryDate) lines.push(`交貨期：${deliveryDate}`);
+  lots.forEach((lot, index) => {
+    const bits = [`第${index + 1}批`];
+    if (lot?.date) bits.push(String(lot.date).trim());
+    if (lot?.address) bits.push(String(lot.address).trim());
+    if (lot?.note) bits.push(String(lot.note).trim());
+    if (bits.length > 1) lines.push(bits.join(" · "));
+  });
+  if (note) lines.push(`備註：${note}`);
+  return lines.join("\n");
+}
+
+function draftLogisticsForWhatsapp(draft) {
+  const src = draft || getDraft();
+  const lots =
+    src.deliveryMode === "partial"
+      ? (Array.isArray(src.deliveryLots) ? src.deliveryLots : []).filter(
+          (lot) => lot?.date || lot?.address || lot?.note
+        )
+      : [];
+  return {
+    project: joinProfileProjects(src.projects || src.project),
+    address: String(src.address || "").trim(),
+    responseDate: String(src.responseDate || "").trim(),
+    deliveryDate: String(src.deliveryDate || "").trim(),
+    note: String(src.note || "").trim(),
+    lots,
+  };
+}
+
+function whatsappPdfHintText(kind, refNo, pdfUrl, details) {
   const isBuy = kind === "buy";
   const intro = isBuy ? "你好，我想買以下現貨：" : "你好，我想問以下報價：";
   const outro = isBuy ? "請確認庫存及單價，謝謝。" : "請提供交貨期及單價，謝謝。";
   const refLine = refNo ? `${waRefLabel(kind)}：${refNo}` : "";
   const pdfLine = pdfUrl ? `產品清單 PDF：\n${pdfUrl}` : "請睇附件 PDF（產品清單）。";
-  return [intro, refLine, pdfLine, outro].filter(Boolean).join("\n\n");
+  const logistics = whatsappLogisticsBlock(details);
+  return [intro, refLine, pdfLine, logistics, outro].filter(Boolean).join("\n\n");
 }
 
 function whatsappPhoneId(phone) {
@@ -2575,17 +3007,20 @@ function modalButtonStyle(primary, disabled = false) {
   return disabled ? `${base}cursor:not-allowed;opacity:0.5;` : `${base}cursor:pointer;`;
 }
 
-function showWhatsappPdfModal({ kind, count, text, pdf, failed, reused, refNo, blobUrl, uploading }) {
+function showWhatsappPdfModal({ kind, count, text, pdf, failed, reused, refNo, blobUrl, uploading, onRetry }) {
   if (typeof document === "undefined") return;
   closeWhatsappCopiedModal();
   const zh = String(document.documentElement.lang || "").startsWith("zh");
   const refLabel = waRefLabel(kind, zh);
   const hasBlob = Boolean(blobUrl);
-  const waitForPdfLink = Boolean(uploading && !hasBlob && !failed);
+  const canOpenWhatsapp = hasBlob && Boolean(text);
+  const waitForPdfLink = Boolean(!failed && !canOpenWhatsapp);
   const copy = zh
     ? {
         title: failed
-          ? "未能產生 PDF"
+          ? pdf
+            ? "未能上載 PDF 連結"
+            : "未能產生 PDF"
           : uploading
             ? "正在上傳 PDF…"
             : reused
@@ -2600,24 +3035,27 @@ function showWhatsappPdfModal({ kind, count, text, pdf, failed, reused, refNo, b
           : "",
         ref: refNo ? `${refLabel}：${refNo}` : "",
         body: failed
-          ? "清單已複製。開啟 WhatsApp 後貼上即可。"
+          ? "PDF 連結未準備好。請重試，成功之後先可以開啟 WhatsApp。"
           : uploading
             ? "正在把 PDF 同產品圖片上傳到 Vercel Blob，之後會把連結寫入 WhatsApp。"
             : pdf
               ? hasBlob
                 ? `共 ${count} 項。WhatsApp 訊息會帶 PDF 連結同產品圖片。`
-                : `共 ${count} 項。WhatsApp 連結加唔到檔案，請先下載 PDF，再開對話用附件傳送。`
+                : `共 ${count} 項。PDF 已產生，正在準備連結。`
               : "正在把貨名、貨號、數量、單價同產品圖整成 PDF。",
-        copied: "產品清單已複製。開啟 WhatsApp 後，可喺下一則訊息貼上。",
+        copied: "PDF 連結同產品圖片已複製。開啟 WhatsApp 後可直接傳送。",
         preview: "PDF 預覽",
         download: reused ? "再次下載同一份 PDF" : "下載 PDF",
         share: "分享 PDF",
+        retry: "重新產生連結",
         open: "開啟 WhatsApp",
         close: "關閉",
       }
     : {
         title: failed
-          ? "Could not create PDF"
+          ? pdf
+            ? "Could not upload the PDF link"
+            : "Could not create PDF"
           : uploading
             ? "Uploading PDF…"
             : reused
@@ -2632,18 +3070,19 @@ function showWhatsappPdfModal({ kind, count, text, pdf, failed, reused, refNo, b
           : "",
         ref: refNo ? `${refLabel}: ${refNo}` : "",
         body: failed
-          ? "The list is copied. Open WhatsApp, then paste to send."
+          ? "The PDF link is not ready. Retry, then open WhatsApp."
           : uploading
             ? "Uploading the PDF and product images to Vercel Blob, then putting the links in WhatsApp."
             : pdf
               ? hasBlob
                 ? `${count} item(s). WhatsApp will include the PDF link and product images.`
-                : `${count} item(s). WhatsApp links cannot attach files — download the PDF, then attach it in the chat.`
+                : `${count} item(s). PDF created — preparing the link.`
               : "Creating a PDF with name, SKU, qty, unit price, and product images.",
-        copied: "The product list is copied. After WhatsApp opens, paste it as the next message.",
+        copied: "PDF and product image links are copied. Open WhatsApp to send them.",
         preview: "PDF preview",
         download: reused ? "Download the same PDF again" : "Download PDF",
         share: "Share PDF",
+        retry: "Retry PDF link",
         open: "Open WhatsApp",
         close: "Close",
       };
@@ -2715,12 +3154,14 @@ function showWhatsappPdfModal({ kind, count, text, pdf, failed, reused, refNo, b
 
   card.append(body);
 
-  const copiedEl = document.createElement("p");
-  copiedEl.setAttribute("role", "status");
-  copiedEl.textContent = copy.copied;
-  copiedEl.style.cssText =
-    "margin:0.7rem 0 0;padding:0.65rem 0.75rem;border:1px solid #c5ddd0;background:#eef6f1;color:#143528;font-size:0.8125rem;line-height:1.45;font-weight:600;border-radius:0.5rem;";
-  card.append(copiedEl);
+  if (hasBlob) {
+    const copiedEl = document.createElement("p");
+    copiedEl.setAttribute("role", "status");
+    copiedEl.textContent = copy.copied;
+    copiedEl.style.cssText =
+      "margin:0.7rem 0 0;padding:0.65rem 0.75rem;border:1px solid #c5ddd0;background:#eef6f1;color:#143528;font-size:0.8125rem;line-height:1.45;font-weight:600;border-radius:0.5rem;";
+    card.append(copiedEl);
+  }
 
   if (blobUrl) {
     const linkWrap = document.createElement("p");
@@ -2756,22 +3197,32 @@ function showWhatsappPdfModal({ kind, count, text, pdf, failed, reused, refNo, b
     const openBtn = document.createElement("button");
     openBtn.type = "button";
     openBtn.textContent = copy.open;
-    openBtn.disabled = waitForPdfLink;
+    openBtn.disabled = !canOpenWhatsapp;
     openBtn.setAttribute("aria-busy", waitForPdfLink ? "true" : "false");
-    openBtn.style.cssText = modalButtonStyle(true, waitForPdfLink);
-    if (waitForPdfLink) {
-      openBtn.title = zh ? "PDF 連結上載中，請稍候" : "PDF link is still uploading";
+    openBtn.style.cssText = modalButtonStyle(true, !canOpenWhatsapp);
+    if (!canOpenWhatsapp) {
+      openBtn.title = zh ? "PDF 連結未準備好，請稍候" : "Wait until the PDF link is ready";
     }
     openBtn.addEventListener("click", () => {
-      if (openBtn.disabled) return;
-      if (!reused && !blobUrl) downloadBlob(pdf.blob, pdf.filename);
+      if (openBtn.disabled || !blobUrl || !text) return;
       copyPlainText(text);
       openWhatsappChat(text);
       document.removeEventListener("keydown", onKey);
       closeWhatsappCopiedModal();
     });
 
-    if (canSharePdfFile(pdf.file)) {
+    const retryBtn = onRetry && (failed || (!hasBlob && !uploading))
+      ? (() => {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.textContent = copy.retry;
+          btn.style.cssText = modalButtonStyle(false);
+          btn.addEventListener("click", () => onRetry());
+          return btn;
+        })()
+      : null;
+
+    if (canSharePdfFile(pdf.file) && canOpenWhatsapp) {
       const shareBtn = document.createElement("button");
       shareBtn.type = "button";
       shareBtn.textContent = copy.share;
@@ -2783,32 +3234,32 @@ function showWhatsappPdfModal({ kind, count, text, pdf, failed, reused, refNo, b
           closeWhatsappCopiedModal();
         }
       });
-      actions.append(closeBtn, downloadBtn, shareBtn, openBtn);
+      actions.append(closeBtn, downloadBtn, ...(retryBtn ? [retryBtn] : []), shareBtn, openBtn);
     } else {
-      actions.append(closeBtn, downloadBtn, openBtn);
+      actions.append(closeBtn, downloadBtn, ...(retryBtn ? [retryBtn] : []), openBtn);
     }
     card.append(actions);
     overlay.append(card);
     document.body.appendChild(overlay);
     document.body.style.overflow = "hidden";
     document.addEventListener("keydown", onKey);
-    if (waitForPdfLink) closeBtn.focus();
-    else openBtn.focus();
+    if (canOpenWhatsapp) openBtn.focus();
+    else if (retryBtn) retryBtn.focus();
+    else closeBtn.focus();
     return;
   }
 
   if (failed) {
-    const openBtn = document.createElement("button");
-    openBtn.type = "button";
-    openBtn.textContent = copy.open;
-    openBtn.style.cssText = modalButtonStyle(true);
-    openBtn.addEventListener("click", () => {
-      copyPlainText(text);
-      openWhatsappChat(text.replace("請睇附件 PDF（產品清單）。", "（清單已複製，請喺呢度貼上）"));
-      document.removeEventListener("keydown", onKey);
-      closeWhatsappCopiedModal();
-    });
-    actions.append(closeBtn, openBtn);
+    if (onRetry) {
+      const retryBtn = document.createElement("button");
+      retryBtn.type = "button";
+      retryBtn.textContent = copy.retry;
+      retryBtn.style.cssText = modalButtonStyle(true);
+      retryBtn.addEventListener("click", () => onRetry());
+      actions.append(closeBtn, retryBtn);
+    } else {
+      actions.append(closeBtn);
+    }
   } else {
     actions.append(closeBtn);
   }
@@ -2882,6 +3333,20 @@ let waPdfCache = null;
 let waPdfInflight = null;
 let waPublishInflight = null;
 
+function attachWhatsappAssetsToRfq(refNo, published) {
+  if (!refNo || !published?.blobUrl) return;
+  const result = patchRfqById(refNo, (rfq) => ({
+    ...rfq,
+    pdfUrl: published.blobUrl,
+    imageUrls: Array.isArray(published.imageUrls) ? published.imageUrls : [],
+    attachmentUrls: Array.isArray(published.attachmentUrls) ? published.attachmentUrls : [],
+  }));
+  if (result.ok) {
+    const buyerKey = rfqBuyerKind(result.rfq) === "guest" ? GUEST_KEY : result.rfq.buyerEmail;
+    persistSharedRfq(buyerKey, result.rfq);
+  }
+}
+
 function rememberWaPdf(fingerprint, pdf, extra = {}) {
   if (waPdfCache?.pdf?.url && waPdfCache.pdf.url !== pdf?.url && String(waPdfCache.pdf.url).startsWith("blob:")) {
     URL.revokeObjectURL(waPdfCache.pdf.url);
@@ -2914,8 +3379,8 @@ async function publishRfqAssets(pdf, rows, refNo, fingerprint) {
   }
 }
 
-function buildWhatsappShareText(kind, refNo, rows, blobUrl, imageUrls, attachmentUrls) {
-  const withImages = fitWhatsappUrls(whatsappPdfHintText(kind, refNo, blobUrl), imageUrls, "產品圖片：");
+function buildWhatsappShareText(kind, refNo, rows, blobUrl, imageUrls, attachmentUrls, details) {
+  const withImages = fitWhatsappUrls(whatsappPdfHintText(kind, refNo, blobUrl, details), imageUrls, "產品圖片：");
   const extra = (Array.isArray(attachmentUrls) ? attachmentUrls : []).filter((url) => !(imageUrls || []).includes(url));
   const fitted = fitWhatsappUrls(withImages.text, extra, "規格附件：");
   const fallback = whatsappWrapList(rows.map((line, i) => whatsappItemBlock(line, i)).join("\n\n"), kind, refNo);
@@ -2933,30 +3398,85 @@ function openWhatsappDraft(lines, kind, options = {}) {
   const rows = (Array.isArray(lines) ? lines : []).map(enrichCartLine).filter(Boolean);
   const items = quotePdfItems(rows);
   const refNo = String(options?.refNo || "").trim() || nextRfqId();
+  const details = options.details || null;
   const fingerprint = quotePdfFingerprint(kind, items, refNo);
-  const fallbackText = whatsappWrapList(rows.map((line, i) => whatsappItemBlock(line, i)).join("\n\n"), kind, refNo);
-  const url = whatsappChatHref(whatsappPdfHintText(kind, refNo));
+  const url = whatsappChatHref(whatsappPdfHintText(kind, refNo, "", details));
   if (typeof window === "undefined") return { url, truncated: false, copied: true, count: rows.length, refNo };
-  copyPlainText(fallbackText);
 
-  const cached = waPdfCache?.fingerprint === fingerprint ? waPdfCache : null;
-  if (cached?.pdf && cached.blobUrl) {
-    const text = buildWhatsappShareText(kind, refNo, rows, cached.blobUrl, cached.imageUrls, cached.attachmentUrls);
+  const generation = ++whatsappPdfGeneration;
+
+  function linkedText(published) {
+    return buildWhatsappShareText(
+      kind,
+      refNo,
+      rows,
+      published?.blobUrl,
+      published?.imageUrls,
+      published?.attachmentUrls,
+      details
+    );
+  }
+
+  function showLinked(pdf, published, reused = false) {
+    const text = linkedText(published);
     copyPlainText(text);
+    attachWhatsappAssetsToRfq(refNo, published);
     showWhatsappPdfModal({
       kind,
       count: rows.length,
       text,
-      pdf: cached.pdf,
-      reused: true,
+      pdf,
+      reused,
       refNo,
-      blobUrl: cached.blobUrl,
+      blobUrl: published.blobUrl,
     });
-    return { url: whatsappChatHref(text), truncated: false, copied: true, count: rows.length, refNo, reused: true };
   }
 
-  const generation = ++whatsappPdfGeneration;
-  showWhatsappPdfModal({ kind, count: rows.length, text: fallbackText, refNo });
+  function runUpload(pdf) {
+    showWhatsappPdfModal({
+      kind,
+      count: rows.length,
+      text: "",
+      pdf,
+      refNo,
+      uploading: true,
+      onRetry: () => {
+        if (generation !== whatsappPdfGeneration) return;
+        runUpload(pdf);
+      },
+    });
+    publishRfqAssets(pdf, rows, refNo, fingerprint)
+      .then((published) => {
+        if (generation !== whatsappPdfGeneration) return;
+        if (!document.querySelector("[data-wa-copy-modal]")) return;
+        if (!published?.blobUrl) throw new Error("missing pdf link");
+        showLinked(pdf, published);
+      })
+      .catch(() => {
+        if (generation !== whatsappPdfGeneration) return;
+        if (!document.querySelector("[data-wa-copy-modal]")) return;
+        showWhatsappPdfModal({
+          kind,
+          count: rows.length,
+          text: "",
+          pdf,
+          refNo,
+          failed: true,
+          onRetry: () => {
+            if (generation !== whatsappPdfGeneration) return;
+            runUpload(pdf);
+          },
+        });
+      });
+  }
+
+  const cached = waPdfCache?.fingerprint === fingerprint ? waPdfCache : null;
+  if (cached?.pdf && cached.blobUrl) {
+    showLinked(cached.pdf, cached, true);
+    return { url: whatsappChatHref(linkedText(cached)), truncated: false, copied: true, count: rows.length, refNo, reused: true };
+  }
+
+  showWhatsappPdfModal({ kind, count: rows.length, text: "", refNo });
   const pending =
     waPdfInflight?.fingerprint === fingerprint
       ? waPdfInflight.promise
@@ -2969,34 +3489,22 @@ function openWhatsappDraft(lines, kind, options = {}) {
     .then(async (pdf) => {
       if (generation !== whatsappPdfGeneration) return;
       if (!document.querySelector("[data-wa-copy-modal]")) return;
-      showWhatsappPdfModal({ kind, count: rows.length, text: fallbackText, pdf, refNo, uploading: true });
-      try {
-        const published = await publishRfqAssets(pdf, rows, refNo, fingerprint);
-        const text = buildWhatsappShareText(kind, refNo, rows, published.blobUrl, published.imageUrls, published.attachmentUrls);
-        copyPlainText(text);
-        if (generation !== whatsappPdfGeneration) return;
-        if (!document.querySelector("[data-wa-copy-modal]")) return;
-        showWhatsappPdfModal({
-          kind,
-          count: rows.length,
-          text,
-          pdf,
-          refNo,
-          blobUrl: published.blobUrl,
-        });
-      } catch {
-        if (generation !== whatsappPdfGeneration) return;
-        if (!document.querySelector("[data-wa-copy-modal]")) return;
-        showWhatsappPdfModal({ kind, count: rows.length, text: fallbackText, pdf, refNo });
-      }
+      runUpload(pdf);
     })
     .catch(() => {
       if (generation !== whatsappPdfGeneration) return;
       if (!document.querySelector("[data-wa-copy-modal]")) return;
       if (waPdfInflight?.fingerprint === fingerprint) waPdfInflight = null;
-      showWhatsappPdfModal({ kind, count: rows.length, text: fallbackText, failed: true, refNo });
+      showWhatsappPdfModal({
+        kind,
+        count: rows.length,
+        text: "",
+        failed: true,
+        refNo,
+        onRetry: () => openWhatsappDraft(lines, kind, options),
+      });
     });
-  return { url, truncated: false, copied: true, count: rows.length, refNo };
+  return { url, truncated: false, copied: false, count: rows.length, refNo };
 }
 
 function whatsappNow(productId, { qty, kind, lang = "zh", skipCart = false } = {}) {
@@ -3031,9 +3539,9 @@ function whatsappUrl() {
 
 function rfqProjectName(rfq) {
   if (!rfq) return "";
-  if (Object.prototype.hasOwnProperty.call(rfq, "project")) {
-    return String(rfq.project || "").trim();
-  }
+  const named = joinProfileProjects(rfq.projects || rfq.project);
+  if (named) return named;
+  if (Object.prototype.hasOwnProperty.call(rfq, "project")) return "";
   const digits = Number(String(rfq.id || "").replace(/\D/g, "")) || 0;
   return SAMPLE_PROJECTS[Math.abs(digits) % SAMPLE_PROJECTS.length];
 }
@@ -3272,6 +3780,23 @@ function updateStaff(email, { name, password } = {}) {
   return { ok: true };
 }
 
+function changeOwnStaffPassword({ currentPassword, nextPassword } = {}) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const session = getStaffSession();
+  const list = getStaffList();
+  const target = list.find((s) => s.email === normalizeEmail(session?.email));
+  if (!target) return { ok: false, error: "missing" };
+  if (String(currentPassword || "") !== String(target.password || "")) return { ok: false, error: "current" };
+  if (!isSignupPasswordOk(nextPassword)) return { ok: false, error: "password" };
+  if (String(currentPassword) === String(nextPassword)) return { ok: false, error: "same" };
+  target.password = String(nextPassword);
+  setStaffList(list);
+  writeLocalOnly(STAFF_AUTH_KEY, { email: target.email, name: target.name, at: Date.now() });
+  emitStoreChange();
+  return { ok: true };
+}
+
 function disableStaff(email) {
   const gate = requireStaff();
   if (!gate.ok) return gate;
@@ -3361,6 +3886,7 @@ function listBuyers() {
       companyPhone: a.companyPhone || "",
       companyAddress: a.companyAddress || "",
       project: a.project || "",
+      projects: normalizeProfileProjects(a.projects || a.project),
       enabled: a.enabled !== false,
       approvalStatus: buyerApprovalStatus(a),
       createdAt: a.createdAt || "",
@@ -3493,6 +4019,27 @@ function buildLifecycleEmail(rfq, kind) {
       innerHtml: rfqCancelDeclinedEmailHtml(ctx),
     };
   }
+  if (kind === "rfq-reverse-requested") {
+    return {
+      to: SALES_EMAIL,
+      subject: `Reverse requested for RFQ ${ctx.rfqId}`,
+      innerHtml: rfqReverseRequestedEmailHtml(ctx),
+    };
+  }
+  if (kind === "rfq-reverse-accepted") {
+    return {
+      to: ctx.toEmail,
+      subject: `You can revise RFQ ${ctx.rfqId}`,
+      innerHtml: rfqReverseAcceptedEmailHtml(ctx),
+    };
+  }
+  if (kind === "rfq-reverse-declined") {
+    return {
+      to: ctx.toEmail,
+      subject: `RFQ ${ctx.rfqId} remains in review`,
+      innerHtml: rfqReverseDeclinedEmailHtml(ctx),
+    };
+  }
   return null;
 }
 
@@ -3506,24 +4053,11 @@ function inferRfqEmailPreviewKind(rfq) {
   return "";
 }
 
-function openHtmlEmail({ to, subject, innerHtml }) {
-  if (typeof document === "undefined") return { ok: false };
-  const html = wrapEmailPreview({ to, subject, innerHtml, fontBase: marketplaceOrigin() });
-  const blob = new Blob([html], { type: "text/html;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.target = "_blank";
-  link.rel = "noopener";
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 60000);
-  return { ok: true };
+function openHtmlEmail() {
+  return { ok: true, skipped: true };
 }
 
-async function postResendEmail({ to, subject, innerHtml, force = false }) {
-  if (!force && !shouldSendViaResend()) return { ok: true, skipped: true };
+async function postResendEmail({ to, subject, innerHtml }) {
   if (!isDeliverableEmail(to)) return { ok: false, error: "email" };
   const html = wrapEmailSend({ subject, innerHtml, fontBase: marketplaceOrigin() });
   try {
@@ -3547,26 +4081,21 @@ function deliverHtmlEmail({ to, subject, innerHtml }) {
     "subbie_buyer_mail_log",
     [{ to: normalizeEmail(to), subject, at: new Date().toISOString(), html: true }, ...(Array.isArray(log) ? log : [])].slice(0, 40)
   );
-  openHtmlEmail({ to: normalizeEmail(to), subject, innerHtml });
-  return { ok: true };
+  return postResendEmail({ to: normalizeEmail(to), subject, innerHtml });
 }
 
-async function deliverSalesToBuyerEmail({ to, subject, innerHtml, openHtml = false }) {
+async function deliverSalesToBuyerEmail({ to, subject, innerHtml }) {
   if (!isDeliverableEmail(to)) return { ok: false, error: "email" };
   const log = readJson("subbie_buyer_mail_log", []);
   writeJson(
     "subbie_buyer_mail_log",
     [{ to: normalizeEmail(to), subject, at: new Date().toISOString(), html: true }, ...(Array.isArray(log) ? log : [])].slice(0, 40)
   );
-  if (openHtml) openHtmlEmail({ to: normalizeEmail(to), subject, innerHtml });
   return postResendEmail({ to, subject, innerHtml });
 }
 
-function openRfqEmailPreview(rfq, kind) {
-  const nextKind = kind || inferRfqEmailPreviewKind(rfq);
-  const mail = buildLifecycleEmail(rfq, nextKind);
-  if (!mail) return { ok: false, error: "none" };
-  return openHtmlEmail(mail);
+function openRfqEmailPreview() {
+  return { ok: true, skipped: true };
 }
 
 function deliverRfqSubmittedEmail(rfq) {
@@ -3594,32 +4123,55 @@ function deliverRfqSubmittedEmail(rfq) {
 function deliverRfqToSalesEmail(rfq) {
   const mail = buildLifecycleEmail(rfq, "sales-new-rfq");
   if (!mail) return { ok: false };
-  openHtmlEmail(mail);
-  return { ok: true };
+  return deliverHtmlEmail(mail);
 }
 
 async function deliverRfqAcceptedEmail(rfq) {
   const mail = buildLifecycleEmail(rfq, "rfq-accepted");
   if (!mail) return { ok: false, error: "email" };
-  return deliverSalesToBuyerEmail({ ...mail, openHtml: false });
+  return deliverSalesToBuyerEmail({ ...mail });
 }
 
 async function deliverRfqNoOfferEmail(rfq) {
   const mail = buildLifecycleEmail(rfq, "rfq-no-offer");
   if (!mail) return { ok: false, error: "email" };
-  return deliverSalesToBuyerEmail({ ...mail, openHtml: true });
+  return deliverSalesToBuyerEmail({ ...mail });
 }
 
 async function deliverRfqCancelAcceptedEmail(rfq) {
   const mail = buildLifecycleEmail(rfq, "rfq-cancel-accepted");
   if (!mail) return { ok: false, error: "email" };
-  return deliverSalesToBuyerEmail({ ...mail, openHtml: true });
+  return deliverSalesToBuyerEmail({ ...mail });
 }
 
 async function deliverRfqCancelDeclinedEmail(rfq) {
   const mail = buildLifecycleEmail(rfq, "rfq-cancel-declined");
   if (!mail) return { ok: false, error: "email" };
-  return deliverSalesToBuyerEmail({ ...mail, openHtml: true });
+  return deliverSalesToBuyerEmail({ ...mail });
+}
+
+function deliverRfqCancelRequestedEmail(rfq) {
+  const mail = buildLifecycleEmail(rfq, "rfq-cancel-requested");
+  if (!mail) return { ok: false };
+  return deliverHtmlEmail(mail);
+}
+
+function deliverRfqReverseRequestedEmail(rfq) {
+  const mail = buildLifecycleEmail(rfq, "rfq-reverse-requested");
+  if (!mail) return { ok: false };
+  return deliverHtmlEmail(mail);
+}
+
+async function deliverRfqReverseAcceptedEmail(rfq) {
+  const mail = buildLifecycleEmail(rfq, "rfq-reverse-accepted");
+  if (!mail) return { ok: false, error: "email" };
+  return deliverSalesToBuyerEmail({ ...mail });
+}
+
+async function deliverRfqReverseDeclinedEmail(rfq) {
+  const mail = buildLifecycleEmail(rfq, "rfq-reverse-declined");
+  if (!mail) return { ok: false, error: "email" };
+  return deliverSalesToBuyerEmail({ ...mail });
 }
 
 function deliverAccountCreatedEmail(account) {
@@ -3638,13 +4190,12 @@ function deliverAccountCreatedEmail(account) {
       shopHref: `${marketplaceOrigin()}/zh`,
     }),
   };
-  if (isLocalBrowserHost()) openHtmlEmail(mail);
   const log = readJson("subbie_buyer_mail_log", []);
   writeJson(
     "subbie_buyer_mail_log",
     [{ to: RESEND_ACCOUNT_EMAIL, subject: mail.subject, at: new Date().toISOString(), html: true }, ...(Array.isArray(log) ? log : [])].slice(0, 40)
   );
-  return postResendEmail({ ...mail, force: true });
+  return postResendEmail({ ...mail });
 }
 
 function deliverStaffInviteEmail({ email, name, href }) {
@@ -3678,7 +4229,6 @@ function deliverBuyerRejectedEmail(buyer, reason) {
       shopHref: `${marketplaceOrigin()}/zh`,
       toEmail: buyer?.email,
     }),
-    openHtml: true,
   });
 }
 
@@ -3837,6 +4387,7 @@ function hardDeleteBuyer(email) {
     delete rfqsMap[key];
     setRfqsMap(rfqsMap);
   }
+  rememberDeletedBuyer(key);
   delete map[key];
   setAccountsMap(map);
   try {
@@ -3855,11 +4406,26 @@ function listAssignableBuyers() {
 
 function getAllRfqs() {
   const map = getRfqsMap();
-  const out = [];
+  const byId = new Map();
   Object.entries(map || {}).forEach(([buyerEmail, list]) => {
-    (Array.isArray(list) ? list : []).forEach((rfq) => out.push({ ...rfq, buyerEmail: rfq.buyerEmail || buyerEmail }));
+    (Array.isArray(list) ? list : []).forEach((rfq) => {
+      const row = { ...rfq, buyerEmail: rfq.buyerEmail || buyerEmail };
+      if (!row.id) return;
+      const prev = byId.get(row.id);
+      if (!prev) {
+        byId.set(row.id, row);
+        return;
+      }
+      const prevDeleted = String(prev.buyerEmail || "").startsWith("__deleted_buyer__");
+      const nextDeleted = String(row.buyerEmail || "").startsWith("__deleted_buyer__");
+      if (prevDeleted !== nextDeleted) {
+        byId.set(row.id, nextDeleted ? prev : row);
+        return;
+      }
+      byId.set(row.id, pickRfq(prev, row));
+    });
   });
-  return sortRfqsNewestFirst(out);
+  return sortRfqsNewestFirst([...byId.values()]);
 }
 
 function persistAllRfqsTouched() {
@@ -3886,8 +4452,9 @@ function patchRfqById(id, fn) {
 function inboxStatus(rfq) {
   if (rfq?.cancelStatus === "accepted" || rfq?.reviewStatus === "cancelled") return "cancelled";
   if (rfq?.reviewStatus === "rejected") return "no_offer";
+  if (rfq?.reviewStatus === "revising") return "revising";
   if (rfq?.reviewStatus) return rfq.reviewStatus;
-  if (["accepted", "returned", "rejected", "reviewing", "received", "no_offer"].includes(rfq?.status)) {
+  if (["accepted", "returned", "rejected", "reviewing", "received", "no_offer", "revising"].includes(rfq?.status)) {
     return rfq.status === "rejected" ? "no_offer" : rfq.status;
   }
   return "received";
@@ -3904,16 +4471,16 @@ function startRfqReview(id) {
   if (!gate.ok) return gate;
   return patchRfqById(id, (rfq) => {
     const status = inboxStatus(rfq);
-    if (status === "accepted" || status === "quoted" || status === "no_offer" || status === "cancelled") return rfq;
+    if (status === "accepted" || status === "quoted" || status === "no_offer" || status === "cancelled" || status === "revising") return rfq;
+    if (rfq.reverseStatus === "requested") return rfq;
     return { ...rfq, reviewStatus: "reviewing", reviewingBy: gate.account.email };
   });
 }
 
 function rfqBuyerKind(rfq) {
-  if (rfq?.buyerKind === "member" || rfq?.buyerKind === "guest") return rfq.buyerKind;
   const email = normalizeEmail(rfq?.buyerEmail);
   if (!email || email === GUEST_KEY || email === "guest@subbie.store" || email.startsWith("guest@")) return "guest";
-  return listBuyers().some((b) => normalizeEmail(b.email) === email) ? "member" : "guest";
+  return "member";
 }
 
 /** Member marketplace RFQs + guest WhatsApp RFQs (dev-1 inbox when quotes are hidden). */
@@ -4119,6 +4686,78 @@ function freezeGuestQuotePayload(rfq) {
   };
 }
 
+function snapshotRfqRequest(rfq, { version = 1, createdAt } = {}) {
+  return {
+    version,
+    createdAt: createdAt || rfq?.submittedAt || new Date().toISOString(),
+    note: rfq?.note || "",
+    address: rfq?.address || "",
+    responseDate: rfq?.responseDate || "",
+    quotationDeadline: rfq?.quotationDeadline || rfq?.responseDate || "",
+    deliveryDate: rfq?.deliveryDate || "",
+    deliveryMode: rfq?.deliveryMode || "one_time",
+    deliveryLots: Array.isArray(rfq?.deliveryLots) ? rfq.deliveryLots.map((lot) => ({ ...lot })) : [],
+    project: rfq?.project || "",
+    projects: normalizeProfileProjects(rfq?.projects || rfq?.project),
+    canonicalCategory: rfq?.canonicalCategory || "",
+    acceptSubstitutes: Boolean(rfq?.acceptSubstitutes),
+    lines: (rfq?.lines || []).map((line) => ({ ...line })),
+  };
+}
+
+function rfqRequestVersionList(rfq) {
+  if (Array.isArray(rfq?.requestVersions) && rfq.requestVersions.length) return rfq.requestVersions;
+  if (!rfq?.id) return [];
+  return [snapshotRfqRequest(rfq, { version: 1, createdAt: rfq.submittedAt })];
+}
+
+function nextRfqRequestVersionNo(rfq) {
+  return rfqRequestVersionList(rfq).reduce((max, row) => Math.max(max, Number(row?.version) || 0), 0) + 1;
+}
+
+function rfqRequestEffectiveVersionNo(rfq) {
+  const listed = rfqRequestVersionList(rfq);
+  const stored = Number(rfq?.requestEffectiveVersion);
+  if (Number.isFinite(stored) && stored > 0 && listed.some((row) => Number(row.version) === stored)) return stored;
+  return listed.length ? Number(listed[listed.length - 1].version) || 1 : 1;
+}
+
+function getRfqRequestVersion(rfq, versionNo) {
+  const n = Number(versionNo);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return rfqRequestVersionList(rfq).find((row) => Number(row.version) === n) || null;
+}
+
+function getEffectiveRfqRequestVersion(rfq) {
+  return getRfqRequestVersion(rfq, rfqRequestEffectiveVersionNo(rfq));
+}
+
+function formatRfqRequestVersionOption(version, { effectiveVersion, currentLabel = "Current" } = {}) {
+  if (!version) return "";
+  const current = Number(version.version) === Number(effectiveVersion) ? ` · ${currentLabel}` : "";
+  return `v${version.version} · ${formatQuoteVersionStamp(version.createdAt)}${current}`;
+}
+
+function applyRfqRequestVersion(rfq, versionNo) {
+  const snap = getRfqRequestVersion(rfq, versionNo);
+  if (!rfq || !snap) return rfq;
+  return {
+    ...rfq,
+    note: snap.note,
+    address: snap.address,
+    responseDate: snap.responseDate,
+    quotationDeadline: snap.quotationDeadline || snap.responseDate,
+    deliveryDate: snap.deliveryDate,
+    deliveryMode: snap.deliveryMode,
+    deliveryLots: snap.deliveryLots,
+    project: snap.project,
+    projects: snap.projects,
+    canonicalCategory: snap.canonicalCategory,
+    acceptSubstitutes: snap.acceptSubstitutes,
+    lines: snap.lines,
+  };
+}
+
 function quoteVersionList(rfq) {
   return Array.isArray(rfq?.quoteVersions) ? rfq.quoteVersions : [];
 }
@@ -4158,6 +4797,10 @@ const BUYER_ACTIVITY_KINDS = new Set([
   "no_offer",
   "returned",
   "resubmitted",
+  "reversed",
+  "reverse_requested",
+  "reverse_accepted",
+  "reverse_declined",
   "cancel_requested",
   "cancel_accepted",
   "cancel_declined",
@@ -4314,7 +4957,15 @@ function rfqActivityLabel(event, lang = "en") {
     case "returned":
       return zh ? "銷售要求補充資料" : "Sales asked for more information";
     case "resubmitted":
-      return zh ? "已重新提交" : "Resubmitted";
+      return detail ? (zh ? `已重新提交 ${detail}` : `Resubmitted ${detail}`) : zh ? "已重新提交" : "Resubmitted";
+    case "reversed":
+      return zh ? "已撤回，正在修改" : "Reversed — revising";
+    case "reverse_requested":
+      return zh ? "買家申請撤回" : "Reverse requested";
+    case "reverse_accepted":
+      return zh ? "撤回已接受，可修改" : "Reverse accepted — you can revise";
+    case "reverse_declined":
+      return zh ? "撤回未獲接受，RFQ 繼續處理" : "Reverse declined — RFQ kept in review";
     case "cancel_requested":
       return zh ? "買家申請取消" : "Cancel requested";
     case "cancel_accepted":
@@ -4694,8 +5345,9 @@ function decideRfq(id, { decision, reason } = {}) {
   }
   return patchRfqById(id, (rfq) => {
     const status = inboxStatus(rfq);
-    if (status === "cancelled") return rfq;
+    if (status === "cancelled" || status === "revising") return rfq;
     if (rfq.cancelStatus === "requested" && nextDecision === "accepted") return rfq;
+    if (rfq.reverseStatus === "requested" && nextDecision === "accepted") return rfq;
     const at = new Date().toISOString();
     const by = gate.account.email;
     if (nextDecision === "no_offer") {
@@ -4748,8 +5400,113 @@ function canBuyerRequestCancel(rfq) {
   const status = inboxStatus(rfq);
   if (status === "no_offer" || status === "cancelled") return false;
   if (rfq.cancelStatus === "requested" || rfq.cancelStatus === "accepted") return false;
+  if (rfq.reverseStatus === "requested") return false;
   if (rfqHasPurchaseOrder(rfq)) return false;
   return true;
+}
+
+function canBuyerReverse(rfq) {
+  if (!rfq) return false;
+  const status = inboxStatus(rfq);
+  if (status === "no_offer" || status === "cancelled" || status === "revising") return false;
+  if (rfq.cancelStatus === "requested" || rfq.reverseStatus === "requested") return false;
+  if (rfqHasPurchaseOrder(rfq)) return false;
+  return true;
+}
+
+function rfqNeedsSalesReverse(rfq) {
+  const status = inboxStatus(rfq);
+  if (status === "revising") return false;
+  return status === "accepted" || status === "quoted" || Boolean(rfq?.tmsDocumentNo || rfq?.tmsId);
+}
+
+function copyRfqToDraft(rfq) {
+  if (!rfq) return getDraft();
+  const draft = getDraft();
+  const existing = new Set((draft.lines || []).map((line) => String(line.productId)));
+  (rfq.lines || []).forEach((line) => {
+    const id = String(line.productId || "");
+    if (!id || existing.has(id)) return;
+    existing.add(id);
+    draft.lines.push({ ...line });
+  });
+  draft.note = rfq.note || draft.note;
+  draft.responseDate = rfq.responseDate || rfq.quotationDeadline || draft.responseDate;
+  draft.deliveryDate = rfq.deliveryDate || draft.deliveryDate;
+  draft.deliveryMode = normalizeDeliveryMode(rfq.deliveryMode || draft.deliveryMode);
+  draft.deliveryLots = normalizeDeliveryLots(rfq.deliveryLots || draft.deliveryLots, {
+    mode: draft.deliveryMode,
+    deliveryDate: draft.deliveryDate,
+    address: rfq.address,
+  });
+  draft.projects = normalizeProfileProjects(rfq.projects || rfq.project || draft.projects);
+  draft.project = joinProfileProjects(draft.projects);
+  draft.address = rfq.address || draft.address;
+  draft.canonicalCategory = rfq.canonicalCategory || draft.canonicalCategory;
+  draft.acceptSubstitutes = Boolean(rfq.acceptSubstitutes);
+  setDraft(draft);
+  return draft;
+}
+
+function notifySalesRfq(rfq, { title, body } = {}) {
+  if (!rfq?.id) return;
+  notifyAdmins({
+    kind: "rfq",
+    title: title || `RFQ ${rfq.id}`,
+    body: body || `${rfq.buyerName || rfq.buyerEmail || "Buyer"} updated ${rfq.id}.`,
+    href: `${adminOrigin()}/?rfq=${encodeURIComponent(rfq.id)}`,
+  });
+}
+
+function patchEnterRevising(rfq, { at, by, kind = "reversed" } = {}) {
+  const stamp = at || new Date().toISOString();
+  const versions = rfqRequestVersionList(rfq);
+  return pushRfqActivity(
+    {
+      ...rfq,
+      reviewStatus: "revising",
+      reverseStatus: "",
+      reverseRequestedAt: "",
+      cancelStatus: rfq.cancelStatus === "requested" ? "" : rfq.cancelStatus,
+      requestVersions: versions,
+      requestEffectiveVersion: rfqRequestEffectiveVersionNo({ ...rfq, requestVersions: versions }),
+    },
+    kind,
+    { at: stamp, by: by || "" }
+  );
+}
+
+function requestRfqReverse(id) {
+  const user = getUser();
+  if (!user?.email) return { ok: false, error: "auth" };
+  const current = getAllRfqs().find((r) => r.id === id);
+  if (!current) return { ok: false, error: "missing" };
+  if (normalizeEmail(current.buyerEmail) !== normalizeEmail(user.email)) return { ok: false, error: "auth" };
+  if (current.reverseStatus === "requested") return { ok: true, rfq: current };
+  if (!canBuyerReverse(current)) return { ok: false, error: "locked" };
+  if (!rfqNeedsSalesReverse(current)) {
+    return patchRfqById(id, (rfq) => patchEnterRevising(rfq, { kind: "reversed" }));
+  }
+  const result = patchRfqById(id, (rfq) => {
+    const at = new Date().toISOString();
+    return pushRfqActivity(
+      {
+        ...rfq,
+        reverseStatus: "requested",
+        reverseRequestedAt: at,
+      },
+      "reverse_requested",
+      { at }
+    );
+  });
+  if (result.ok) {
+    notifySalesRfq(current, {
+      title: `Reverse requested ${id}`,
+      body: `${current.buyerName || current.buyerEmail || "Buyer"} asked to reverse ${id}.`,
+    });
+    deliverRfqReverseRequestedEmail(result.rfq || current);
+  }
+  return result;
 }
 
 function requestRfqCancel(id) {
@@ -4760,12 +5517,38 @@ function requestRfqCancel(id) {
   if (normalizeEmail(current.buyerEmail) !== normalizeEmail(user.email)) return { ok: false, error: "auth" };
   if (current.cancelStatus === "requested") return { ok: true, rfq: current };
   if (!canBuyerRequestCancel(current)) return { ok: false, error: "locked" };
+  const instant = inboxStatus(current) === "revising" || !rfqNeedsSalesReverse(current);
+  if (instant) {
+    const result = patchRfqById(id, (rfq) => {
+      const at = new Date().toISOString();
+      return pushRfqActivity(
+        {
+          ...rfq,
+          cancelStatus: "accepted",
+          cancelKind: "cancel",
+          reviewStatus: "cancelled",
+          reverseStatus: "",
+          cancelledAt: at,
+        },
+        "cancel_accepted",
+        { at, detail: "buyer" }
+      );
+    });
+    if (result.ok) {
+      notifySalesRfq(current, {
+        title: `RFQ cancelled ${id}`,
+        body: `${current.buyerName || current.buyerEmail || "Buyer"} cancelled ${id}.`,
+      });
+    }
+    return result;
+  }
   const result = patchRfqById(id, (rfq) => {
     const at = new Date().toISOString();
     return pushRfqActivity(
       {
         ...rfq,
         cancelStatus: "requested",
+        cancelKind: "cancel",
         cancelRequestedAt: at,
       },
       "cancel_requested",
@@ -4773,14 +5556,34 @@ function requestRfqCancel(id) {
     );
   });
   if (result.ok) {
-    notifyAdmins({
-      kind: "rfq",
+    notifySalesRfq(current, {
       title: `Cancel requested ${id}`,
       body: `${current.buyerName || current.buyerEmail || "Buyer"} asked to cancel ${id}.`,
-      href: `${adminOrigin()}/?rfq=${encodeURIComponent(id)}`,
     });
+    deliverRfqCancelRequestedEmail(result.rfq || current);
   }
   return result;
+}
+
+function decideRfqReverse(id, { accept } = {}) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  return patchRfqById(id, (rfq) => {
+    if (rfq.reverseStatus !== "requested") return rfq;
+    const at = new Date().toISOString();
+    if (accept) {
+      return patchEnterRevising(rfq, { at, by: gate.account.email, kind: "reverse_accepted" });
+    }
+    return pushRfqActivity(
+      {
+        ...rfq,
+        reverseStatus: "declined",
+        reverseDeclinedAt: at,
+      },
+      "reverse_declined",
+      { at, by: gate.account.email }
+    );
+  });
 }
 
 function decideRfqCancel(id, { accept } = {}) {
@@ -4909,29 +5712,58 @@ function uploadRfqToTms(id, { fail, whatsappPdfName, tms } = {}) {
 function resubmitRfq(id, lines) {
   const email = currentEmail();
   if (!email) return { ok: false, error: "auth" };
-  return patchRfqById(id, (rfq, owner) => {
-    if (normalizeEmail(owner) !== email && rfq.buyerEmail !== email) return rfq;
-    if (inboxStatus(rfq) !== "returned") return rfq;
+  const current = getAllRfqs().find((r) => r.id === id);
+  if (!current) return { ok: false, error: "missing" };
+  const result = patchRfqById(id, (rfq, owner) => {
+    if (normalizeEmail(owner) !== email && normalizeEmail(rfq.buyerEmail) !== email) return rfq;
+    const status = inboxStatus(rfq);
+    if (status !== "returned" && status !== "revising") return rfq;
     const at = new Date().toISOString();
+    const nextLines = Array.isArray(lines) && lines.length ? lines : rfq.lines;
+    if (status === "revising") {
+      const nextNo = nextRfqRequestVersionNo(rfq);
+      const snap = snapshotRfqRequest({ ...rfq, lines: nextLines }, { version: nextNo, createdAt: at });
+      return pushRfqActivity(
+        {
+          ...rfq,
+          lines: nextLines,
+          reviewStatus: "received",
+          reviewingBy: "",
+          reverseStatus: "",
+          resubmittedAt: at,
+          requestVersions: [...rfqRequestVersionList(rfq), snap],
+          requestEffectiveVersion: nextNo,
+        },
+        "resubmitted",
+        { at, detail: `v${nextNo}` }
+      );
+    }
     return pushRfqActivity(
       {
         ...rfq,
         reviewStatus: "received",
         reviewingBy: "",
         resubmittedAt: at,
-        lines: Array.isArray(lines) && lines.length ? lines : rfq.lines,
+        lines: nextLines,
       },
       "resubmitted",
       { at }
     );
   });
+  if (result.ok && inboxStatus(current) === "revising") {
+    notifySalesRfq(result.rfq || current, {
+      title: `RFQ resubmitted ${id}`,
+      body: `${current.buyerName || current.buyerEmail || "Buyer"} resubmitted ${id}.`,
+    });
+    deliverRfqToSalesEmail(result.rfq || current);
+  }
+  return result;
 }
 
 function buyerRfqDetailsLocked(rfq) {
   const status = inboxStatus(rfq);
-  if (["accepted", "quoted", "no_offer", "cancelled"].includes(status)) return true;
-  if (rfq?.cancelStatus === "requested" || rfq?.cancelStatus === "accepted") return true;
-  return false;
+  if (status === "revising" || status === "returned") return false;
+  return true;
 }
 
 function lineMoq(line) {
@@ -4968,6 +5800,27 @@ function updateBuyerRfqDetails(id, patch = {}) {
         };
       });
     }
+    if (Array.isArray(patch.addLines) && patch.addLines.length) {
+      patch.addLines.forEach((row) => {
+        if (!row?.name && !row?.productId) return;
+        nextLines.push({
+          productId: row.productId || newCustomProductId(),
+          qty: Math.max(1, Math.floor(Number(row.qty) || 1)),
+          custom: Boolean(row.custom || !row.productId),
+          intent: row.intent || "quote",
+          name: String(row.name || "").trim() || "Tailor Made Product",
+          description: String(row.description || "").trim(),
+          category: String(row.category || "").trim(),
+          attachments: Array.isArray(row.attachments) ? row.attachments : [],
+          image: String(row.image || ""),
+          tailorMade: Boolean(row.tailorMade),
+          baseProductId: String(row.baseProductId || "").trim(),
+          baseProductNo: String(row.baseProductNo || "").trim(),
+          productNo: String(row.productNo || "").trim(),
+          supplier: String(row.supplier || "").trim(),
+        });
+      });
+    }
     return {
       ...rfq,
       note: patch.note != null ? String(patch.note) : rfq.note,
@@ -4975,6 +5828,8 @@ function updateBuyerRfqDetails(id, patch = {}) {
       responseDate: patch.responseDate != null ? String(patch.responseDate).trim() : rfq.responseDate,
       quotationDeadline: patch.responseDate != null ? String(patch.responseDate).trim() : rfq.quotationDeadline,
       deliveryDate: patch.deliveryDate != null ? String(patch.deliveryDate).trim() : rfq.deliveryDate,
+      project: patch.project != null ? String(patch.project) : rfq.project,
+      projects: patch.projects != null ? normalizeProfileProjects(patch.projects) : rfq.projects,
       lines: nextLines,
     };
   });
@@ -5128,6 +5983,7 @@ function persistProductPatches() {
       hit: p.hit,
       tailorMade: p.tailorMade,
       image: p.image,
+      images: Array.isArray(p.images) ? p.images.filter(Boolean).slice(0, 5) : [],
       imageSource: p.imageSource,
       needsChainImage: p.needsChainImage,
       discontinued: p.discontinued,
@@ -5194,6 +6050,7 @@ function createAdminProduct(fields) {
     hit: Boolean(fields.hit),
     tailorMade: Boolean(fields.tailorMade),
     image: fields.image || "",
+    images: Array.isArray(fields.images) ? fields.images.filter(Boolean).slice(0, 5) : fields.image ? [fields.image] : [],
     imageSource: fields.image ? (fields.imageSource || "upload") : "generated",
     supplier: "Mattex",
     specs: [],
@@ -5231,6 +6088,9 @@ function updateAdminProduct(id, fields) {
     hit: Boolean(fields.hit),
     tailorMade: Boolean(fields.tailorMade),
     image: fields.image == null ? product.image : fields.image,
+    images: fields.images == null
+      ? product.images
+      : (Array.isArray(fields.images) ? fields.images.filter(Boolean).slice(0, 5) : product.images),
     imageSource: fields.image
       ? (fields.imageSource || "upload")
       : fields.image === ""
@@ -5277,12 +6137,11 @@ function publishWarnBlockers(product) {
   return publishBlockers(product).filter((key) => PUBLISH_WARN_KEYS.includes(key));
 }
 
-/** Published = live. Unpublish = complete but not live. Draft = incomplete. Trash is never live. */
+/** Published = live. Unpublish = not live. Removed is never live. */
 function productCatalogStatus(product) {
   if (!product || product.deleted) return "deleted";
   if (product.published && !product.held) return "published";
-  if (publishBlockers(product).length === 0) return "unpublished";
-  return "draft";
+  return "unpublished";
 }
 
 function publishAdminProduct(id) {
@@ -5427,8 +6286,8 @@ function importAdminCsv(csv) {
       results.push({ line: row._line, ok: false, msg: !name ? "Missing product name" : `Unknown category: ${row.category}` });
       return;
     }
-    const sku = String(row.productNo || "").trim();
-    const tmp = String(row.provisionalSku || "").trim();
+    const sku = String(row.productNo || row.provisionalSku || "").trim();
+    const tmp = String(row.provisionalSku || row.productNo || "").trim();
     let p = sku ? PRODUCTS.find((x) => String(x.productNo || "").toUpperCase() === sku.toUpperCase()) : null;
     if (!p && tmp) p = PRODUCTS.find((x) => x.provisionalSku === tmp || x.id === tmp);
     const tags = String(row.tags || "").toLowerCase();
@@ -5453,7 +6312,10 @@ function importAdminCsv(csv) {
         tailorMade: /tailor|訂製|定制/.test(tags),
         image: imgIsGen ? "" : imgRaw,
       });
-      if (created.ok && tmp) created.product.provisionalSku = tmp;
+      if (created.ok) {
+        if (tmp) created.product.provisionalSku = tmp;
+        if (sku) created.product.productNo = sku;
+      }
       results.push({ line: row._line, ok: true, msg: `Draft ${name}` });
       return;
     }
@@ -5465,6 +6327,7 @@ function importAdminCsv(csv) {
     p.category = cat;
     p.name = name;
     if (sku) p.productNo = sku;
+    if (tmp) p.provisionalSku = tmp;
     if (row.sizeDesc != null) p.sizeDesc = row.sizeDesc;
     if (row.certifications != null) p.certifications = row.certifications;
     if (row.primarySpec != null) p.primarySpec = row.primarySpec;
@@ -5501,6 +6364,7 @@ function parseAdminCsv(text) {
     "official sku": "productNo",
     "category": "category",
     "img (gen)": "image",
+    "product": "name",
     "product name": "name",
     "size / description": "sizeDesc",
     "certifications / relevant reports": "certifications",
@@ -5565,7 +6429,14 @@ function adminCsvTemplate() {
   ].join(",") + "\n";
 }
 
-const PRIVATE_STORE_KEYS = new Set([AUTH_KEY, STAFF_AUTH_KEY, AUTH_INVITE_HIDE_KEY, "subbie_lang", DRAFTS_KEY]);
+const PRIVATE_STORE_KEYS = new Set([
+  AUTH_KEY,
+  STAFF_AUTH_KEY,
+  AUTH_INVITE_HIDE_KEY,
+  CART_AUTH_INVITE_SHOWN_KEY,
+  "subbie_lang",
+  DRAFTS_KEY,
+]);
 let sharedStoreRev = -1;
 let sharedStoreTimer = 0;
 let sharedPostChain = Promise.resolve();
@@ -5587,13 +6458,20 @@ function leanSharedAttachment(item) {
 
 function leanSharedRfq(rfq) {
   if (!rfq || typeof rfq !== "object") return rfq;
+  const leanLine = (line) => ({
+    ...line,
+    image: stripSharedDataUrl(line?.image),
+    attachments: Array.isArray(line?.attachments) ? line.attachments.map(leanSharedAttachment) : line?.attachments,
+  });
   return {
     ...rfq,
-    lines: (rfq.lines || []).map((line) => ({
-      ...line,
-      image: stripSharedDataUrl(line?.image),
-      attachments: Array.isArray(line?.attachments) ? line.attachments.map(leanSharedAttachment) : line?.attachments,
-    })),
+    lines: (rfq.lines || []).map(leanLine),
+    requestVersions: Array.isArray(rfq.requestVersions)
+      ? rfq.requestVersions.map((version) => ({
+          ...version,
+          lines: (version.lines || []).map(leanLine),
+        }))
+      : rfq.requestVersions,
   };
 }
 
@@ -5642,6 +6520,7 @@ function persistSharedRfq(buyerKey, rfq) {
 function dumpLocalSharedKv() {
   const keys = [
     ACCOUNTS_KEY,
+    DELETED_BUYERS_KEY,
     RFQS_KEY,
     QUOTE_SNAPSHOTS_KEY,
     SEQ_KEY,
@@ -5708,6 +6587,23 @@ function applySharedStore(kv) {
       const merged = mergeDraftMaps(readJson(DRAFTS_KEY, {}), value || {});
       if (JSON.stringify(merged) !== JSON.stringify(readJson(DRAFTS_KEY, {}))) {
         writeLocalOnly(DRAFTS_KEY, merged);
+        changed = true;
+      }
+      return;
+    }
+    if (key === DELETED_BUYERS_KEY) {
+      mergeDeletedBuyers(value);
+      const stripped = stripDeletedBuyers(readJson(ACCOUNTS_KEY, {}));
+      if (JSON.stringify(stripped) !== JSON.stringify(readJson(ACCOUNTS_KEY, {}))) {
+        writeLocalOnly(ACCOUNTS_KEY, stripped);
+      }
+      changed = true;
+      return;
+    }
+    if (key === ACCOUNTS_KEY) {
+      const merged = stripDeletedBuyers({ ...readJson(ACCOUNTS_KEY, {}), ...(value || {}) });
+      if (JSON.stringify(merged) !== JSON.stringify(readJson(ACCOUNTS_KEY, {}))) {
+        writeLocalOnly(ACCOUNTS_KEY, merged);
         changed = true;
       }
       return;
@@ -5824,6 +6720,7 @@ export {
   stockStatusKey,
   isLoggedIn,
   getUser,
+  takeDisabledKick,
   getDraft,
   setDraft,
   getCart,
@@ -5875,7 +6772,11 @@ export {
   addFromStorefront,
   consumePendingInviteContinue,
   setAuthInviteHidden,
+  isAuthInviteHidden,
   consumePendingAfterAuth,
+  setPendingCartWhatsappSubmit,
+  completeCartWhatsappSubmit,
+  takeLastCartWhatsappResult,
   whatsappUrl,
   buyerWhatsappHref,
   whatsappPhoneId,
@@ -5912,6 +6813,7 @@ export {
   getStaffInvite,
   acceptStaffInvite,
   updateStaff,
+  changeOwnStaffPassword,
   disableStaff,
   enableStaff,
   hardDeleteStaff,
@@ -5928,14 +6830,23 @@ export {
   startRfqReview,
   decideRfq,
   requestRfqCancel,
+  requestRfqReverse,
   canBuyerRequestCancel,
+  canBuyerReverse,
+  rfqNeedsSalesReverse,
+  copyRfqToDraft,
   decideRfqCancel,
+  decideRfqReverse,
   openRfqEmailPreview,
   inferRfqEmailPreviewKind,
   deliverRfqAcceptedEmail,
   deliverRfqNoOfferEmail,
   deliverRfqCancelAcceptedEmail,
   deliverRfqCancelDeclinedEmail,
+  deliverRfqCancelRequestedEmail,
+  deliverRfqReverseRequestedEmail,
+  deliverRfqReverseAcceptedEmail,
+  deliverRfqReverseDeclinedEmail,
   rfqDiscussWhatsappText,
   rfqDiscussEmailHref,
   openWhatsappChat,
@@ -5944,6 +6855,12 @@ export {
   markGuestQuoteWhatsappSent,
   getGuestQuoteSnapshot,
   quoteVersionList,
+  rfqRequestVersionList,
+  rfqRequestEffectiveVersionNo,
+  getRfqRequestVersion,
+  getEffectiveRfqRequestVersion,
+  formatRfqRequestVersionOption,
+  applyRfqRequestVersion,
   quoteEffectiveVersionNo,
   getQuoteVersion,
   getEffectiveQuoteVersion,

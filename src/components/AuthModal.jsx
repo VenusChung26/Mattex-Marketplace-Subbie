@@ -4,7 +4,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useStore } from "../hooks/useStore";
 import { useLanguage } from "../i18n";
 import { withLocale } from "../lib/locale";
-import { closeAuthModal, consumePendingAfterAuth, consumePendingInviteContinue, loginUser, MATTEX_CHAIN_URL, setAuthInviteHidden } from "../lib/store";
+import { closeAuthModal, consumePendingAfterAuth, consumePendingInviteContinue, loginUser, setAuthInviteHidden } from "../lib/store";
 import { useRevealFormIssue } from "../lib/formFocus";
 
 export default function AuthModal({ open, onClose }) {
@@ -17,6 +17,7 @@ export default function AuthModal({ open, onClose }) {
   const [dontShow, setDontShow] = useState(false);
   const closeReady = useRef(false);
   const { formRef, revealIssue } = useRevealFormIssue();
+  const cartInvite = authModalMode === "cart-invite";
   const invite = authModalMode !== "required";
 
   useEffect(() => {
@@ -30,7 +31,10 @@ export default function AuthModal({ open, onClose }) {
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     function onKey(e) {
-      if (e.key === "Escape" && closeReady.current) onClose?.();
+      if (e.key === "Escape" && closeReady.current) {
+        if (invite) dismissInvite();
+        else onClose?.();
+      }
     }
     document.addEventListener("keydown", onKey);
     return () => {
@@ -38,13 +42,13 @@ export default function AuthModal({ open, onClose }) {
       document.body.style.overflow = prev;
       document.removeEventListener("keydown", onKey);
     };
-  }, [open, onClose]);
+  }, [open, onClose, invite, cartInvite]);
 
   function dismissInvite() {
-    if (invite && dontShow) setAuthInviteHidden(true);
+    if (!cartInvite && invite && dontShow) setAuthInviteHidden(true);
     closeAuthModal();
     onClose?.();
-    consumePendingInviteContinue();
+    if (!cartInvite) consumePendingInviteContinue();
   }
 
   function onBackdrop() {
@@ -82,11 +86,23 @@ export default function AuthModal({ open, onClose }) {
       revealIssue();
       return;
     }
-    if (invite && dontShow) setAuthInviteHidden(true);
+    if (!cartInvite && invite && dontShow) setAuthInviteHidden(true);
     finish();
     const next = consumePendingAfterAuth();
     if (next) navigate(withLocale(lang, next));
   }
+
+  const title = cartInvite
+    ? t("cartAuthInviteTitle")
+    : invite
+      ? t("authInviteTitle")
+      : t("authRequiredTitle");
+  const body = cartInvite
+    ? t("cartAuthInviteBody")
+    : invite
+      ? t("authInviteBody")
+      : t("authRequiredBody");
+  const eyebrow = invite ? t("authInviteEyebrow") : t("almostThere");
 
   return createPortal(
     <div className="fixed inset-0 z-[80] overflow-y-auto" role="presentation">
@@ -111,13 +127,13 @@ export default function AuthModal({ open, onClose }) {
             ×
           </button>
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-brand-600 mb-2">
-            {invite ? t("authInviteEyebrow") : t("almostThere")}
+            {eyebrow}
           </p>
           <h3 id="auth-modal-title" className="font-display text-2xl font-semibold text-brand-800 leading-tight pr-8">
-            {invite ? t("authInviteTitle") : t("authRequiredTitle")}
+            {title}
           </h3>
           <p className="mt-3 text-sm text-mute leading-relaxed">
-            {invite ? t("authInviteBody") : t("authRequiredBody")}
+            {body}
           </p>
 
           <form ref={formRef} className="mt-5 space-y-3.5" onSubmit={onSubmit}>
@@ -173,7 +189,7 @@ export default function AuthModal({ open, onClose }) {
               to={withLocale(lang, "/signup")}
               className="font-semibold text-brand-600 hover:underline"
               onClick={() => {
-                if (invite && dontShow) setAuthInviteHidden(true);
+                if (!cartInvite && invite && dontShow) setAuthInviteHidden(true);
                 finish();
               }}
             >
@@ -183,32 +199,22 @@ export default function AuthModal({ open, onClose }) {
 
           {invite ? (
             <div className="mt-5 pt-4 border-t border-line space-y-3">
-              <label className="flex items-start gap-2.5 text-sm text-ink cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={dontShow}
-                  onChange={(e) => setDontShow(e.target.checked)}
-                  className="mt-0.5 h-4 w-4 accent-brand-600"
-                />
-                <span>{t("dontShowAuthInvite")}</span>
-              </label>
+              {!cartInvite ? (
+                <label className="flex items-start gap-2.5 text-sm text-ink cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={dontShow}
+                    onChange={(e) => setDontShow(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 accent-brand-600"
+                  />
+                  <span>{t("dontShowAuthInvite")}</span>
+                </label>
+              ) : null}
               <button type="button" className="btn-soft w-full !py-2.5" onClick={dismissInvite}>
-                {t("continueWhatsapp")}
+                {cartInvite ? t("cartAuthInviteContinue") : t("continueWhatsapp")}
               </button>
             </div>
-          ) : (
-            <p className="mt-3 text-xs text-mute">
-              {t("becomeSupplierHint")}{" "}
-              <a
-                href={MATTEX_CHAIN_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="font-semibold text-brand-700 hover:underline"
-              >
-                {t("becomeSupplier")}
-              </a>
-            </p>
-          )}
+          ) : null}
         </div>
       </div>
     </div>,

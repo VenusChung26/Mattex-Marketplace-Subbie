@@ -18,7 +18,7 @@ export function withLocale(lang, to = "/") {
     const bare = stripLocale(pathname);
     return {
       ...to,
-      pathname: `/${locale}${bare === "/" ? "" : bare}`,
+      pathname: `/${locale}${bare === "/" ? "/" : bare}`,
     };
   }
   const raw = String(to || "/");
@@ -26,7 +26,7 @@ export function withLocale(lang, to = "/") {
   if (raw.startsWith("#")) return raw;
   const parsed = new URL(raw, "https://mattex.invalid");
   const bare = stripLocale(parsed.pathname || "/");
-  const nextPath = `/${locale}${bare === "/" ? "" : bare}`;
+  const nextPath = `/${locale}${bare === "/" ? "/" : bare}`;
   if (parsed.search || parsed.hash) {
     return { pathname: nextPath, search: parsed.search, hash: parsed.hash };
   }

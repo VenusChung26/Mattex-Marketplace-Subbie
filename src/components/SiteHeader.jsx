@@ -7,7 +7,7 @@ import { useStore } from "../hooks/useStore";
 import { useLanguage } from "../i18n";
 import { stripLocale, withLocale } from "../lib/locale";
 import { SHOW_RFQ } from "../lib/flags";
-import { closeAuthModal, getCategoryByName, getCategoryDefs, logoutUser, MATTEX_CHAIN_URL } from "../lib/store";
+import { closeAuthModal, getCategoryByName, getCategoryDefs, logoutUser } from "../lib/store";
 
 function CartIcon({ className = "h-4 w-4" }) {
   return (
@@ -446,24 +446,6 @@ export default function SiteHeader({
                 <Link to={lp("/login")} className="py-2.5 hover:text-white" onClick={closeMenu}>
                   {t("login")}
                 </Link>
-                <a
-                  href={MATTEX_CHAIN_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="py-2.5 hover:text-white"
-                  onClick={closeMenu}
-                >
-                  {t("openMarketplaceAccount")}
-                </a>
-                <a
-                  href={MATTEX_CHAIN_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="py-2.5 hover:text-white"
-                  onClick={closeMenu}
-                >
-                  {t("becomeSupplier")}
-                </a>
               </>
             )}
             <div className="py-2">

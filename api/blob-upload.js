@@ -1,26 +1,56 @@
 import { handleUpload } from "@vercel/blob/client";
 
+/** SSR polyfill sets globalThis.window in the Vite process; @vercel/blob then refuses to mint a client token. */
+async function withoutBrowserGlobals(fn) {
+  const hadWindow = Object.prototype.hasOwnProperty.call(globalThis, "window");
+  const hadDocument = Object.prototype.hasOwnProperty.call(globalThis, "document");
+  const windowRef = globalThis.window;
+  const documentRef = globalThis.document;
+  if (hadWindow) {
+    try {
+      delete globalThis.window;
+    } catch {
+      globalThis.window = undefined;
+    }
+  }
+  if (hadDocument) {
+    try {
+      delete globalThis.document;
+    } catch {
+      globalThis.document = undefined;
+    }
+  }
+  try {
+    return await fn();
+  } finally {
+    if (hadWindow) globalThis.window = windowRef;
+    if (hadDocument) globalThis.document = documentRef;
+  }
+}
+
 export async function handleRfqBlobUpload(body, request) {
-  return handleUpload({
-    body,
-    request,
-    onBeforeGenerateToken: async (pathname) => {
-      if (!String(pathname || "").startsWith("rfq/")) {
-        throw new Error("Invalid upload path");
-      }
-      return {
-        allowedContentTypes: [
-          "application/pdf",
-          "image/jpeg",
-          "image/png",
-          "image/webp",
-          "image/gif",
-        ],
-        addRandomSuffix: true,
-        maximumSizeInBytes: 20 * 1024 * 1024,
-      };
-    },
-  });
+  return withoutBrowserGlobals(() =>
+    handleUpload({
+      body,
+      request,
+      onBeforeGenerateToken: async (pathname) => {
+        if (!String(pathname || "").startsWith("rfq/")) {
+          throw new Error("Invalid upload path");
+        }
+        return {
+          allowedContentTypes: [
+            "application/pdf",
+            "image/jpeg",
+            "image/png",
+            "image/webp",
+            "image/gif",
+          ],
+          addRandomSuffix: true,
+          maximumSizeInBytes: 20 * 1024 * 1024,
+        };
+      },
+    })
+  );
 }
 
 export async function POST(request) {

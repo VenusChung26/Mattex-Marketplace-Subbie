@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useRevealFormIssue } from "../lib/formFocus";
-import { Link, Navigate, useNavigate } from "react-router-dom";
+import { Link, Navigate } from "react-router-dom";
 import SiteHeader from "../components/SiteHeader";
 import Seo from "../components/Seo";
 import {
@@ -17,11 +17,9 @@ import { withLocale } from "../lib/locale";
 import { SHOW_RFQ } from "../lib/flags";
 import {
   closeAuthModal,
-  consumePendingAfterAuth,
-  MATTEX_CHAIN_URL,
   registerUser,
-  SAMPLE_PROJECTS,
 } from "../lib/store";
+import ProjectListEditor from "../components/ProjectListEditor";
 
 const EMPTY_FORM = {
   email: "",
@@ -34,13 +32,12 @@ const EMPTY_FORM = {
   companyReg: "",
   companyPhone: "",
   companyAddress: "",
-  project: "",
+  projects: [""],
 };
 
 export default function SignupPage() {
   const { user } = useStore();
   const { t, lang } = useLanguage();
-  const navigate = useNavigate();
   const [form, setForm] = useState(EMPTY_FORM);
   const [error, setError] = useState("");
   const [fieldErrors, setFieldErrors] = useState({});
@@ -132,8 +129,6 @@ export default function SignupPage() {
       return;
     }
     setSubmittedEmail(result.email || form.email);
-    const next = consumePendingAfterAuth();
-    if (next) navigate(withLocale(lang, next));
   }
 
   return (
@@ -288,20 +283,12 @@ export default function SignupPage() {
                       className="field-input"
                     />
                   </AccountField>
-                  <AccountField label={t("projectName")}>
-                    <input
-                      type="text"
-                      list="signup-project-suggestions"
-                      value={form.project}
-                      onChange={(e) => setField("project", e.target.value)}
-                      placeholder={t("projectPlaceholder")}
-                      className="field-input"
+                  <AccountField className="sm:col-span-2" label={t("projectName")} hint={t("profileProjectHint")}>
+                    <ProjectListEditor
+                      idPrefix="signup-project"
+                      projects={form.projects}
+                      onChange={(projects) => setField("projects", projects)}
                     />
-                    <datalist id="signup-project-suggestions">
-                      {SAMPLE_PROJECTS.map((name) => (
-                        <option key={name} value={name} />
-                      ))}
-                    </datalist>
                   </AccountField>
                   <AccountField className="sm:col-span-2" label={t("companyAddress")} required error={fieldErrors.companyAddress}>
                     <textarea
@@ -325,19 +312,6 @@ export default function SignupPage() {
                   {t("login")}
                 </Link>
               </p>
-
-              <div className="mt-6 rounded-xl border border-dashed border-line bg-paper/70 px-4 py-4">
-                <p className="text-sm text-mute">{t("becomeSupplierHint")}</p>
-                <a
-                  href={MATTEX_CHAIN_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mt-3 btn-soft !py-2.5 !border-brand-600 !text-brand-700 inline-flex w-full justify-center"
-                >
-                  {t("becomeSupplier")}
-                </a>
-                <p className="mt-2 text-xs text-mute">{t("opensMattexChain")}</p>
-              </div>
             </>
           )}
         </AccountFormCard>

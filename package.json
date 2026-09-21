@@ -19,7 +19,8 @@
     "prototype:admin": "python3 -m http.server 8777 --directory public"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.114.0",
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.116.0",
     "@vercel/blob": "^2.8.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",

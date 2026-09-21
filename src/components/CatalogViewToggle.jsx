@@ -24,7 +24,7 @@ export default function CatalogViewToggle({
 }) {
   const { t } = useLanguage();
   const dark = tone === "dark";
-  const pad = compact ? "px-3 py-2.5" : "px-3 py-3";
+  const pad = compact ? "px-3 py-2" : "px-3 py-3";
 
   function buttonClass(active) {
     if (dark) {

@@ -7,7 +7,9 @@ import Seo, { breadcrumbJsonLd, orgJsonLd, productJsonLd } from "../components/S
 import ProductPrice from "../components/ProductPrice";
 import ProductRating from "../components/ProductRating";
 import { ProductActions, ProductBadges, ProductImage } from "../components/ProductCard";
-import { useLanguage } from "../i18n";
+import { productImageList } from "../lib/compressImage";
+import { useStore } from "../hooks/useStore";
+import { bootProduct } from "../lib/bootPage";
 import { allProductsTo, siteOrigin, withLocale } from "../lib/locale";
 import { seoCopy } from "../lib/seoCopy";
 import {
@@ -16,8 +18,8 @@ import {
   catalogPathForCategory,
   getEffectivePrice,
   getProduct,
-  getProductRemarks,
   isBuyerVisible,
+  productSkuId,
   stockStatusKey,
   supplierDisplayName,
   supplierPath,
@@ -33,13 +35,18 @@ const STOCK_TONE = {
 export default function DetailsPage() {
   const { id } = useParams();
   const [params, setSearchParams] = useSearchParams();
-  const product = getProduct(id);
+  useStore();
+  const product = getProduct(id) || bootProduct(id);
   const { t, lang } = useLanguage();
   const [qty, setQty] = useState(1);
   const autoOpenTailor = params.get("tailor") === "1";
+  const gallery = productImageList(product);
+  const [activeImage, setActiveImage] = useState(gallery[0] || product?.image || "");
 
   useEffect(() => {
     setQty(product?.moq || 1);
+    const next = productImageList(product);
+    setActiveImage(next[0] || product?.image || "");
   }, [product?.id, product?.moq]);
 
   useEffect(() => {
@@ -84,7 +91,7 @@ export default function DetailsPage() {
       : `${product.leadTime.min}–${product.leadTime.max}`
     : "—";
   const facts = [
-    { label: t("productNo"), value: product.productNo || product.id.toUpperCase() },
+    { label: t("productNo"), value: productSkuId(product) || product.id.toUpperCase() },
     {
       label: t("stockStatus"),
       value: discontinued ? t("discontinued") : t(stockStatusKey(product.stockStatus)),
@@ -96,7 +103,8 @@ export default function DetailsPage() {
     { label: t("standard"), value: product.standard },
   ];
 
-  const remarks = getProductRemarks(product);
+  const purposes = (product.purposes || []).map((term) => String(term).trim()).filter(Boolean);
+  const remark = String(product.remark || "").trim();
 
   function goToRfq(intent, nextQty = qty) {
     const sendQty = Math.max(minQty, Math.floor(Number(nextQty)) || minQty);
@@ -143,11 +151,27 @@ export default function DetailsPage() {
           <div className="relative overflow-hidden bg-brand-50 border border-line rounded-xl self-start w-full">
             <ProductBadges product={product} />
             <ProductImage
-              src={product.image}
+              src={activeImage || product.image}
               alt={product.name}
               className="block w-full"
               imgClassName="block w-full h-auto"
             />
+            {gallery.length > 1 ? (
+              <div className="flex gap-2 overflow-x-auto bg-white border-t border-line px-3 py-2">
+                {gallery.map((src) => (
+                  <button
+                    key={src}
+                    type="button"
+                    className={`h-14 w-14 shrink-0 overflow-hidden border ${
+                      src === activeImage ? "border-brand-600" : "border-line"
+                    }`}
+                    onClick={() => setActiveImage(src)}
+                  >
+                    <img src={src} alt="" className="h-full w-full object-cover" />
+                  </button>
+                ))}
+              </div>
+            ) : null}
             <p className="px-3 py-2 text-[11px] leading-snug text-mute bg-white border-t border-line">
               {t("specSubjectToQuote")}
             </p>
@@ -235,12 +259,12 @@ export default function DetailsPage() {
               ))}
             </ul>
 
-            {remarks.length ? (
+            {purposes.length ? (
               <>
-                <h2 className="mt-8 text-sm font-semibold text-ink">{t("productRemarks")}</h2>
-                <p className="mt-1 text-xs text-mute leading-relaxed">{t("productRemarksHint")}</p>
+                <h2 className="mt-8 text-sm font-semibold text-ink">{t("productPurposes")}</h2>
+                <p className="mt-1 text-xs text-mute leading-relaxed">{t("productPurposesHint")}</p>
                 <ul className="mt-3 flex flex-wrap gap-1.5">
-                  {remarks.map((term) => (
+                  {purposes.map((term) => (
                     <li key={term}>
                       <Link
                         to={withLocale(lang, {
@@ -255,6 +279,13 @@ export default function DetailsPage() {
                     </li>
                   ))}
                 </ul>
+              </>
+            ) : null}
+
+            {remark ? (
+              <>
+                <h2 className="mt-8 text-sm font-semibold text-ink">{t("productRemark")}</h2>
+                <p className="mt-3 whitespace-pre-line text-sm text-mute leading-relaxed max-w-prose">{remark}</p>
               </>
             ) : null}
           </div>

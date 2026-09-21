@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { useRevealFormIssue } from "../lib/formFocus";
 import { Link, useNavigate } from "react-router-dom";
 import SiteHeader from "../components/SiteHeader";
-import MattexChainInvite from "../components/MattexChainInvite";
 import Seo from "../components/Seo";
 import {
   AccountField,
@@ -14,7 +13,8 @@ import { useStore } from "../hooks/useStore";
 import { useLanguage } from "../i18n";
 import { withLocale } from "../lib/locale";
 import { SHOW_RFQ } from "../lib/flags";
-import { consumePendingAfterAuth, closeAuthModal, loginUser, logoutUser, SAMPLE_PROJECTS, updateUserProfile } from "../lib/store";
+import { consumePendingAfterAuth, closeAuthModal, loginUser, logoutUser, takeDisabledKick, updateUserProfile } from "../lib/store";
+import ProjectListEditor from "../components/ProjectListEditor";
 
 function profileFromUser(user) {
   return {
@@ -25,7 +25,7 @@ function profileFromUser(user) {
     companyReg: user?.companyReg || "",
     companyPhone: user?.companyPhone || "",
     companyAddress: user?.companyAddress || "",
-    project: user?.project || "",
+    projects: Array.isArray(user?.projects) && user.projects.length ? user.projects : user?.project ? [user.project] : [""],
   };
 }
 
@@ -45,6 +45,11 @@ export default function LoginPage() {
   useEffect(() => {
     closeAuthModal();
   }, []);
+
+  useEffect(() => {
+    if (user) return;
+    if (takeDisabledKick()) setError(t("loginErrorDisabled"));
+  }, [user, t]);
 
   useEffect(() => {
     if (!editing) setProfile(profileFromUser(user));
@@ -202,20 +207,12 @@ export default function LoginPage() {
                         className="field-input"
                       />
                     </AccountField>
-                    <AccountField label={t("projectName")} hint={t("profileProjectHint")}>
-                      <input
-                        type="text"
-                        list="profile-project-suggestions"
-                        value={profile.project}
-                        onChange={(e) => setProfileField("project", e.target.value)}
-                        placeholder={t("projectPlaceholder")}
-                        className="field-input"
+                    <AccountField className="sm:col-span-2" label={t("projectName")} hint={t("profileProjectHint")}>
+                      <ProjectListEditor
+                        idPrefix="profile-project"
+                        projects={profile.projects}
+                        onChange={(projects) => setProfileField("projects", projects)}
                       />
-                      <datalist id="profile-project-suggestions">
-                        {SAMPLE_PROJECTS.map((name) => (
-                          <option key={name} value={name} />
-                        ))}
-                      </datalist>
                     </AccountField>
                     <AccountField
                       className="sm:col-span-2"
@@ -364,10 +361,12 @@ export default function LoginPage() {
                   {t("login")}
                 </button>
               </form>
-              <div className="mt-8 pt-6 border-t border-line">
-                <p className="text-sm font-semibold text-ink">{t("noAccount")}</p>
-                <MattexChainInvite className="mt-3" />
-              </div>
+              <p className="mt-5 text-sm text-mute">
+                {t("noAccount")}{" "}
+                <Link to={withLocale(lang, "/signup")} className="font-semibold text-brand-600 hover:underline">
+                  {t("openMarketplaceAccount")}
+                </Link>
+              </p>
             </>
           )}
         </AccountFormCard>

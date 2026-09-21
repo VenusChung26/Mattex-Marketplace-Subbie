@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useStore } from "../../hooks/useStore";
 import { buildQuotePdf, downloadBlob } from "../../lib/quotePdf";
+import { compressImageFile, PRODUCT_IMAGE_MAX, productImageList } from "../../lib/compressImage";
 import { marketplaceHomeHref } from "../../lib/origins";
 import {
   addAdminCategory,
@@ -9,8 +10,10 @@ import {
   createStaff,
   resendStaffInvite,
   updateStaff,
+  changeOwnStaffPassword,
   decideRfq,
   decideRfqCancel,
+  decideRfqReverse,
   deliverAdminAlertEmails,
   formatPrice,
   disableStaff,
@@ -60,6 +63,8 @@ import {
   quoteDraftIsDirty,
   rfqLinesForQuoteVersion,
   loadQuoteVersionIntoDraft,
+  applyRfqRequestVersion,
+  rfqRequestEffectiveVersionNo,
   requestAdminNotifyPermission,
   rfqBuyerKind,
   isDev1InboxRfq,
@@ -80,6 +85,8 @@ import {
   deliverRfqNoOfferEmail,
   deliverRfqCancelAcceptedEmail,
   deliverRfqCancelDeclinedEmail,
+  deliverRfqReverseAcceptedEmail,
+  deliverRfqReverseDeclinedEmail,
   rfqLastActivity,
   rfqActivityLabel,
   formatQuoteVersionStamp,
@@ -89,7 +96,7 @@ import { submitRfqToTms } from "../../lib/tmsSubmit";
 import { downloadProductExcelTemplate, excelFileToCsv } from "../../lib/excelImport";
 import { clearTmsSession } from "../../lib/tmsSession";
 import { transactedRefsForLine } from "../../lib/tmsTransacted";
-import QuoteVersionSelect, { DRAFT_VALUE } from "../../components/QuoteVersionSelect";
+import QuoteVersionSelect, { DRAFT_VALUE, RfqRequestVersionSelect } from "../../components/QuoteVersionSelect";
 import RfqActivityLog from "../../components/RfqActivityLog";
 import { SHOW_PRODUCT_IMPORT, SHOW_RFQ_QUOTES } from "../../lib/flags";
 
@@ -112,8 +119,8 @@ const ACCOUNT_SOURCES = [
 
 const ACCOUNT_STATUS_TABS = [
   { id: "all", label: "All" },
-  { id: "invited", label: "Invited" },
   { id: "active", label: "Active" },
+  { id: "invited", label: "Invited" },
   { id: "disabled", label: "Disabled" },
 ];
 
@@ -128,20 +135,26 @@ const STATUS_TABS = [
   { id: "all", label: "All" },
   { id: "published", label: "Published" },
   { id: "unpublished", label: "Unpublish" },
-  { id: "draft", label: "Draft" },
-  { id: "deleted", label: "Trash" },
+  { id: "deleted", label: "Removed" },
 ];
 
 const RFQ_ACTION_TAB = { id: "action", label: "Pending" };
+
+const STICKY_ACTION_TH =
+  "sticky right-0 top-0 z-20 bg-brand-50 px-3 py-2 shadow-[-8px_0_12px_-8px_rgba(16,21,19,0.2)]";
+const STICKY_ACTION_TD =
+  "sticky right-0 z-[1] bg-white px-3 py-2 shadow-[-8px_0_12px_-8px_rgba(16,21,19,0.14)]";
 
 const RFQ_STATUS_TABS = [
   RFQ_ACTION_TAB,
   { id: "all", label: "All" },
   { id: "received", label: "Received" },
   { id: "reviewing", label: "Reviewing" },
+  { id: "reverse", label: "Reverse requested" },
   { id: "cancel", label: "Cancel requested" },
   { id: "tms", label: "Accepted" },
   { id: "accepted", label: "iRFQ created" },
+  { id: "revising", label: "Revising" },
   { id: "returned", label: "Returned" },
   { id: "quoted", label: "Quoted" },
   { id: "rejected", label: "No Offer Rejected" },
@@ -152,6 +165,7 @@ const RFQ_STATUS_TABS_SLICE = [
   RFQ_ACTION_TAB,
   { id: "all", label: "All" },
   { id: "accepted", label: "In review" },
+  { id: "revising", label: "Revising" },
   { id: "rejected", label: "No Offer Rejected" },
   { id: "cancelled", label: "Cancelled" },
 ];
@@ -170,9 +184,8 @@ function productStatusKey(p) {
 
 function statusLabel(p) {
   const key = productCatalogStatus(p);
-  if (key === "deleted") return "Trash";
+  if (key === "deleted") return "Removed";
   if (key === "unpublished") return "Unpublish";
-  if (key === "draft") return "Draft";
   return "Published";
 }
 
@@ -227,6 +240,15 @@ function cellText(value) {
   return text || "—";
 }
 
+function productLeadLabel(p) {
+  const lead = p?.leadTime;
+  if (lead && (lead.min != null || lead.max != null)) {
+    if (lead.min === lead.max) return `${lead.min} days`;
+    return `${lead.min}–${lead.max} days`;
+  }
+  return cellText(p?.lead);
+}
+
 function productPrimarySpec(p) {
   const own = String(p.primarySpec || "").trim();
   if (own) return own;
@@ -270,7 +292,7 @@ function productRowLabel(p) {
 }
 
 function statusCounts(products) {
-  const counts = { all: products.length, published: 0, unpublished: 0, draft: 0, deleted: 0 };
+  const counts = { all: products.length, published: 0, unpublished: 0, deleted: 0 };
   products.forEach((p) => {
     counts[productStatusKey(p)] += 1;
   });
@@ -410,6 +432,12 @@ export default function AdminPortal() {
   const [flash, setFlash] = useState("");
   const [flashError, setFlashError] = useState(false);
   const [inboxHomeKey, setInboxHomeKey] = useState(0);
+  const [passwordOpen, setPasswordOpen] = useState(false);
+  const [pwCurrent, setPwCurrent] = useState("");
+  const [pwNext, setPwNext] = useState("");
+  const [pwConfirm, setPwConfirm] = useState("");
+  const [pwError, setPwError] = useState("");
+  const [pwOk, setPwOk] = useState("");
   const products = listAdminProducts();
 
   useEffect(() => {
@@ -758,6 +786,20 @@ export default function AdminPortal() {
             type="button"
             className="mt-2 hover:text-white"
             onClick={() => {
+              setPasswordOpen(true);
+              setPwCurrent("");
+              setPwNext("");
+              setPwConfirm("");
+              setPwError("");
+              setPwOk("");
+            }}
+          >
+            Change password
+          </button>
+          <button
+            type="button"
+            className="mt-2 block hover:text-white"
+            onClick={() => {
               clearTmsSession();
               logoutStaff();
             }}
@@ -852,6 +894,85 @@ export default function AdminPortal() {
           ) : null}
         </div>
       </div>
+      {passwordOpen ? (
+        <AdminModal
+          title="Change password"
+          onClose={() => setPasswordOpen(false)}
+          footer={
+            <div className="flex justify-end gap-2">
+              <button type="button" className="rounded-lg border border-line bg-white px-4 py-2 text-sm" onClick={() => setPasswordOpen(false)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white"
+                onClick={() => {
+                  const length = pwNext.length >= 8;
+                  const letter = /[A-Za-z]/.test(pwNext);
+                  const number = /\d/.test(pwNext);
+                  if (!String(pwCurrent || "").trim()) {
+                    setPwOk("");
+                    setPwError("Enter your current password.");
+                    return;
+                  }
+                  if (!length || !letter || !number) {
+                    setPwOk("");
+                    setPwError("Password needs 8+ characters, a letter, and a number.");
+                    return;
+                  }
+                  if (!pwConfirm || pwNext !== pwConfirm) {
+                    setPwOk("");
+                    setPwError("Passwords do not match.");
+                    return;
+                  }
+                  const result = changeOwnStaffPassword({ currentPassword: pwCurrent, nextPassword: pwNext });
+                  if (!result.ok) {
+                    setPwOk("");
+                    setPwError(
+                      result.error === "current"
+                        ? "Current password is incorrect."
+                        : result.error === "same"
+                          ? "New password must be different."
+                          : "Password needs 8+ characters, a letter, and a number."
+                    );
+                    return;
+                  }
+                  setPwError("");
+                  setPwOk("Password updated.");
+                  setPwCurrent("");
+                  setPwNext("");
+                  setPwConfirm("");
+                }}
+              >
+                Save password
+              </button>
+            </div>
+          }
+        >
+          <div className="space-y-3">
+            <label className="block text-sm font-medium">
+              Current password
+              <input type="password" className="mt-1 w-full rounded-lg border border-line px-3 py-2 text-sm" value={pwCurrent} onChange={(e) => setPwCurrent(e.target.value)} autoComplete="current-password" />
+            </label>
+            <label className="block text-sm font-medium">
+              New password
+              <input type="password" className="mt-1 w-full rounded-lg border border-line px-3 py-2 text-sm" value={pwNext} onChange={(e) => setPwNext(e.target.value)} autoComplete="new-password" />
+            </label>
+            <label className="block text-sm font-medium">
+              Confirm new password
+              <input type="password" className="mt-1 w-full rounded-lg border border-line px-3 py-2 text-sm" value={pwConfirm} onChange={(e) => setPwConfirm(e.target.value)} autoComplete="new-password" />
+            </label>
+            <ul className="text-xs text-mute space-y-1">
+              <li>{pwNext.length >= 8 ? "✓" : "○"} At least 8 characters</li>
+              <li>{/[A-Za-z]/.test(pwNext) ? "✓" : "○"} Includes a letter</li>
+              <li>{/\d/.test(pwNext) ? "✓" : "○"} Includes a number</li>
+              <li>{pwConfirm && pwNext === pwConfirm ? "✓" : "○"} Passwords match</li>
+            </ul>
+            {pwError ? <p className="text-sm text-red-700">{pwError}</p> : null}
+            {pwOk ? <p className="text-sm text-brand-700">{pwOk}</p> : null}
+          </div>
+        </AdminModal>
+      ) : null}
       {flash ? (
         <div
           className={`fixed bottom-6 right-6 z-[60] max-w-sm rounded-lg px-4 py-3 text-sm font-semibold text-white shadow-lg ${flashError ? "bg-red-700" : "bg-brand-700"}`}
@@ -1002,6 +1123,7 @@ function CategoryPanel({ products, note, onOpenProduct }) {
   const [addOpen, setAddOpen] = useState(false);
   const [addQuery, setAddQuery] = useState("");
   const [addSelected, setAddSelected] = useState(() => new Set());
+  const [preview, setPreview] = useState(null);
 
   const active = categories.find((c) => c.id === activeId) || categories[0] || null;
   useEffect(() => {
@@ -1149,7 +1271,7 @@ function CategoryPanel({ products, note, onOpenProduct }) {
               <tr>
                 <th className="px-3 py-2">Category</th>
                 <th className="px-3 py-2">Count</th>
-                <th className="px-3 py-2" />
+                <th className={`${STICKY_ACTION_TH} text-right`} />
               </tr>
             </thead>
             <tbody>
@@ -1168,7 +1290,7 @@ function CategoryPanel({ products, note, onOpenProduct }) {
                         {cat.deletedCount ? <span className="ml-1 text-[10px] text-mute">({cat.deletedCount} deleted)</span> : null}
                       </button>
                     </td>
-                    <td className="px-3 py-2 text-right">
+                    <td className={`${STICKY_ACTION_TD} text-right ${selectedCat ? "!bg-brand-50" : ""}`}>
                       <div className="flex justify-end gap-1">
                         <button
                           type="button"
@@ -1268,14 +1390,18 @@ function CategoryPanel({ products, note, onOpenProduct }) {
                       <th className="px-3 py-2">SKU</th>
                       <th className="px-3 py-2">Product</th>
                       <th className="px-3 py-2">Status</th>
-                      <th className="px-3 py-2 w-12" />
+                      <th className={`${STICKY_ACTION_TH} w-12`} />
                     </tr>
                   </thead>
                   <tbody>
                     {visible.length ? (
                       visible.map((p) => (
-                        <tr key={p.id} className={`border-t border-line/80 ${p.deleted ? "bg-slate-50 text-mute" : "hover:bg-brand-50/60"}`}>
-                          <td className="px-3 py-2">
+                        <tr
+                          key={p.id}
+                          className={`border-t border-line/80 cursor-pointer ${p.deleted ? "bg-slate-50 text-mute" : "hover:bg-brand-50/60"}`}
+                          onClick={() => setPreview(p)}
+                        >
+                          <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
                             <input
                               type="checkbox"
                               disabled={p.deleted}
@@ -1297,7 +1423,7 @@ function CategoryPanel({ products, note, onOpenProduct }) {
                           <td className="px-3 py-2">
                             <StatusBadge product={p} />
                           </td>
-                          <td className="px-3 py-2">
+                          <td className={`${STICKY_ACTION_TD} ${p.deleted ? "!bg-slate-50" : ""}`} onClick={(e) => e.stopPropagation()}>
                             <button
                               type="button"
                               className="inline-flex h-7 w-7 items-center justify-center rounded border border-line text-brand-800 hover:bg-brand-50"
@@ -1428,6 +1554,87 @@ function CategoryPanel({ products, note, onOpenProduct }) {
               autoFocus
             />
           </label>
+        </AdminModal>
+      ) : null}
+      {preview ? (
+        <AdminModal
+          title={preview.name || "Product"}
+          onClose={() => setPreview(null)}
+          wide
+          footer={
+            <div className="flex justify-end gap-2">
+              <button type="button" className="rounded-lg border border-line bg-white px-4 py-2 text-sm" onClick={() => setPreview(null)}>
+                Close
+              </button>
+              <button
+                type="button"
+                className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white"
+                onClick={() => {
+                  const target = preview;
+                  setPreview(null);
+                  onOpenProduct?.(target);
+                }}
+              >
+                Edit
+              </button>
+            </div>
+          }
+        >
+          <div className="space-y-4">
+            <div className="flex flex-wrap gap-2">
+              {productImageList(preview).length ? (
+                productImageList(preview).map((src, index) => (
+                  <img key={`${src.slice(-16)}-${index}`} src={src} alt="" className="h-20 w-20 rounded-md border border-line object-cover bg-white" />
+                ))
+              ) : (
+                <span className="flex h-20 w-20 items-center justify-center rounded-md border border-dashed border-line bg-paper text-[10px] font-semibold uppercase tracking-wide text-mute">
+                  No image
+                </span>
+              )}
+            </div>
+            <dl className="grid gap-2 sm:grid-cols-2 text-sm">
+              <div className="sm:col-span-2">
+                <dt className="text-[11px] font-semibold uppercase tracking-wide text-mute">Name</dt>
+                <dd className="mt-0.5 font-medium text-ink">{cellText(preview.name)}</dd>
+              </div>
+              <div>
+                <dt className="text-[11px] font-semibold uppercase tracking-wide text-mute">SKU</dt>
+                <dd className="mt-0.5 font-mono text-[12px]">{cellText(productSkuId(preview))}</dd>
+              </div>
+              <div>
+                <dt className="text-[11px] font-semibold uppercase tracking-wide text-mute">Category</dt>
+                <dd className="mt-0.5">{cellText(preview.category)}</dd>
+              </div>
+              <div>
+                <dt className="text-[11px] font-semibold uppercase tracking-wide text-mute">Status</dt>
+                <dd className="mt-0.5">
+                  <StatusBadge product={preview} />
+                </dd>
+              </div>
+              <div>
+                <dt className="text-[11px] font-semibold uppercase tracking-wide text-mute">Tags</dt>
+                <dd className="mt-0.5">
+                  <ProductTagChips product={preview} />
+                </dd>
+              </div>
+              <div>
+                <dt className="text-[11px] font-semibold uppercase tracking-wide text-mute">MOQ</dt>
+                <dd className="mt-0.5">{cellText(preview.moq)}</dd>
+              </div>
+              <div>
+                <dt className="text-[11px] font-semibold uppercase tracking-wide text-mute">Unit</dt>
+                <dd className="mt-0.5">{cellText(preview.unit || preview.salesUnit)}</dd>
+              </div>
+              <div>
+                <dt className="text-[11px] font-semibold uppercase tracking-wide text-mute">Lead</dt>
+                <dd className="mt-0.5">{productLeadLabel(preview)}</dd>
+              </div>
+              <div className="sm:col-span-2">
+                <dt className="text-[11px] font-semibold uppercase tracking-wide text-mute">Remark</dt>
+                <dd className="mt-0.5 whitespace-pre-wrap">{cellText(preview.remark)}</dd>
+              </div>
+            </dl>
+          </div>
         </AdminModal>
       ) : null}
     </div>
@@ -1620,18 +1827,29 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
     setForm({ ...(form || toForm(product)), ...patch });
   }
 
-  function onImageFile(file) {
-    if (!file) return;
-    if (!String(file.type || "").startsWith("image/")) {
+  async function onImageFiles(fileList) {
+    const picked = Array.from(fileList || []).filter((file) => String(file.type || "").startsWith("image/"));
+    if (!picked.length) {
       setFormError("Please choose an image file.");
       return;
     }
-    const reader = new FileReader();
-    reader.onload = () => {
-      fields({ image: String(reader.result || ""), imageSource: "upload" });
+    const current = productImageList({ image: (form || toForm(product)).image, images: (form || toForm(product)).images });
+    const remaining = PRODUCT_IMAGE_MAX - current.length;
+    if (remaining <= 0) {
+      setFormError("You can upload up to 5 images.");
+      return;
+    }
+    try {
+      const added = [];
+      for (const file of picked.slice(0, remaining)) {
+        added.push(await compressImageFile(file));
+      }
+      const next = [...current, ...added].slice(0, PRODUCT_IMAGE_MAX);
+      fields({ image: next[0] || "", images: next, imageSource: "upload" });
       setFormError("");
-    };
-    reader.readAsDataURL(file);
+    } catch {
+      setFormError("Each image must be under 800 KB after compress (max 1,600px).");
+    }
   }
 
   function openCreate() {
@@ -1692,8 +1910,8 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
         note({
           ok: false,
           error: awaiting || !selectedProducts.length
-            ? "No Draft or Unpublish products to go live."
-            : "Select Draft or Unpublish products to Publish.",
+            ? "No Unpublish products to go live."
+            : "Select Unpublish products to Publish.",
         });
         return;
       }
@@ -1706,19 +1924,19 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
     } else if (type === "delete") {
       items = selectedProducts.filter((p) => !p.deleted);
       if (!items.length) {
-        note({ ok: false, error: "Select products to move to trash." });
+        note({ ok: false, error: "Select products to remove (soft delete)." });
         return;
       }
     } else if (type === "forever") {
       items = selectedProducts.filter((p) => canDeleteProductForever(p));
       if (!items.length) {
-        note({ ok: false, error: "Select Unpublish, Draft, or Trash products to Delete forever. Unpublish live SKUs first." });
+        note({ ok: false, error: "Select Unpublish or Removed products to Delete forever. Unpublish live SKUs first." });
         return;
       }
     } else if (type === "restore") {
       items = selectedProducts.filter((p) => p.deleted);
       if (!items.length) {
-        note({ ok: false, error: "Select Trash products to Restore." });
+        note({ ok: false, error: "Select Removed products to Restore." });
         return;
       }
     }
@@ -1770,7 +1988,7 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
     });
     setBulkConfirm(null);
     clearSelected();
-    const labels = { publish: "published", unpublish: "taken offline", delete: "moved to trash", forever: "deleted forever", restore: "restored" };
+    const labels = { publish: "published", unpublish: "taken offline", delete: "removed", forever: "deleted forever", restore: "restored" };
     if (!ok) {
       if (lastError === "staff" || lastError === "published") {
         note({ ok: false, error: lastError });
@@ -1797,7 +2015,7 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
   const bulkTitles = {
     publish: "Confirm publish (go live)",
     unpublish: "Confirm Unpublish (take offline)",
-    delete: "Move to trash",
+    delete: "Remove from catalog",
     forever: "Delete forever",
     restore: "Confirm Restore",
   };
@@ -1819,7 +2037,7 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
       closeModal();
       setForm(null);
       setEditing("");
-      note(result, sku ? `Product added as ${productCatalogStatus(result.product) === "unpublished" ? "Unpublish" : "draft"} ${sku}.` : "Product added successfully.");
+                    note(result, sku ? `Product added as Unpublish ${sku}.` : "Product added successfully.");
       return;
     }
     const result = updateAdminProduct(editing, payload);
@@ -1837,7 +2055,7 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
         <div>
           <h1 className="font-display text-2xl text-brand-900">Mattex Products</h1>
           <p className="text-sm text-mute">
-            Published is live. Unpublish is complete but not live. Draft is incomplete. Move to trash hides a SKU until Restore. Delete forever removes it from the catalog and cannot be undone.
+            Published is live. Unpublish is not live — incomplete fields only warn when you Publish. Removed is a soft delete: hidden until Restore. Delete forever removes it from the catalog.
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap justify-end gap-2">
@@ -1891,7 +2109,7 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
               className="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-700"
               onClick={() => openBulkConfirm("delete")}
             >
-              Move to trash
+              Remove
             </button>
             <button
               type="button"
@@ -2024,7 +2242,7 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
                   onClick={() => {
                     const result = restoreAdminProduct(product.id);
                     const next = result?.product ? productCatalogStatus(result.product) : "";
-                    note(result, next === "unpublished" ? "Restored as Unpublish" : "Restored as Draft");
+                    note(result, "Restored as Unpublish");
                     if (result?.ok) closeModal();
                   }}
                 >
@@ -2037,11 +2255,11 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
                   className="rounded-lg border border-red-200 bg-white px-4 py-2 text-sm text-red-700"
                   onClick={() => {
                     const result = softDeleteAdminProduct(product.id);
-                    note(result, "Moved to trash");
+                    note(result, "Removed from catalog");
                     if (result?.ok) closeModal();
                   }}
                 >
-                  Move to trash
+                  Remove
                 </button>
               ) : null}
               {product ? (
@@ -2069,9 +2287,7 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
                     note(
                       result,
                       result?.ok
-                        ? next === "draft"
-                          ? "Taken offline — now Draft (incomplete)"
-                          : "Unpublish — complete, not live"
+                        ? "Unpublish — not live"
                         : "Unable to Unpublish"
                     );
                   }}
@@ -2149,9 +2365,9 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
             </div>
           </div>
           <div className="mt-3">
-            <p className="text-sm font-medium text-ink">Product image</p>
+            <p className="text-sm font-medium text-ink">Product images</p>
             <div
-              className={`mt-1 flex items-center gap-3 rounded-lg border border-dashed p-2.5 ${
+              className={`mt-1 rounded-lg border border-dashed p-2.5 ${
                 imageOver ? "border-brand-600 bg-brand-50" : "border-line bg-paper/60"
               }`}
               onDragOver={(e) => {
@@ -2165,49 +2381,47 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
               onDrop={(e) => {
                 e.preventDefault();
                 setImageOver(false);
-                onImageFile(e.dataTransfer.files?.[0]);
+                onImageFiles(e.dataTransfer.files);
               }}
             >
-              <button
-                type="button"
-                onClick={() => imageInputRef.current?.click()}
-                className="relative h-14 w-14 shrink-0 overflow-hidden border border-line bg-white"
-                aria-label={draft.image ? "Replace photo" : "Add photo"}
-              >
-                {draft.image ? (
-                  <img src={draft.image} alt="" className="h-full w-full object-cover" />
-                ) : (
-                  <span className="flex h-full w-full items-center justify-center text-2xl font-light text-mute">+</span>
-                )}
-              </button>
-              <div className="min-w-0">
-                <button
-                  type="button"
-                  className="text-sm font-semibold text-brand-700 hover:text-brand-800"
-                  onClick={() => imageInputRef.current?.click()}
-                >
-                  {imageOver ? "Drop to upload" : draft.image ? "Replace photo" : "Add photo"}
-                </button>
-                <p className="mt-0.5 text-xs text-mute">Drop a photo here, or click to upload.</p>
-                {draft.image ? (
+              <div className="flex flex-wrap gap-2">
+                {productImageList(draft).map((src, index) => (
+                  <span key={`${src.slice(-16)}-${index}`} className="relative">
+                    <img src={src} alt="" className="h-14 w-14 object-cover border border-line bg-white" />
+                    <button
+                      type="button"
+                      className="absolute top-0.5 right-0.5 bg-white/90 px-1 text-[10px] font-semibold text-mute hover:text-[#8a2b2b]"
+                      onClick={() => {
+                        const next = productImageList(draft).filter((_, i) => i !== index);
+                        fields({ image: next[0] || "", images: next, imageSource: next.length ? "upload" : "generated" });
+                      }}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+                {productImageList(draft).length < PRODUCT_IMAGE_MAX ? (
                   <button
                     type="button"
-                    className="mt-1 text-xs font-semibold text-mute hover:text-brand-700"
-                    onClick={() => fields({ image: "", imageSource: "generated" })}
+                    onClick={() => imageInputRef.current?.click()}
+                    className="relative h-14 w-14 shrink-0 overflow-hidden border border-line bg-white text-2xl font-light text-mute"
+                    aria-label="Add photo"
                   >
-                    Remove
+                    +
                   </button>
-                ) : (
-                  <p className="mt-1 text-xs text-mute">JPG or PNG.</p>
-                )}
+                ) : null}
               </div>
+              <p className="mt-1.5 text-xs text-mute">
+                {imageOver ? "Drop to upload" : "JPG / PNG / WebP · up to 5 photos · longest side 1,600px · max 800 KB each after compress."}
+              </p>
               <input
                 ref={imageInputRef}
                 type="file"
                 accept="image/*"
+                multiple
                 className="sr-only"
                 onChange={(e) => {
-                  onImageFile(e.target.files?.[0]);
+                  onImageFiles(e.target.files);
                   e.target.value = "";
                 }}
               />
@@ -2291,8 +2505,9 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
             </label>
             <label className="text-sm font-medium text-ink sm:col-span-2 lg:col-span-3">
               Remark
-              <input
-                className="mt-1 w-full rounded-lg border border-line px-3 py-2 font-normal placeholder:text-mute"
+              <textarea
+                className="mt-1 w-full resize-y rounded-lg border border-line px-3 py-2 font-normal leading-snug placeholder:text-mute"
+                rows={4}
                 value={draft.remark}
                 onChange={(e) => field("remark", e.target.value)}
                 placeholder="e.g. Also known as…"
@@ -2333,7 +2548,7 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
                       ? `Restore ${bulkConfirm.items.length}`
                       : bulkConfirm.type === "forever"
                         ? `Delete forever ${bulkConfirm.items.length}`
-                        : `Move to trash ${bulkConfirm.items.length}`}
+                        : `Remove ${bulkConfirm.items.length}`}
               </button>
             </div>
           }
@@ -2342,11 +2557,11 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
             {bulkConfirm.type === "publish"
               ? "Official SKU, name, unit and category are required. Duplicate SKUs are skipped. Missing MOQ or lead time is a warning — confirm to go live anyway."
               : bulkConfirm.type === "restore"
-                ? "Restore takes the SKU out of Trash. It becomes Draft or Unpublish and does not go live."
+                ? "Restore takes the SKU out of Removed. It becomes Unpublish and does not go live."
                 : bulkConfirm.type === "forever"
                   ? "This cannot be undone. The SKU leaves the catalog. Old RFQs keep the name and SKU from when they were sent."
                   : bulkConfirm.type === "delete"
-                    ? "Moved SKUs leave the marketplace and sit in Trash until Restore."
+                    ? "Removed SKUs leave the marketplace (soft delete) until Restore."
                     : "Confirm these products before the change is applied."}
           </p>
           <div className="mt-3 overflow-auto rounded-lg border border-line max-h-80">
@@ -2411,6 +2626,7 @@ function toForm(p) {
       hit: false,
       tailorMade: false,
       image: "",
+      images: [],
       imageSource: "generated",
     };
   }
@@ -2430,6 +2646,7 @@ function toForm(p) {
     hit: Boolean(p.hit),
     tailorMade: Boolean(p.tailorMade),
     image: p.image || "",
+    images: productImageList(p),
     imageSource: p.imageSource || (p.image ? "upload" : "generated"),
   };
 }
@@ -2583,8 +2800,7 @@ function ProductPreviewModal({ line, product, onClose }) {
           <div className="flex h-32 w-32 items-center justify-center rounded-lg border border-dashed border-line text-xs text-mute">No image</div>
         )}
         <div className="text-sm">
-          <p className="font-semibold text-brand-900">{name}</p>
-          <p className="mt-1 text-xs text-mute">
+          <p className="font-mono text-xs text-mute">
             {sku}
             {line?.qty ? ` · × ${line.qty}${product?.unit ? ` ${product.unit}` : ""}` : ""}
           </p>
@@ -2646,12 +2862,12 @@ function RfqLineRow({ rfq, line, showPricing, compact, note, readOnly = false })
   }
 
   return (
-    <li className={`rounded-lg border border-line/80 bg-paper/40 ${compact ? "p-2" : "p-2.5"} ${line.noOffer ? "opacity-80" : ""}`}>
-      <div className="flex items-start gap-2.5">
+    <li className={`overflow-hidden rounded-lg border border-line/80 bg-paper/40 ${compact ? "p-2" : "p-2.5"} ${line.noOffer ? "opacity-80" : ""}`}>
+      <div className="flex min-w-0 items-start gap-2.5">
         <button type="button" className="shrink-0" onClick={() => setPreview(true)} aria-label={`Preview ${product?.name || line.name}`}>
           <ProductThumb product={product || { image: line.image }} />
         </button>
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 overflow-hidden">
           <button type="button" className="text-left text-sm font-medium text-ink hover:underline" onClick={() => setPreview(true)}>
             {product?.name || line.name || line.productNo || "Product"}
           </button>
@@ -2660,33 +2876,7 @@ function RfqLineRow({ rfq, line, showPricing, compact, note, readOnly = false })
             {line.custom ? " · Tailor Made Product" : ""}
             {line.noOffer ? " · No offer" : ""}
           </p>
-          {canNoOffer ? (
-          <div className={`mt-2 grid gap-2 ${compact ? "sm:grid-cols-2" : "sm:grid-cols-[7rem_minmax(0,1fr)]"}`}>
-            <label className="block">
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-mute">Qty</span>
-              <input
-                type="number"
-                min="1"
-                step="1"
-                value={qty}
-                onChange={(e) => setQty(e.target.value)}
-                onBlur={saveQty}
-                className="mt-0.5 w-full rounded-lg border border-line bg-white px-2 py-1 text-xs"
-              />
-            </label>
-            <label className="block min-w-0">
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-mute">Remark</span>
-              <input
-                type="text"
-                value={remark}
-                placeholder="e.g. confirm size / lead"
-                onChange={(e) => setRemark(e.target.value)}
-                onBlur={saveRemark}
-                className="mt-0.5 w-full rounded-lg border border-line bg-white px-2 py-1 text-xs placeholder:text-mute"
-              />
-            </label>
-          </div>
-          ) : (
+          {canNoOffer ? null : (
             <p className="mt-1 text-[11px] text-ink">
               <span className="font-semibold uppercase tracking-wide text-mute">Qty</span> {line.qty || 1}
               {line.remark ? <span className="ml-2 text-mute">{line.remark}</span> : null}
@@ -2727,6 +2917,33 @@ function RfqLineRow({ rfq, line, showPricing, compact, note, readOnly = false })
         </div>
         ) : null}
       </div>
+      {canNoOffer ? (
+        <div className="mt-2 grid min-w-0 grid-cols-[6.5rem_minmax(0,1fr)] gap-2">
+          <label className="block min-w-0">
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-mute">Qty</span>
+            <input
+              type="number"
+              min="1"
+              step="1"
+              value={qty}
+              onChange={(e) => setQty(e.target.value)}
+              onBlur={saveQty}
+              className="mt-0.5 w-full rounded-lg border border-line bg-white px-2 py-1 text-xs"
+            />
+          </label>
+          <label className="block min-w-0 overflow-hidden">
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-mute">Remark</span>
+            <textarea
+              rows={1}
+              value={remark}
+              placeholder="e.g. confirm size / lead"
+              onChange={(e) => setRemark(e.target.value)}
+              onBlur={saveRemark}
+              className="mt-0.5 box-border block min-h-[1.75rem] w-full max-w-full resize-y rounded-lg border border-line bg-white px-2 py-1 text-xs leading-snug placeholder:text-mute"
+            />
+          </label>
+        </div>
+      ) : null}
       {showPricing && !readOnly && refs.options.length ? (
         <div className="mt-2 flex flex-wrap gap-1.5 pl-14">
           {refs.options.map((opt) => (
@@ -2910,8 +3127,10 @@ function RfqBuyerMeta({ rfq, note, onOpenBuyer, compact }) {
 }
 
 function rfqStatusKey(rfq) {
+  if (rfq.reverseStatus === "requested") return "reverse";
   if (rfq.cancelStatus === "requested") return "cancel";
   const status = inboxStatus(rfq);
+  if (status === "revising") return "revising";
   if (status === "no_offer" || status === "rejected") return "rejected";
   if (status === "accepted" || status === "quoted") {
     if (!SHOW_RFQ_QUOTES) return "accepted";
@@ -2923,13 +3142,13 @@ function rfqStatusKey(rfq) {
 }
 
 function rfqNeedsAction(rfq) {
-  if (rfq.cancelStatus === "requested") return true;
+  if (rfq.reverseStatus === "requested" || rfq.cancelStatus === "requested") return true;
   const status = inboxStatus(rfq);
   return status === "received" || status === "reviewing";
 }
 
 function rfqStatusCounts(rfqs) {
-  const counts = { action: 0, all: rfqs.length, received: 0, reviewing: 0, cancel: 0, tms: 0, accepted: 0, returned: 0, quoted: 0, rejected: 0, cancelled: 0 };
+  const counts = { action: 0, all: rfqs.length, received: 0, reviewing: 0, reverse: 0, cancel: 0, tms: 0, accepted: 0, revising: 0, returned: 0, quoted: 0, rejected: 0, cancelled: 0 };
   rfqs.forEach((rfq) => {
     counts[rfqStatusKey(rfq)] += 1;
     if (rfqNeedsAction(rfq)) counts.action += 1;
@@ -2939,7 +3158,9 @@ function rfqStatusCounts(rfqs) {
 
 function rfqInboxLabel(rfq) {
   const status = inboxStatus(rfq);
+  if (rfq.reverseStatus === "requested") return "Reverse requested";
   if (rfq.cancelStatus === "requested") return "Cancel requested";
+  if (status === "revising") return "Revising";
   if (status === "cancelled") return "Cancelled";
   if (status === "no_offer" || status === "rejected") return "No Offer Rejected";
   if (status === "accepted" && rfqQuotedOffline(rfq) && SHOW_RFQ_QUOTES) return "WhatsApp quote";
@@ -2953,7 +3174,9 @@ function rfqInboxLabel(rfq) {
 
 function rfqInboxChipClass(rfq) {
   const status = inboxStatus(rfq);
+  if (rfq.reverseStatus === "requested") return "bg-violet-100 text-violet-900";
   if (rfq.cancelStatus === "requested") return "bg-amber-100 text-amber-950";
+  if (status === "revising") return "bg-sky-50 text-sky-900";
   if (status === "cancelled") return "bg-slate-100 text-slate-600";
   if (status === "no_offer" || status === "rejected") return "bg-red-50 text-red-800";
   if (status === "accepted" && rfqQuotedOffline(rfq)) return "bg-emerald-50 text-emerald-800";
@@ -3051,7 +3274,11 @@ function ViewToggle({ value, onChange }) {
 
 function rfqIsOpen(rfq) {
   const status = inboxStatus(rfq);
-  return !["accepted", "quoted", "rejected", "no_offer", "cancelled"].includes(status) && rfq.cancelStatus !== "requested";
+  return (
+    (status === "received" || status === "reviewing" || status === "returned") &&
+    rfq.cancelStatus !== "requested" &&
+    rfq.reverseStatus !== "requested"
+  );
 }
 
 function rfqCanPrice(rfq) {
@@ -3066,6 +3293,8 @@ function rfqLinesPriced(rfq) {
 
 function rfqActionKind(rfq, open) {
   const status = inboxStatus(rfq);
+  if (status === "revising") return "";
+  if (rfq.reverseStatus === "requested") return "reverse";
   if (rfq.cancelStatus === "requested") return "cancel";
   if (open) return "decide";
   if (status === "accepted" || status === "quoted") return rfq.tmsDocumentNo && rfq.tmsUrl ? "open" : "price";
@@ -3096,6 +3325,8 @@ function RfqActions({
   waBusy = false,
   onAcceptCancel,
   onDeclineCancel,
+  onAcceptReverse,
+  onDeclineReverse,
   prominent = false,
   note,
 }) {
@@ -3117,8 +3348,34 @@ function RfqActions({
   const dark = prominent
     ? "rounded-lg bg-charcoal px-5 py-2.5 text-sm font-semibold text-white"
     : "rounded-lg bg-charcoal px-3 py-1.5 text-xs font-semibold text-white";
+  const quietReject = prominent
+    ? "rounded-md border border-red-200 bg-white px-2 py-1 text-[11px] font-medium text-red-600 hover:bg-red-50"
+    : "rounded-md border border-red-200 px-2 py-1 text-[10px] font-medium text-red-600 hover:bg-red-50";
 
-  if (!kind) return null;
+  const tmsOpen = rfq.tmsDocumentNo ? (
+    <a href={tmsIrfqDetailsHref(rfq)} target="_blank" rel="noreferrer" className={dark}>
+      Open {rfq.tmsDocumentNo}
+    </a>
+  ) : null;
+
+  if (!kind) {
+    if (!tmsOpen) return null;
+    return <div className={wrap}>{tmsOpen}</div>;
+  }
+
+  if (kind === "reverse") {
+    return (
+      <div className={wrap}>
+        <button type="button" className={primary} onClick={() => onAcceptReverse?.(rfq)}>
+          Accept reverse
+        </button>
+        <button type="button" className={secondary} onClick={() => onDeclineReverse?.(rfq)}>
+          Keep RFQ
+        </button>
+        {tmsOpen}
+      </div>
+    );
+  }
 
   if (kind === "cancel") {
     return (
@@ -3129,6 +3386,7 @@ function RfqActions({
         <button type="button" className={secondary} onClick={() => onDeclineCancel(rfq)}>
           Keep RFQ
         </button>
+        {tmsOpen}
       </div>
     );
   }
@@ -3144,15 +3402,19 @@ function RfqActions({
         ? "Add a parseable phone in Follow-up first"
         : waReady.reason === "prices"
           ? "Enter a price for every offer line first"
-          : "Accept the RFQ first";
+          : "Acknowledge the RFQ first";
   return (
     <div className={wrap}>
       {open ? (
         <>
           <button type="button" className={primary} disabled={accepting} onClick={() => onAccept(rfq)}>
-            Accept
+            Acknowledge
           </button>
-          <button type="button" className={danger} onClick={() => onReject(rfq)}>
+          <button
+            type="button"
+            className={quietReject}
+            onClick={() => onReject(rfq)}
+          >
             Reject (No Offer)
           </button>
         </>
@@ -3210,13 +3472,13 @@ function RfqActions({
               {accepting ? "Creating iRFQ…" : "Create TMS iRFQ"}
             </button>
           )}
-          <button type="button" className={danger} onClick={() => onReject(rfq)}>
+          <button type="button" className={quietReject} onClick={() => onReject(rfq)}>
             Reject (No Offer)
           </button>
         </>
       ) : null}
       {(status === "accepted" || status === "quoted") && !quoteTools ? (
-        <button type="button" className={danger} onClick={() => onReject(rfq)}>
+        <button type="button" className={quietReject} onClick={() => onReject(rfq)}>
           Reject (No Offer)
         </button>
       ) : null}
@@ -3246,14 +3508,26 @@ function RfqDetail({
   onMarkWhatsappSent,
   onAcceptCancel,
   onDeclineCancel,
+  onAcceptReverse,
+  onDeclineReverse,
 }) {
   const [pdfBusy, setPdfBusy] = useState(false);
   const [viewMode, setViewMode] = useState(DRAFT_VALUE);
+  const [requestViewMode, setRequestViewMode] = useState("");
   const status = inboxStatus(rfq);
   const open = rfqIsOpen(rfq);
   const versions = quoteVersionList(rfq);
   const viewingDraft = viewMode === DRAFT_VALUE || !versions.length;
-  const previewLines = viewingDraft ? rfq.lines || [] : rfqLinesForQuoteVersion(rfq, viewMode);
+  const requestEffective = rfqRequestEffectiveVersionNo(rfq);
+  const viewingRequestNo = Number(requestViewMode) || requestEffective;
+  const historicalRequest =
+    Boolean(requestEffective) && Number(viewingRequestNo) > 0 && Number(viewingRequestNo) !== Number(requestEffective);
+  const requestPreview = historicalRequest ? applyRfqRequestVersion(rfq, viewingRequestNo) : rfq;
+  const previewLines = historicalRequest
+    ? requestPreview.lines || []
+    : viewingDraft
+      ? rfq.lines || []
+      : rfqLinesForQuoteVersion(rfq, viewMode);
   const showPricing = SHOW_RFQ_QUOTES && rfqCanPrice(rfq);
   const account = listBuyers().find((b) => sameEmail(b.email, rfq.buyerEmail));
   const actionKind = rfqActionKind(rfq, open);
@@ -3267,7 +3541,8 @@ function RfqDetail({
 
   useEffect(() => {
     setViewMode(DRAFT_VALUE);
-  }, [rfq.id]);
+    setRequestViewMode(requestEffective ? String(requestEffective) : "");
+  }, [rfq.id, requestEffective]);
 
   function loadPreviewIntoDraft() {
     if (viewingDraft) return;
@@ -3284,12 +3559,14 @@ function RfqDetail({
     }
   }
   const actionCopy =
-    actionKind === "cancel"
+    actionKind === "reverse"
+      ? "Buyer asked to reverse this RFQ so they can revise it."
+      : actionKind === "cancel"
       ? "Buyer asked to cancel this RFQ."
                     : actionKind === "decide"
         ? SHOW_RFQ_QUOTES
-          ? "Accept to price this RFQ, or Reject (No Offer)."
-          : "Accept this RFQ to start handling it, or Reject (No Offer)."
+          ? "Acknowledge to price this RFQ, or Reject (No Offer)."
+          : "Acknowledge this RFQ to start handling it, or Reject (No Offer)."
         : actionKind === "price"
           ? !SHOW_RFQ_QUOTES
             ? "RFQ accepted. Buyer sees In review. Follow up by phone if needed."
@@ -3367,8 +3644,14 @@ function RfqDetail({
             waBusy={waBusy}
             onAcceptCancel={onAcceptCancel}
             onDeclineCancel={onDeclineCancel}
+            onAcceptReverse={onAcceptReverse}
+            onDeclineReverse={onDeclineReverse}
           />
         </div>
+      ) : status === "revising" ? (
+        <p className="mt-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-950">
+          Buyer is revising this RFQ. Nothing to do until they resubmit.
+        </p>
       ) : null}
       <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_18rem]">
         <section className="rounded-xl border border-line bg-white p-4">
@@ -3376,6 +3659,13 @@ function RfqDetail({
             <h2 className="text-xs font-semibold uppercase tracking-wide text-mute">
               {showPricing ? (viewingDraft ? "Price lines · Draft" : "Price lines · read-only preview") : "Buyer products"}
             </h2>
+            <div className="flex flex-wrap items-end gap-3">
+              <RfqRequestVersionSelect
+                rfq={rfq}
+                value={requestViewMode || (requestEffective ? String(requestEffective) : "")}
+                onChange={setRequestViewMode}
+                id={`portal-rfq-version-${rfq.id}`}
+              />
             {showPricing && versions.length ? (
               <div className="flex flex-wrap items-end gap-2">
                 <QuoteVersionSelect
@@ -3405,8 +3695,11 @@ function RfqDetail({
                 )}
               </div>
             ) : null}
+            </div>
           </div>
-          {SHOW_RFQ_QUOTES && !viewingDraft ? (
+          {historicalRequest ? (
+            <p className="mt-2 text-xs text-mute">Viewing a previous RFQ request. Switch to Current to see the latest submission.</p>
+          ) : SHOW_RFQ_QUOTES && !viewingDraft ? (
             <p className="mt-2 text-xs text-mute">
               Viewing a frozen send. Line prices are read-only. Submit / WhatsApp still use Draft. Load into draft, then send, to freeze a new version.
             </p>
@@ -3416,17 +3709,22 @@ function RfqDetail({
           <ul className="mt-3 space-y-2">
             {(previewLines || []).map((line, index) => (
               <RfqLineRow
-                key={`${rfq.id}-${line.productId || index}-${viewingDraft ? "draft" : viewMode}`}
-                rfq={rfq}
+                key={`${rfq.id}-${line.productId || index}-${historicalRequest ? viewingRequestNo : viewingDraft ? "draft" : viewMode}`}
+                rfq={historicalRequest ? requestPreview : rfq}
                 line={line}
                 note={note}
-                showPricing={showPricing}
-                readOnly={!viewingDraft}
+                showPricing={showPricing && !historicalRequest}
+                readOnly={!viewingDraft || historicalRequest || status === "revising"}
               />
             ))}
           </ul>
           {status === "rejected" && rfq.reason ? (
             <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800">Rejected: {rfq.reason}</p>
+          ) : null}
+          {rfq.reverseStatus === "requested" ? (
+            <p className="mt-3 rounded-lg bg-violet-50 px-3 py-2 text-xs text-violet-900">
+              Buyer asked to reverse this RFQ. Accept to let them revise, or keep the RFQ.
+            </p>
           ) : null}
           {rfq.cancelStatus === "requested" ? (
             <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">Buyer asked to cancel. Accept to close, or keep the RFQ.</p>
@@ -3638,6 +3936,28 @@ function RfqPanel({ rfqs: rawRfqs, note, focusId = "", onClearFocus, onOpenDetai
     mailNote(mail, "RFQ kept in In review. Buyer email sent.", "RFQ kept. Buyer email could not be sent.");
   }
 
+  async function acceptReverse(rfq) {
+    const result = decideRfqReverse(rfq.id, { accept: true });
+    if (!result?.ok) {
+      note(result, "Reverse accepted");
+      return;
+    }
+    followRfq(result.rfq || { ...rfq, reviewStatus: "revising", reverseStatus: "" });
+    const mail = await deliverRfqReverseAcceptedEmail(result.rfq || rfq);
+    mailNote(mail, "Reverse accepted. Buyer can revise. Email sent.", "Reverse accepted. Buyer email could not be sent.");
+  }
+
+  async function declineReverse(rfq) {
+    const result = decideRfqReverse(rfq.id, { accept: false });
+    if (!result?.ok) {
+      note(result, "RFQ kept");
+      return;
+    }
+    followRfq(result.rfq || { ...rfq, reverseStatus: "declined" });
+    const mail = await deliverRfqReverseDeclinedEmail(result.rfq || rfq);
+    mailNote(mail, "RFQ kept in In review. Buyer email sent.", "RFQ kept. Buyer email could not be sent.");
+  }
+
   async function createIrfq(rfq) {
     setAcceptingId(rfq.id);
     let pdfName = "";
@@ -3814,6 +4134,8 @@ function RfqPanel({ rfqs: rawRfqs, note, focusId = "", onClearFocus, onOpenDetai
           onMarkWhatsappSent={markWhatsappSent}
           onAcceptCancel={acceptCancel}
           onDeclineCancel={declineCancel}
+          onAcceptReverse={acceptReverse}
+          onDeclineReverse={declineReverse}
         />
         {rejecting ? (
           <AdminModal title={`Reject (No Offer) ${rejecting.id}`} onClose={closeReject}>
@@ -3919,7 +4241,7 @@ function RfqPanel({ rfqs: rawRfqs, note, focusId = "", onClearFocus, onOpenDetai
             <thead className="pointer-events-none sticky top-0 z-10 bg-brand-50 text-[10px] font-semibold uppercase tracking-wide text-mute">
               <tr>
                 {["RFQ", "Buyer", "Channel", "Products", "Status", "Activity", "Action"].map((h) => (
-                  <th key={h} className="px-3 py-2">
+                  <th key={h} className={h === "Action" ? STICKY_ACTION_TH : "px-3 py-2"}>
                     {h}
                   </th>
                 ))}
@@ -3965,7 +4287,7 @@ function RfqPanel({ rfqs: rawRfqs, note, focusId = "", onClearFocus, onOpenDetai
                     <td className="px-3 py-2 text-mute">
                       <RfqActivityDates rfq={r} />
                     </td>
-                    <td className="px-3 py-2">
+                    <td className={`${STICKY_ACTION_TD} min-w-[11rem] ${isFocus ? "!bg-brand-50" : ""}`}>
                       <RfqActions
                         rfq={r}
                         open={open}
@@ -3978,6 +4300,8 @@ function RfqPanel({ rfqs: rawRfqs, note, focusId = "", onClearFocus, onOpenDetai
                         onSubmitBuyer={submitToBuyer}
                         onAcceptCancel={acceptCancel}
                         onDeclineCancel={declineCancel}
+                        onAcceptReverse={acceptReverse}
+                        onDeclineReverse={declineReverse}
                       />
                     </td>
                   </tr>
@@ -4029,6 +4353,11 @@ function RfqPanel({ rfqs: rawRfqs, note, focusId = "", onClearFocus, onOpenDetai
                 {status === "no_offer" && r.reason ? (
                   <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800">No Offer Rejected: {r.reason}</p>
                 ) : null}
+                {r.reverseStatus === "requested" ? (
+                  <p className="mt-3 rounded-lg bg-violet-50 px-3 py-2 text-xs text-violet-900">
+                    Buyer asked to reverse this RFQ. Accept to let them revise, or keep the RFQ.
+                  </p>
+                ) : null}
                 {r.cancelStatus === "requested" ? (
                   <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">Buyer asked to cancel. Accept to close, or keep the RFQ.</p>
                 ) : null}
@@ -4072,6 +4401,8 @@ function RfqPanel({ rfqs: rawRfqs, note, focusId = "", onClearFocus, onOpenDetai
                     onSubmitBuyer={submitToBuyer}
                     onAcceptCancel={acceptCancel}
                     onDeclineCancel={declineCancel}
+                    onAcceptReverse={acceptReverse}
+                    onDeclineReverse={declineReverse}
                   />
                 </div>
               </article>
@@ -4167,11 +4498,11 @@ function ReportPanel({ reports, note, onOpenProduct }) {
                 className="rounded-lg border border-amber-300 px-2 py-1 text-xs"
                 onClick={() => {
                   const result = fixProductReport(r.id, { unpublish: true });
-                  note(result, "Fixed + Draft — hidden from marketplace");
+                  note(result, "Fixed + Unpublish — hidden from marketplace");
                   if (result?.ok) onOpenProduct?.(r);
                 }}
               >
-                Fix + Draft
+                Fix + Unpublish
               </button>
               <button
                 type="button"
@@ -4587,7 +4918,7 @@ function AccountPanel({ note, kind = "sales", focusEmail = "", onOpenRfq }) {
           <thead className="sticky top-0 bg-brand-50 text-[10px] font-semibold uppercase tracking-wide text-mute">
             <tr>
               {(isSales ? ["Name", "Email", "Type", "Status", "Action"] : ["Company", "Name", "Email", "Signed up", "Status", "Action"]).map((h) => (
-                <th key={h} className="px-3 py-2">
+                <th key={h} className={h === "Action" ? STICKY_ACTION_TH : "px-3 py-2"}>
                   {h}
                 </th>
               ))}
@@ -4599,7 +4930,7 @@ function AccountPanel({ note, kind = "sales", focusEmail = "", onOpenRfq }) {
                 <tr
                   id={!isSales ? buyerDomId(u.email) : undefined}
                   key={u.email}
-                  className={`cursor-pointer border-t border-line/80 hover:bg-brand-50/60 ${
+                  className={`group cursor-pointer border-t border-line/80 hover:bg-brand-50/60 ${
                     !isSales && sameEmail(u.email, focusEmail) ? "bg-brand-50 ring-2 ring-inset ring-brand-200" : ""
                   }`}
                   onClick={isSales ? () => openEdit(u) : () => setModal({ type: "buyer", email: u.email })}
@@ -4621,7 +4952,12 @@ function AccountPanel({ note, kind = "sales", focusEmail = "", onOpenRfq }) {
                   <td className="px-3 py-2">
                     <AccountStatusChip account={u} />
                   </td>
-                  <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+                  <td
+                    className={`${STICKY_ACTION_TD} min-w-[8.5rem] whitespace-nowrap group-hover:bg-brand-50/60 ${
+                      !isSales && sameEmail(u.email, focusEmail) ? "!bg-brand-50" : ""
+                    }`}
+                    onClick={(e) => e.stopPropagation()}
+                  >
                     <div className="flex flex-wrap items-center gap-3">
                       {isSales ? (
                         <button

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { canDirectBuy, catalogPathForCategory, isHitProduct, stockStatusKey, supplierDisplayName, supplierPath, addCustomLine, requireBuyerAuth } from "../lib/store";
+import { canDirectBuy, catalogPathForCategory, isHitProduct, productSkuId, stockStatusKey, supplierDisplayName, supplierPath, addCustomLine, requireBuyerAuth } from "../lib/store";
 import { useStore } from "../hooks/useStore";
 import { useLanguage } from "../i18n";
 import { withLocale } from "../lib/locale";
@@ -282,7 +282,7 @@ export function QtyStepper({ value, min = 1, unit = "", onChange, size = "card",
 function tailorInitialFromProduct(product, qty) {
   const bits = [
     product.sizeDesc || product.description || "",
-    product.productNo ? `Base SKU: ${product.productNo}` : "",
+    productSkuId(product) ? `Base SKU: ${productSkuId(product)}` : "",
     product.certifications || product.standard
       ? `Cert: ${product.certifications || product.standard}`
       : "",
@@ -316,10 +316,10 @@ export function ProductActions({ product, onAdd, size = "card", qty: qtyProp, on
   }, [product.id, minQty, controlled]);
 
   useEffect(() => {
-    if (!autoOpenTailor || !product) return;
+    if (!autoOpenTailor || !product?.tailorMade) return;
     setTailorInitial(tailorInitialFromProduct(product, qty));
     setTailorOpen(true);
-  }, [autoOpenTailor, product?.id]);
+  }, [autoOpenTailor, product?.id, product?.tailorMade]);
 
   function setQty(next) {
     const n = Math.floor(Number(next));
@@ -330,7 +330,8 @@ export function ProductActions({ product, onAdd, size = "card", qty: qtyProp, on
 
   function fire(intent) {
     if (qty < minQty) return;
-    if (intent !== "quote-now" && !requireBuyerAuth({ productId: product.id, intent, qty })) return;
+    const guestCartOk = intent === "quote-now" || intent === "quote" || intent === "buy";
+    if (!guestCartOk && !requireBuyerAuth({ productId: product.id, intent, qty })) return;
     onAdd?.(product.id, intent, qty);
   }
 
@@ -393,7 +394,7 @@ export function ProductActions({ product, onAdd, size = "card", qty: qtyProp, on
     </button>
   ) : null;
 
-  const showTailorCta = size === "detail" || size === "bar" || Boolean(product.tailorMade);
+  const showTailorCta = Boolean(product.tailorMade);
   const tailorBtn = showTailorCta ? (
     <button
       type="button"
@@ -412,7 +413,7 @@ export function ProductActions({ product, onAdd, size = "card", qty: qtyProp, on
   ) : null;
 
   const tailorPanel =
-    size === "detail" ? (
+    size === "detail" && showTailorCta ? (
       <div className="rounded-xl border border-brand-200 bg-brand-50 px-4 py-3">
         <p className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-[0.08em] text-brand-800">
           <TickIcon className="h-3.5 w-3.5" />
@@ -522,7 +523,7 @@ export function ProductListRow({ product, onAdd }) {
           </Link>
         </h3>
         <p className="mt-0.5 text-xs text-mute truncate">
-          {t("sku")} {product.productNo || product.id}
+          {t("productNo")} {productSkuId(product) || product.id}
           {product.supplier ? ` · ${t("by")} ${supplierDisplayName(product.supplier)}` : ""}
         </p>
         <ProductMetaChips product={product} showTags className="mt-1.5" />
@@ -564,7 +565,7 @@ export default function ProductCard({ product, onAdd, rank = null }) {
             {product.category}
           </Link>
         </p>
-        <h3 className="mt-1 font-semibold text-ink leading-snug text-base line-clamp-2">
+        <h3 className="mt-1 font-semibold text-ink leading-snug text-base line-clamp-3">
           <Link to={withLocale(lang, `/details/${product.id}`)} className="hover:text-brand-600 transition-colors">
             {product.name}
           </Link>

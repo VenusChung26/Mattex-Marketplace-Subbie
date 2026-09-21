@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { createProductReport, isLoggedIn } from "../lib/store";
+import { createProductReport, isLoggedIn, productSkuId } from "../lib/store";
 import { useLanguage } from "../i18n";
 import { withLocale } from "../lib/locale";
 
@@ -71,7 +71,7 @@ export default function ReportProblem({ product, compact = true }) {
             >
               ×
             </button>
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-brand-600 mb-2">{product.productNo || product.id}</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-brand-600 mb-2">{productSkuId(product) || product.id}</p>
             <h3 id={`report-title-${product.id}`} className="font-display text-2xl font-semibold text-brand-800 leading-tight pr-8">
               {t("reportProduct")}
             </h3>

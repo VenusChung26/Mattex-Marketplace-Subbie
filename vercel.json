@@ -38,6 +38,11 @@
     { "source": "/zh/catalog", "destination": "/zh", "statusCode": 301 }
   ],
   "rewrites": [
+    { "source": "/:lang(en|zh)", "destination": "/api/ssr?p=/:lang" },
+    { "source": "/:lang(en|zh)/green", "destination": "/api/ssr?p=/:lang/green" },
+    { "source": "/:lang(en|zh)/catalog/:slug", "destination": "/api/ssr?p=/:lang/catalog/:slug" },
+    { "source": "/:lang(en|zh)/details/:id", "destination": "/api/ssr?p=/:lang/details/:id" },
+    { "source": "/:lang(en|zh)/supplier/:slug", "destination": "/api/ssr?p=/:lang/supplier/:slug" },
     { "source": "/((?!api/|assets/|og/|og-default\\.jpg|og-default\\.png|robots\\.txt|sitemap\\.xml).*)", "destination": "/index.html" }
   ]
 }

@@ -128,6 +128,7 @@ function customLineProps(props) {
     setEditingId: props.setEditingId,
     showAddCustom: props.showAddCustom,
     setShowAddCustom: props.setShowAddCustom,
+    onToggleAddCustom: props.onToggleAddCustom,
     onAddCustom: props.onAddCustom,
     onUpdateCustom: props.onUpdateCustom,
   };
@@ -158,7 +159,7 @@ function LineMoney({ line, t, compact = false }) {
       {t("quotedPriceLabel")}
     </span>
   ) : null;
-  if (line.unitPrice == null) return compact ? "—" : <span className="text-mute">—</span>;
+  if (line.unitPrice == null) return compact ? formatPrice(null) : <span className="text-mute">{formatPrice(null)}</span>;
   if (hasLowerAsk(line)) {
     return (
       <span className={compact ? "text-right" : "block text-right"}>
@@ -399,6 +400,7 @@ function IntentDraftSections(props) {
               onSubmit={() => onContinueKind("buy")}
               onSubmitChannel={(channel) => onContinueKind("buy", channel)}
               submitLabel={t("createOrder")}
+              marketplaceRfqEnabled={props.marketplaceRfqEnabled}
             />
           </div>
         ) : null}
@@ -439,6 +441,7 @@ function IntentDraftSections(props) {
               onSubmit={() => onContinueKind("quote")}
               onSubmitChannel={(channel) => onContinueKind("quote", channel)}
               submitLabel={t("requestQuoteCta")}
+              marketplaceRfqEnabled={props.marketplaceRfqEnabled}
             />
           </div>
         ) : null}
@@ -631,8 +634,8 @@ export function ConfirmRfqView(props) {
       </section>
 
       <section className="mt-4 bg-white border border-line rounded-xl p-4 sm:p-5 space-y-4">
-        <h2 className="text-base sm:text-lg font-bold text-brand-800">{t("confirmDetails")}</h2>
-        <MetaForm {...props} compact />
+    <h2 className="text-base sm:text-lg font-bold text-brand-800">{t("deliveryRequest")}</h2>
+        <MetaForm {...props} compact requiredMarks={!viaWhatsapp} />
         <SubmitBar
           bare
           selectedIds={group.map((l) => String(l.productId))}
@@ -641,7 +644,7 @@ export function ConfirmRfqView(props) {
           onSubmit={() => onSubmitKind(confirmKind)}
           submitLabel={
             viaWhatsapp
-              ? t("submitWhatsappAndPortal")
+              ? t("sendViaWhatsapp")
               : confirmKind === "buy"
                 ? t("confirmBuyCreateRfq")
                 : t("submitQuoteRfq")
@@ -879,6 +882,7 @@ export function VariantC(props) {
                       </dt>
                       <dd className="font-medium">
                         {lot.date || "—"}
+                        {lot.address ? ` · ${lot.address}` : ""}
                         {lot.note ? ` · ${lot.note}` : ""}
                       </dd>
                     </div>
@@ -980,6 +984,7 @@ function LinesList({
   setEditingId,
   showAddCustom,
   setShowAddCustom,
+  onToggleAddCustom,
   onAddCustom,
   onUpdateCustom,
   title,
@@ -1062,8 +1067,11 @@ function LinesList({
               <button
                 type="button"
                 onClick={() => {
-                  setEditingId?.(null);
-                  setShowAddCustom?.((v) => !v);
+                  if (onToggleAddCustom) onToggleAddCustom();
+                  else {
+                    setEditingId?.(null);
+                    setShowAddCustom?.((v) => !v);
+                  }
                 }}
                 className={
                   showAddCustom
@@ -1244,9 +1252,10 @@ function ensureDeliveryLots(lots, deliveryDate) {
   const next = (Array.isArray(lots) ? lots : []).map((lot) => ({
     date: lot?.date || "",
     note: lot?.note || "",
+    address: lot?.address || "",
   }));
-  if (!next.length) next.push({ date: deliveryDate || "", note: "" });
-  while (next.length < 2) next.push({ date: "", note: "" });
+  if (!next.length) next.push({ date: deliveryDate || "", note: "", address: "" });
+  while (next.length < 2) next.push({ date: "", note: "", address: "" });
   return next;
 }
 
@@ -1500,6 +1509,8 @@ function MetaForm({
   setFormError,
   formErrorField = "",
   compact = false,
+  requiredMarks = true,
+  profileProjects = [],
 }) {
   const { t } = useLanguage();
   const today = todayIso();
@@ -1507,12 +1518,26 @@ function MetaForm({
   const deliveryInvalid = formErrorField === "delivery_date";
   const lotsInvalid = formErrorField === "delivery_lots";
   const addressInvalid = formErrorField === "address";
+  const selectedProjects = String(project || "")
+    .split(" · ")
+    .map((row) => row.trim())
+    .filter(Boolean);
+  const projectOptions = [...new Set([...(profileProjects || []), ...SAMPLE_PROJECTS, ...selectedProjects])];
+  const reqMark = requiredMarks ? <span className="text-brand-600">*</span> : null;
+
+  function commitProjects(next) {
+    const joined = next.filter(Boolean).join(" · ");
+    setProject(joined);
+    setDraftProject(joined);
+    setFormError("");
+  }
+
   return (
     <div id="rfq-details" className={compact ? "space-y-3" : "bg-white border border-line rounded-xl p-4 sm:p-5 space-y-4"}>
       <div className="grid sm:grid-cols-2 gap-4">
         <label className="block">
           <span className="block text-sm font-medium mb-1">
-            {t("quotationDeadline")} <span className="text-brand-600">*</span>
+            {t("quotationDeadline")} {reqMark}
           </span>
           <DatePickerField
             value={responseDate || ""}
@@ -1529,7 +1554,7 @@ function MetaForm({
         </label>
         <label className="block">
           <span className="block text-sm font-medium mb-1">
-            {t("requestDeliveryDate")} <span className="text-brand-600">*</span>
+            {t("requestDeliveryDate")} {reqMark}
           </span>
           <DatePickerField
             value={deliveryDate || ""}
@@ -1544,9 +1569,10 @@ function MetaForm({
           <FieldError show={deliveryInvalid}>{t("deliveryDateRequired")}</FieldError>
         </label>
       </div>
+      <p className="text-sm font-semibold text-brand-800">{t("deliveryRequest")}</p>
       <fieldset className="block">
         <legend className="block text-sm font-medium mb-2">
-          {t("deliveryMode")} <span className="text-brand-600">*</span>
+          {t("deliveryMode")} {reqMark}
         </legend>
         <div className="grid sm:grid-cols-2 gap-3">
           {[
@@ -1590,7 +1616,6 @@ function MetaForm({
       {deliveryMode === "partial" ? (
         <div className={`space-y-3 rounded-lg border px-3 py-3 ${lotsInvalid ? "border-red-500 bg-red-50" : "border-line bg-paper/40"}`}>
           <div>
-            <p className="text-sm font-medium text-ink">{t("deliveryLotNote")}</p>
             <p className="mt-0.5 text-xs text-mute">{t("deliveryLotsHint")}</p>
             <FieldError show={lotsInvalid}>{t("deliveryLotsRequired")}</FieldError>
           </div>
@@ -1621,7 +1646,7 @@ function MetaForm({
               </div>
               <label className="block">
                 <span className="block text-sm font-medium mb-1">
-                  {t("deliveryLotDate")} <span className="text-brand-600">*</span>
+                  {t("deliveryLotDate")} {reqMark}
                 </span>
                 <DatePickerField
                   value={lot.date || ""}
@@ -1640,6 +1665,45 @@ function MetaForm({
                     setFormError("");
                   }}
                 />
+              </label>
+              <label className="block">
+                <span className="block text-sm font-medium mb-1">
+                  {t("siteAddress")} {reqMark}
+                </span>
+                <input
+                  type="text"
+                  value={lot.address || ""}
+                  placeholder={t("addressPlaceholder")}
+                  onChange={(e) => {
+                    const next = (deliveryLots || []).map((row, i) =>
+                      i === index ? { ...row, address: e.target.value } : row
+                    );
+                    setDeliveryLots(next);
+                    setDraftDeliveryLots(next);
+                    if (index === 0) {
+                      setAddress(e.target.value);
+                      setDraftAddress(e.target.value);
+                    }
+                    setFormError("");
+                  }}
+                  className={invalidFieldClass(addressInvalid && index === 0, "w-full")}
+                />
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer text-sm text-ink">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 accent-brand-600"
+                  onChange={(e) => {
+                    if (!e.target.checked) return;
+                    const src = (deliveryLots || [])[index]?.address || "";
+                    const next = (deliveryLots || []).map((row) => ({ ...row, address: src }));
+                    setDeliveryLots(next);
+                    setDraftDeliveryLots(next);
+                    setAddress(src);
+                    setDraftAddress(src);
+                  }}
+                />
+                {t("applyAddressAll")}
               </label>
               <label className="block">
                 <span className="block text-sm font-medium mb-1">{t("deliveryLotNote")}</span>
@@ -1663,7 +1727,7 @@ function MetaForm({
             type="button"
             className="btn-soft !px-3 !py-2 !text-sm"
             onClick={() => {
-              const next = [...ensureDeliveryLots(deliveryLots, deliveryDate), { date: "", note: "" }];
+              const next = [...ensureDeliveryLots(deliveryLots, deliveryDate), { date: "", note: "", address: "" }];
               setDeliveryLots(next);
               setDraftDeliveryLots(next);
             }}
@@ -1672,30 +1736,51 @@ function MetaForm({
           </button>
         </div>
       ) : null}
-      <label className="block">
-        <span className="block text-sm font-medium mb-1">{t("projectName")}</span>
+      <div className="space-y-2">
+        <p className="text-sm font-medium">{t("projectName")}</p>
+        <div className="flex flex-wrap gap-2">
+          {projectOptions.map((name) => {
+            const checked = selectedProjects.includes(name);
+            return (
+              <label
+                key={name}
+                className={`inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-1.5 text-sm ${
+                  checked ? "border-brand-600 bg-brand-50 text-brand-800" : "border-line bg-white text-ink"
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  className="h-3.5 w-3.5 accent-brand-600"
+                  checked={checked}
+                  onChange={() => {
+                    commitProjects(checked ? selectedProjects.filter((row) => row !== name) : [...selectedProjects, name]);
+                  }}
+                />
+                {name}
+              </label>
+            );
+          })}
+        </div>
         <input
           type="text"
-          list="rfq-project-suggestions"
-          value={project || ""}
-          onChange={(e) => {
-            setProject(e.target.value);
-            setDraftProject(e.target.value);
-            setFormError("");
-          }}
+          defaultValue=""
           placeholder={t("projectPlaceholder")}
           className="field-input w-full"
+          onKeyDown={(e) => {
+            if (e.key !== "Enter") return;
+            e.preventDefault();
+            const next = String(e.currentTarget.value || "").trim();
+            if (!next) return;
+            commitProjects(selectedProjects.includes(next) ? selectedProjects : [...selectedProjects, next]);
+            e.currentTarget.value = "";
+          }}
         />
-        <datalist id="rfq-project-suggestions">
-          {SAMPLE_PROJECTS.map((name) => (
-            <option key={name} value={name} />
-          ))}
-        </datalist>
-        <span className="mt-1 block text-xs text-mute">{t("projectHint")}</span>
-      </label>
+        <span className="block text-xs text-mute">{t("projectHint")}</span>
+      </div>
+      {deliveryMode === "partial" ? null : (
       <label className="block">
         <span className="block text-sm font-medium mb-1">
-          {t("siteAddress")} <span className="text-brand-600">*</span>
+          {t("siteAddress")} {reqMark}
         </span>
         <input
           type="text"
@@ -1711,6 +1796,7 @@ function MetaForm({
         />
         <FieldError show={addressInvalid}>{t("addressRequired")}</FieldError>
       </label>
+      )}
       <label className="flex items-start gap-3 cursor-pointer rounded-lg border border-line bg-paper/60 px-3 py-3">
         <input
           type="checkbox"
@@ -1752,8 +1838,11 @@ function SubmitBar({
   submitLabel,
   bare = false,
   showKeepShopping = true,
+  marketplaceRfqEnabled = true,
+  rfqDisabledTitle = "",
 }) {
   const { t } = useLanguage();
+  const rfqLocked = !marketplaceRfqEnabled;
   return (
     <div className={bare ? "" : "bg-white border border-line rounded-xl p-4 sm:p-5"}>
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -1791,7 +1880,8 @@ function SubmitBar({
               <button
                 type="button"
                 onClick={() => onSubmitChannel("rfq")}
-                disabled={selectedIds.length === 0}
+                disabled={selectedIds.length === 0 || rfqLocked}
+                title={rfqLocked ? rfqDisabledTitle || t("guestRfqNeedsAccount") : undefined}
                 className="btn-primary !px-5 !py-2.5 disabled:opacity-45"
               >
                 {submitLabel || t("requestQuoteCta")}

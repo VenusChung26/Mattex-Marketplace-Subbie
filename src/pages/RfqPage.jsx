@@ -25,10 +25,14 @@ import {
   setLineIntent,
   setLineRequestedPrice,
   submitRfq,
-  openWhatsappDraft,
   updateCustomLine,
   requireBuyerAuth,
   openAuthModal,
+  isLoggedIn,
+  isAuthInviteHidden,
+  setPendingCartWhatsappSubmit,
+  completeCartWhatsappSubmit,
+  takeLastCartWhatsappResult,
 } from "../lib/store";
 import { useEffect, useMemo, useState } from "react";
 import SiteHeader from "../components/SiteHeader";
@@ -41,20 +45,20 @@ import { SHOW_RFQ } from "../lib/flags";
 import { useRevealFormIssue } from "../lib/formFocus";
 
 export default function RfqPage() {
-  const { user, draft } = useStore();
+  const { user, draft, lastCartWhatsappResult } = useStore();
   const { t, lang } = useLanguage();
   const [params] = useSearchParams();
   const variant = String(params.get("variant") || "A").toUpperCase();
   const customPlacement = CUSTOM_PLACEMENT[variant] || "inline";
   const totals = draftTotals(draft || { lines: [], note: "", responseDate: "", address: "" });
-  const profileProject = String(user?.project || "").trim();
+  const profileProjects = Array.isArray(user?.projects) && user.projects.length ? user.projects : String(user?.project || "").trim() ? [user.project] : [];
   const profileAddress = String(user?.companyAddress || "").trim();
   const [note, setNote] = useState(totals.note || "");
   const [responseDate, setResponseDate] = useState(totals.responseDate || "");
   const [deliveryDate, setDeliveryDate] = useState(totals.deliveryDate || "");
   const [deliveryMode, setDeliveryMode] = useState(totals.deliveryMode || "one_time");
   const [deliveryLots, setDeliveryLots] = useState(totals.deliveryLots || []);
-  const [project, setProject] = useState(totals.project || profileProject);
+  const [project, setProject] = useState(totals.project || profileProjects.join(" · "));
   const [address, setAddress] = useState(totals.address || profileAddress);
   const [canonicalCategory, setCanonicalCategory] = useState(totals.canonicalCategory || "");
   const [acceptSubstitutes, setAcceptSubstitutes] = useState(Boolean(totals.acceptSubstitutes));
@@ -92,7 +96,7 @@ export default function RfqPage() {
     setDeliveryDate(totals.deliveryDate || "");
     setDeliveryMode(totals.deliveryMode || "one_time");
     setDeliveryLots(totals.deliveryLots || []);
-    setProject(totals.project || profileProject);
+    setProject(totals.project || profileProjects.join(" · "));
     setAddress(totals.address || profileAddress);
     setCanonicalCategory(totals.canonicalCategory || "");
     setAcceptSubstitutes(Boolean(totals.acceptSubstitutes));
@@ -103,7 +107,7 @@ export default function RfqPage() {
     totals.deliveryMode,
     JSON.stringify(totals.deliveryLots || []),
     totals.project,
-    profileProject,
+    profileProjects.join(" · "),
     totals.address,
     profileAddress,
     totals.canonicalCategory,
@@ -111,9 +115,9 @@ export default function RfqPage() {
   ]);
 
   useEffect(() => {
-    if (String(totals.project || "").trim() || !profileProject) return;
-    setDraftProject(profileProject);
-  }, [totals.project, profileProject]);
+    if (String(totals.project || "").trim() || !profileProjects.length) return;
+    setDraftProject(profileProjects.join(" · "));
+  }, [totals.project, profileProjects.join(" · ")]);
 
   useEffect(() => {
     if (String(totals.address || "").trim() || !profileAddress) return;
@@ -152,6 +156,19 @@ export default function RfqPage() {
     () => draftTotals(draft || { lines: [] }, selectedIds),
     [draft, selectedIds]
   );
+
+  useEffect(() => {
+    if (!lastCartWhatsappResult?.rfq) return;
+    const result = takeLastCartWhatsappResult();
+    if (!result?.rfq) return;
+    setFormError("");
+    setFormErrorKind("");
+    setFormErrorField("");
+    setConfirmKind(null);
+    setConfirmChannel("rfq");
+    setSuccess(result.rfq);
+    setSuccessKind(result.kind);
+  }, [lastCartWhatsappResult]);
 
   const allSelected =
     selectableLineIds.length > 0 && selectedIds.length === selectableLineIds.length &&
@@ -195,7 +212,11 @@ export default function RfqPage() {
               <p className="mt-2 text-sm font-medium text-brand-800">{t("rfqEmailSent", { email: success.buyerEmail })}</p>
             ) : null}
             {success.channel === "whatsapp" ? (
-              <p className="mt-2 text-sm font-medium text-brand-800">{t("waSavedInSubbie")}</p>
+              <p className="mt-2 text-sm font-medium text-brand-800">
+                {user?.email && !String(success.buyerEmail || "").startsWith("guest@")
+                  ? t("waSavedInSubbie")
+                  : t("waDraftReadyGuest")}
+              </p>
             ) : null}
             {remainingCount > 0 ? (
               <p className="mt-3 text-sm font-medium text-brand-800">
@@ -221,7 +242,7 @@ export default function RfqPage() {
               <Link to={allProductsTo(lang)} className={remainingCount > 0 ? "btn-soft !border-brand-600 !text-brand-600" : "btn-primary"}>
                 {t("keepShopping")}
               </Link>
-              {SHOW_RFQ ? (
+              {SHOW_RFQ && user?.email ? (
               <Link to={withLocale(lang, "/rfqs")} className="btn-soft !border-brand-600 !text-brand-600">
                 {t("viewMyRfqs")}
               </Link>
@@ -234,6 +255,7 @@ export default function RfqPage() {
   }
 
   if (!totals.lines.length) {
+    const member = Boolean(user?.email);
     return (
       <Shell>
         <div className="max-w-7xl mx-auto px-4 py-10 space-y-4">
@@ -244,15 +266,41 @@ export default function RfqPage() {
               <Link to={allProductsTo(lang)} className="btn-soft">
                 {t("browseCatalog")}
               </Link>
-              <a href="#add-custom-product" className="btn-primary">
-                + {t("noProductsCustomCta")}
-              </a>
+              {member ? (
+                <a href="#add-custom-product" className="btn-primary">
+                  + {t("noProductsCustomCta")}
+                </a>
+              ) : (
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={() => requireBuyerAuth()}
+                >
+                  + {t("noProductsCustomCta")}
+                </button>
+              )}
             </div>
-            <p className="mt-4 text-sm text-mute">{t("emptyDraftCustomHint")}</p>
+            {member ? (
+              <p className="mt-4 text-sm text-mute">{t("emptyDraftCustomHint")}</p>
+            ) : null}
           </div>
-          <div id="add-custom-product">
-            <CustomProductForm onSubmit={handleAddCustom} />
-          </div>
+          {member ? (
+            <div
+              id="add-custom-product"
+              className="bg-white border border-line rounded-xl p-6 sm:p-8"
+            >
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-brand-600 mb-2">
+                {t("customItem")}
+              </p>
+              <h2 className="font-display text-2xl font-semibold text-brand-800 leading-tight">
+                {t("addCustomProduct")}
+              </h2>
+              <p className="mt-2 text-sm text-mute leading-relaxed">{t("customProductHint")}</p>
+              <div className="mt-5">
+                <CustomProductForm compact onSubmit={handleAddCustom} />
+              </div>
+            </div>
+          ) : null}
         </div>
       </Shell>
     );
@@ -289,7 +337,7 @@ export default function RfqPage() {
 
   function onContinueKind(kind, channel = "rfq") {
     const viaWhatsapp = channel === "whatsapp";
-    if (!requireBuyerAuth()) return;
+    if (!viaWhatsapp && !requireBuyerAuth()) return;
     const ids = totals.lines
       .filter((line) => (kind === "buy" ? line.intent === "buy" : line.intent !== "buy"))
       .map((line) => String(line.productId))
@@ -343,7 +391,8 @@ export default function RfqPage() {
   }
 
   function onSubmitKind(kind) {
-    if (!requireBuyerAuth()) return;
+    const viaWhatsapp = confirmChannel === "whatsapp";
+    if (!viaWhatsapp && !requireBuyerAuth()) return;
     const ids = totals.lines
       .filter((line) => (kind === "buy" ? line.intent === "buy" : line.intent !== "buy"))
       .map((line) => String(line.productId))
@@ -364,8 +413,32 @@ export default function RfqPage() {
     setDraftAddress(address);
     setDraftCanonicalCategory(canonicalCategory);
     setDraftAcceptSubstitutes(acceptSubstitutes);
-    const channel = confirmChannel === "whatsapp" ? "whatsapp" : "rfq";
-    const result = submitRfq(ids, { kind, channel });
+    if (viaWhatsapp) {
+      if (!isLoggedIn() && !isAuthInviteHidden()) {
+        setPendingCartWhatsappSubmit({ kind, ids });
+        openAuthModal("invite");
+        return;
+      }
+      const result = completeCartWhatsappSubmit({ kind, ids });
+      if (!result.ok) {
+        setFormErrorKind(kind);
+        setFormErrorField(result.error || "");
+        if (result.error === "none_selected") setFormError(t("noneSelected"));
+        else if (result.error === "discontinued") setFormError(t("discontinuedSubmitError"));
+        else setFormError(t("submitFailed"));
+        revealIssue();
+        return;
+      }
+      setFormError("");
+      setFormErrorKind("");
+      setFormErrorField("");
+      setConfirmKind(null);
+      setConfirmChannel("rfq");
+      setSuccess(result.rfq);
+      setSuccessKind(kind);
+      return;
+    }
+    const result = submitRfq(ids, { kind, channel: "rfq" });
     if (!result.ok) {
       setFormErrorKind(kind);
       setFormErrorField(result.error || "");
@@ -379,10 +452,7 @@ export default function RfqPage() {
       revealIssue();
       return;
     }
-    const lines = totals.lines.filter((line) => ids.includes(String(line.productId)));
-    if (channel === "whatsapp") {
-      openWhatsappDraft(lines, kind, { refNo: result.rfq.id });
-    }
+    removeLines(ids);
     setFormError("");
     setFormErrorKind("");
     setFormErrorField("");
@@ -443,7 +513,9 @@ export default function RfqPage() {
     setDraftProject,
     setDraftAddress,
     setDraftCanonicalCategory,
+    profileProjects,
     setDraftAcceptSubstitutes,
+    marketplaceRfqEnabled: Boolean(user?.email),
     onSubmit,
     setFormError: (msg) => {
       setFormError(msg);
@@ -454,7 +526,13 @@ export default function RfqPage() {
     editingId,
     setEditingId,
     showAddCustom,
+    showAddCustom,
     setShowAddCustom,
+    onToggleAddCustom: () => {
+      if (!requireBuyerAuth()) return;
+      setEditingId(null);
+      setShowAddCustom((v) => !v);
+    },
     onAddCustom: handleAddCustom,
     onUpdateCustom: handleUpdateCustom,
     customPlacement,

@@ -21,3 +21,5 @@ Disallow: /en/whatsapp-chat
 Disallow: /zh/whatsapp-chat
 Disallow: /en/email-sent
 Disallow: /zh/email-sent
+
+Sitemap: https://marketplace.mattex.com.hk/sitemap.xml

@@ -66,7 +66,7 @@ export default function SearchFieldsSelect({ selected, onChange, compact = false
         aria-label={t("searchIn")}
         onClick={() => setOpen((v) => !v)}
         className={`h-full min-w-[10.5rem] max-w-[14rem] px-3 text-left text-sm text-ink flex items-center justify-between gap-2 bg-white ${
-          compact ? "py-2.5" : "py-3"
+          compact ? "py-2" : "py-3"
         }`}
       >
         <span className="min-w-0 truncate">

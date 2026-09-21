@@ -116,7 +116,32 @@ async function upsertAll(table, rows) {
 try {
   await upsertAll("products", productRows);
   await upsertAll("supplier_metrics", metricRows);
+
+  const { data: patchRow } = await sb.from("app_kv").select("key,value").eq("key", "subbie_product_patches").maybeSingle();
+  const patches = patchRow?.value && typeof patchRow.value === "object" ? { ...patchRow.value } : {};
+  const seededIds = new Set(PRODUCTS.map((p) => String(p.id)));
+  for (const id of seededIds) delete patches[id];
+  if (Array.isArray(patches.__created)) {
+    patches.__created = patches.__created.filter((row) => !seededIds.has(String(row?.id)));
+  }
+  const { error: patchErr } = await sb.from("app_kv").upsert({
+    key: "subbie_product_patches",
+    value: patches,
+    updated_at: new Date().toISOString(),
+  });
+  if (patchErr) throw patchErr;
+
+  const { data: catRow } = await sb.from("app_kv").select("key,value").eq("key", "subbie_custom_categories").maybeSingle();
+  const cats = Array.isArray(catRow?.value) ? catRow.value.filter((c) => String(c?.id) !== "234") : [];
+  const { error: catErr } = await sb.from("app_kv").upsert({
+    key: "subbie_custom_categories",
+    value: cats,
+    updated_at: new Date().toISOString(),
+  });
+  if (catErr) throw catErr;
+
   console.log(`Seeded ${productRows.length} products and ${metricRows.length} supplier metrics.`);
+  console.log("Cleared catalog product patches and removed custom category 234.");
 } catch (error) {
   const detail = error?.cause?.code || error?.cause?.message || error?.message || error;
   console.error(detail);

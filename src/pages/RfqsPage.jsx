@@ -3,7 +3,7 @@
  */
 import { Link, useSearchParams } from "react-router-dom";
 import { useStore } from "../hooks/useStore";
-import { buildSupplierBankInfo, formatPrice, getProduct, inboxStatus, requestRfqCancel, canBuyerRequestCancel, resubmitRfq, rfqDiscussEmailHref, rfqDiscussWhatsappText, openWhatsappChat, rfqProjectName, updateBuyerRfqDetails, buyerRfqDetailsLocked, lineMoq, createBuyerPurchaseOrder, quoteVersionList, quoteEffectiveVersionNo, getEffectiveQuoteVersion, rfqActivityLog, rfqLastActivity, rfqActivityLabel, formatQuoteVersionStamp, hydrateRfqDecisionActivity } from "../lib/store";
+import { buildSupplierBankInfo, formatPrice, getProduct, inboxStatus, requestRfqCancel, requestRfqReverse, canBuyerRequestCancel, canBuyerReverse, resubmitRfq, rfqDiscussEmailHref, rfqDiscussWhatsappText, openWhatsappChat, rfqProjectName, createBuyerPurchaseOrder, quoteVersionList, quoteEffectiveVersionNo, getEffectiveQuoteVersion, rfqActivityLog, rfqLastActivity, rfqActivityLabel, formatQuoteVersionStamp, hydrateRfqDecisionActivity, updateBuyerRfqDetails, rfqRequestVersionList, rfqRequestEffectiveVersionNo, applyRfqRequestVersion } from "../lib/store";
 import { useEffect, useMemo, useRef, useState } from "react";
 import SiteHeader from "../components/SiteHeader";
 import Seo from "../components/Seo";
@@ -11,11 +11,11 @@ import { useLanguage } from "../i18n";
 import { withLocale } from "../lib/locale";
 import { SHOW_RFQ_QUOTES } from "../lib/flags";
 import AttachmentLinks from "../components/AttachmentLinks";
-import { QtyStepper } from "../components/ProductCard";
 import { DEMO_QUOTED_RFQ, buildPrototypeQuotes, buildSalesQuote } from "./rfqs-prototype/quoteMocks";
 import QuoteVariant from "./rfqs-prototype/QuoteCompareVariantA";
 import RfqStepBar, { RFQ_PHASE_STEPS } from "./rfqs-prototype/RfqStepBar";
-import QuoteVersionSelect from "../components/QuoteVersionSelect";
+import QuoteVersionSelect, { RfqRequestVersionSelect } from "../components/QuoteVersionSelect";
+import CustomProductForm from "../components/CustomProductForm";
 import RfqActivityLog from "../components/RfqActivityLog";
 
 function isCodPaymentTerm(value) {
@@ -115,31 +115,93 @@ function lineThumb(l) {
   return getProduct(l?.productId)?.image || "";
 }
 
-function RfqDetailsSummary({ rfq, t }) {
+function RfqDetailsSummary({ rfq, t, editing = false, onPatch }) {
+  const [note, setNote] = useState(rfq?.note || "");
+  const [address, setAddress] = useState(rfq?.address || "");
+  const [responseDate, setResponseDate] = useState(rfq?.responseDate || "");
+  const [deliveryDate, setDeliveryDate] = useState(rfq?.deliveryDate || "");
+  const [project, setProject] = useState(rfqProjectName(rfq) || "");
+
+  useEffect(() => {
+    setNote(rfq?.note || "");
+    setAddress(rfq?.address || "");
+    setResponseDate(rfq?.responseDate || "");
+    setDeliveryDate(rfq?.deliveryDate || "");
+    setProject(rfqProjectName(rfq) || "");
+  }, [rfq?.id, rfq?.note, rfq?.address, rfq?.responseDate, rfq?.deliveryDate, rfq?.project, rfq?.projects]);
+
   if (!rfq) return null;
-  const locked = buyerRfqDetailsLocked(rfq);
-  const canEdit = !locked && rfq.id !== DEMO_QUOTED_RFQ.id;
 
-  function setLineQty(productId, qty) {
-    updateBuyerRfqDetails(rfq.id, { lines: [{ productId, qty }] });
-  }
-
-  function removeLine(productId) {
-    if ((rfq.lines || []).length <= 1) return;
-    updateBuyerRfqDetails(rfq.id, { removeProductIds: [productId] });
+  function save(patch) {
+    onPatch?.(patch);
   }
 
   return (
-    <details className="mt-3 rounded-lg border border-line bg-paper/50 px-3 py-2">
+    <details className="mt-3 rounded-lg border border-line bg-paper/50 px-3 py-2" open={editing || undefined}>
       <summary className="cursor-pointer list-none flex items-center justify-between gap-3 py-1">
         <span>
           <span className="block text-sm font-semibold text-brand-800">{t("rfqRequestDetails")}</span>
-          <span className="mt-0.5 block text-xs text-mute">{t("rfqDetailsCollapseHint")}</span>
+          <span className="mt-0.5 block text-xs text-mute">
+            {editing ? t("rfqDetailsEditHint") : t("rfqDetailsReadOnlyHint")}
+          </span>
         </span>
         <span className="shrink-0 text-xs font-semibold text-brand-700">{t("rfqDetailsExpand")}</span>
       </summary>
       <div className="mt-3 border-t border-line pt-3 space-y-3">
-        {locked ? <p className="text-xs text-mute">{t("rfqDetailsLocked")}</p> : null}
+        {editing ? (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="block text-sm text-ink">
+              <span className="text-mute">{t("quotationDeadlineLabel")}</span>
+              <input
+                type="date"
+                className="mt-0.5 w-full rounded border border-line bg-white px-2 py-1.5 text-sm"
+                value={responseDate}
+                onChange={(e) => setResponseDate(e.target.value)}
+                onBlur={() => save({ responseDate })}
+              />
+            </label>
+            <label className="block text-sm text-ink">
+              <span className="text-mute">{t("deliveryDateLabel")}</span>
+              <input
+                type="date"
+                className="mt-0.5 w-full rounded border border-line bg-white px-2 py-1.5 text-sm"
+                value={deliveryDate}
+                onChange={(e) => setDeliveryDate(e.target.value)}
+                onBlur={() => save({ deliveryDate })}
+              />
+            </label>
+            <label className="block text-sm text-ink sm:col-span-2">
+              <span className="text-mute">{t("projectLabel")}</span>
+              <input
+                type="text"
+                className="mt-0.5 w-full rounded border border-line bg-white px-2 py-1.5 text-sm"
+                value={project}
+                onChange={(e) => setProject(e.target.value)}
+                onBlur={() => save({ project, projects: project })}
+              />
+            </label>
+            <label className="block text-sm text-ink sm:col-span-2">
+              <span className="text-mute">{t("addressLabel")}</span>
+              <input
+                type="text"
+                className="mt-0.5 w-full rounded border border-line bg-white px-2 py-1.5 text-sm"
+                value={address}
+                onChange={(e) => setAddress(e.target.value)}
+                onBlur={() => save({ address })}
+              />
+            </label>
+            <label className="block text-sm text-ink sm:col-span-2">
+              <span className="text-mute">{t("noteLabel")}</span>
+              <textarea
+                rows={2}
+                className="mt-0.5 w-full resize rounded border border-line bg-white px-2 py-1.5 text-sm"
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                onBlur={() => save({ note })}
+              />
+            </label>
+          </div>
+        ) : (
         <div className="space-y-1">
           <p className="text-xs text-mute">{t("submitted")} {formatQuoteVersionStamp(rfq.submittedAt)}</p>
           {rfq.responseDate ? (
@@ -160,6 +222,7 @@ function RfqDetailsSummary({ rfq, t }) {
             ? rfq.deliveryLots.map((lot, index) => (
                 <p key={`lot-${index}`} className="text-sm text-ink">
                   <span className="text-mute">{t("deliveryLotLabel", { n: index + 1 })}</span> {lot.date || "—"}
+                  {lot.address ? ` · ${lot.address}` : ""}
                   {lot.note ? ` · ${lot.note}` : ""}
                 </p>
               ))
@@ -187,11 +250,10 @@ function RfqDetailsSummary({ rfq, t }) {
             </p>
           ) : null}
         </div>
+        )}
 
         <ul className="divide-y divide-line border-y border-line">
           {(rfq.lines || []).map((l) => {
-            const moq = lineMoq(l);
-            const belowMoq = !l.custom && Number(l.qty) < moq;
             const thumb = lineThumb(l);
             return (
               <li key={String(l.productId)} className="flex flex-wrap items-start justify-between gap-3 py-2.5">
@@ -204,34 +266,9 @@ function RfqDetailsSummary({ rfq, t }) {
                   <span className="min-w-0">
                     <span className="font-medium text-sm text-ink">{l.name}</span>
                     {l.productNo ? <span className="block text-xs text-mute">{l.productNo}</span> : null}
-                    {belowMoq ? (
-                      <p className="mt-1 text-xs font-medium text-amber-800">{t("qtyBelowMoq", { n: moq })}</p>
-                    ) : null}
                   </span>
                 </span>
-                {canEdit ? (
-                  <span className="w-[12.5rem] max-w-full shrink-0">
-                    <QtyStepper
-                      value={l.qty}
-                      min={moq}
-                      unit={l.unit || ""}
-                      onChange={(qty) => setLineQty(l.productId, qty)}
-                      size="row"
-                      t={t}
-                    />
-                    {(rfq.lines || []).length > 1 ? (
-                      <button
-                        type="button"
-                        className="mt-1 text-[11px] font-semibold text-mute/80 hover:text-[#8a2b2b]"
-                        onClick={() => removeLine(l.productId)}
-                      >
-                        {t("remove")}
-                      </button>
-                    ) : null}
-                  </span>
-                ) : (
-                  <span className="text-sm text-mute shrink-0">× {l.qty}</span>
-                )}
+                <span className="text-sm text-mute shrink-0">× {l.qty}</span>
               </li>
             );
           })}
@@ -256,6 +293,8 @@ function rfqDocStatus(rfq, acceptedByRfq) {
   if (!rfq) return "";
   if (rfq.cancelStatus === "accepted" || rfq.reviewStatus === "cancelled") return "cancelled";
   if (rfq.cancelStatus === "requested") return "cancel_requested";
+  if (rfq.reverseStatus === "requested") return "reverse_requested";
+  if (rfq.reviewStatus === "revising") return "revising";
   if (acceptedByRfq?.[rfq.id]) return "accepted";
   if (rfq.id === DEMO_QUOTED_RFQ.id) return "quoted";
   if (rfq.reviewStatus === "quoted") return "quoted";
@@ -268,6 +307,8 @@ function rfqDocStatus(rfq, acceptedByRfq) {
 
 function rfqDocStatusLabel(status, t) {
   if (status === "cancel_requested") return t("rfqCancelRequested");
+  if (status === "reverse_requested") return t("rfqReverseRequested");
+  if (status === "revising") return t("rfqRevising");
   if (status === "cancelled") return t("rfqCancelled");
   if (status === "quoted") return SHOW_RFQ_QUOTES ? t("docFilterQuoted") : t("rfqStatusInReview");
   if (status === "accepted") return SHOW_RFQ_QUOTES ? t("docFilterAccepted") : t("rfqStatusInReview");
@@ -289,8 +330,7 @@ function rfqLineSummary(rfq, t) {
   return `${first} +${rfq.lines.length - 1}`;
 }
 
-const RECENT_RFQ_LIMIT = 8;
-const SEARCH_RESULT_LIMIT = 8;
+const SEARCH_RESULT_LIMIT = 40;
 
 function sortRfqsNewestFirst(rfqs) {
   return [...(rfqs || [])].sort((a, b) => {
@@ -377,16 +417,6 @@ function RfqDocSwitcher({ list, selectedId, onSelect, onViewQuote, acceptedByRfq
   );
 
   const results = filtered.slice(0, SEARCH_RESULT_LIMIT);
-  const recent = useMemo(() => {
-    const scoped =
-      projectFilter === "all"
-        ? list
-        : list.filter((rfq) => {
-            const name = rfqProjectName(rfq);
-            return projectFilter === UNASSIGNED_PROJECT ? !name : name === projectFilter;
-          });
-    return scoped.slice(0, RECENT_RFQ_LIMIT);
-  }, [list, projectFilter]);
 
   function pick(id) {
     const rfq = list.find((row) => row.id === id);
@@ -456,135 +486,79 @@ function RfqDocSwitcher({ list, selectedId, onSelect, onViewQuote, acceptedByRfq
               id="rfq-doc-search"
               type="search"
               value={query}
-              onChange={(e) => {
-                setQuery(e.target.value);
-                setOpen(true);
-              }}
-              onFocus={() => setOpen(true)}
+              onChange={(e) => setQuery(e.target.value)}
               placeholder={t("searchRfqs")}
               className="w-full border border-line bg-paper/60 px-3 py-1.5 text-sm text-ink"
-              aria-expanded={open}
-              aria-controls="rfq-doc-results"
               autoComplete="off"
             />
           </div>
         </div>
 
-        {list.length > 1 ? (
-          <div className="mt-2 flex gap-1.5 overflow-x-auto pb-0.5">
-            {recent.map((rfq) => {
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {filters.map((filter) => {
+            const active = statusFilter === filter.id;
+            return (
+              <button
+                key={filter.id}
+                type="button"
+                onClick={() => setStatusFilter(filter.id)}
+                className={`px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide border rounded-full ${
+                  active
+                    ? "border-brand-600 bg-brand-50 text-brand-800"
+                    : "border-line bg-white text-mute hover:border-brand-300"
+                }`}
+              >
+                {filter.label} {filter.count}
+              </button>
+            );
+          })}
+        </div>
+
+        <div id="rfq-doc-results" role="listbox" className="mt-2 max-h-64 overflow-auto divide-y divide-line border-t border-line">
+          {results.length ? (
+            results.map((rfq) => {
               const active = rfq.id === selectedId;
               const itemStatus = rfqDocStatus(rfq, acceptedByRfq);
-              const project = rfqProjectName(rfq);
               return (
                 <button
                   key={rfq.id}
                   type="button"
-                  title={`${rfq.id} · ${rfqDocStatusLabel(itemStatus, t)} · ${project || t("filterProjectUnassigned")}`}
+                  role="option"
+                  aria-selected={active}
                   onClick={() => pick(rfq.id)}
-                  className={`shrink-0 rounded-full border px-2.5 py-1 text-left transition-colors ${
-                    active
-                      ? "border-brand-600 bg-brand-50 text-brand-800"
-                      : "border-line bg-white text-ink hover:border-brand-300"
+                  className={`w-full text-left px-2 py-2 flex items-start justify-between gap-3 ${
+                    active ? "bg-brand-50" : "hover:bg-paper"
                   }`}
                 >
-                  <span className="text-sm font-bold tabular-nums">{rfqShortId(rfq.id)}</span>
-                  <span className={`ml-1.5 text-[10px] font-semibold uppercase tracking-wide ${active ? "text-brand-700" : "text-mute"}`}>
-                    {rfqDocStatusLabel(itemStatus, t)}
-                  </span>
-                  {itemStatus === "quoted" ? (
-                    <span className="ml-1.5 text-[11px] font-semibold tabular-nums text-ink">
-                      {formatPrice(rfqListSubtotal(rfq))}
+                  <span className="min-w-0">
+                    <span className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-brand-800">{rfq.id}</span>
+                      <span className="text-[10px] font-bold uppercase tracking-wide text-brand-600">
+                        {rfqDocStatusLabel(itemStatus, t)}
+                      </span>
                     </span>
-                  ) : null}
+                    <span className="mt-0.5 block text-xs text-mute truncate">{rfqLineSummary(rfq, t)}</span>
+                    <span className="mt-0.5 block text-[11px] text-mute truncate">
+                      {rfqProjectName(rfq) || t("filterProjectUnassigned")}
+                      {" · "}
+                      {formatQuoteVersionStamp(rfqLastActivity(rfq, { audience: "buyer" })?.at || rfq.submittedAt)}
+                    </span>
+                  </span>
+                  <span className="shrink-0 text-sm font-semibold tabular-nums text-ink">
+                    {formatPrice(rfqListSubtotal(rfq))}
+                  </span>
                 </button>
               );
-            })}
-          </div>
+            })
+          ) : (
+            <p className="px-2 py-4 text-sm text-mute">{t("noMatchingRfqs")}</p>
+          )}
+        </div>
+        {filtered.length > results.length ? (
+          <p className="mt-1 px-1 text-[11px] text-mute">{t("showingRfqsOf", { shown: results.length, total: filtered.length })}</p>
         ) : null}
       </div>
 
-      {open ? (
-        <div
-          id="rfq-doc-results"
-          role="listbox"
-          className="absolute z-30 mt-1 w-full bg-white border border-line rounded-xl shadow-lg overflow-hidden"
-        >
-          <div className="px-3 py-2 border-b border-line flex flex-wrap gap-1.5">
-            {filters.map((filter) => {
-              const active = statusFilter === filter.id;
-              return (
-                <button
-                  key={filter.id}
-                  type="button"
-                  onClick={() => setStatusFilter(filter.id)}
-                  className={`px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide border rounded-full ${
-                    active
-                      ? "border-brand-600 bg-brand-50 text-brand-800"
-                      : "border-line bg-white text-mute hover:border-brand-300"
-                  }`}
-                >
-                  {filter.label} {filter.count}
-                </button>
-              );
-            })}
-          </div>
-
-          {query.trim() ? (
-            results.length ? (
-              <div>
-                {results.map((rfq) => {
-                  const active = rfq.id === selectedId;
-                  return (
-                    <button
-                      key={rfq.id}
-                      type="button"
-                      role="option"
-                      aria-selected={active}
-                      onClick={() => pick(rfq.id)}
-                      className={`w-full text-left px-4 py-2.5 flex items-start justify-between gap-3 ${
-                        active ? "bg-brand-50" : "hover:bg-paper"
-                      }`}
-                    >
-                      <span className="min-w-0">
-                        <span className="flex items-center gap-2">
-                          <span className="text-sm font-semibold text-brand-800">{rfq.id}</span>
-                          <span className="text-[10px] font-bold uppercase tracking-wide text-brand-600">
-                            {rfqDocStatusLabel(rfqDocStatus(rfq, acceptedByRfq), t)}
-                          </span>
-                        </span>
-                        <span className="mt-0.5 block text-xs text-mute truncate">{rfqLineSummary(rfq, t)}</span>
-                        <span className="mt-0.5 block text-[11px] text-mute truncate">
-                          {rfqProjectName(rfq) || t("filterProjectUnassigned")}
-                          {" · "}
-                          {formatQuoteVersionStamp(rfqLastActivity(rfq, { audience: "buyer" })?.at || rfq.submittedAt)}
-                        </span>
-                      </span>
-                      <span className="shrink-0 text-right">
-                        <span className="block text-sm font-semibold tabular-nums text-ink">
-                          {formatPrice(rfqListSubtotal(rfq))}
-                        </span>
-                        {SHOW_RFQ_QUOTES && rfqDocStatus(rfq, acceptedByRfq) === "quoted" ? (
-                          <span className="mt-1 inline-flex rounded-lg bg-brand-600 px-2.5 py-1 text-[11px] font-semibold text-white">
-                            {t("viewQuote")}
-                          </span>
-                        ) : null}
-                      </span>
-                    </button>
-                  );
-                })}
-                <p className="px-4 py-2 text-[11px] text-mute border-t border-line">
-                  {t("showingRfqsOf", { shown: results.length, total: filtered.length })}
-                </p>
-              </div>
-            ) : (
-              <p className="px-4 py-6 text-sm text-mute">{t("noMatchingRfqs")}</p>
-            )
-          ) : (
-            <p className="px-4 py-6 text-sm text-mute">{t("typeToFindRfqs", { n: list.length })}</p>
-          )}
-        </div>
-      ) : null}
       {quotedRows.length ? (
         <ul className="mt-2 space-y-2">
           {quotedRows.map((rfq) => {
@@ -637,9 +611,11 @@ export default function RfqsPage() {
   const [focusQuoteId, setFocusQuoteId] = useState(null);
   const [focusTick, setFocusTick] = useState(0);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [confirmReverse, setConfirmReverse] = useState(false);
   const [cancelFlash, setCancelFlash] = useState("");
   const [contactOpen, setContactOpen] = useState(false);
   const [quoteViewVersion, setQuoteViewVersion] = useState("");
+  const [requestViewVersion, setRequestViewVersion] = useState("");
   const contactRef = useRef(null);
 
   const selected = useMemo(() => {
@@ -673,9 +649,21 @@ export default function RfqsPage() {
     setQuoteViewVersion(selectedEffectiveNo ? String(selectedEffectiveNo) : "");
   }, [selected?.id, selectedEffectiveNo]);
 
+  const requestVersions = selected ? rfqRequestVersionList(selected) : [];
+  const requestEffectiveNo = selected ? rfqRequestEffectiveVersionNo(selected) : 0;
+  const viewingRequestNo = Number(requestViewVersion) || requestEffectiveNo;
+  const historicalRequestView =
+    requestVersions.length > 0 && Number(viewingRequestNo) !== Number(requestEffectiveNo);
+  const displayRfq = selected && historicalRequestView ? applyRfqRequestVersion(selected, viewingRequestNo) : selected;
+
+  useEffect(() => {
+    setRequestViewVersion(requestEffectiveNo ? String(requestEffectiveNo) : "");
+  }, [selected?.id, requestEffectiveNo]);
+
   useEffect(() => {
     setCancelFlash("");
     setConfirmCancel(false);
+    setConfirmReverse(false);
   }, [selected?.id]);
 
   const acceptance = selected ? acceptedByRfq[selected.id] || null : null;
@@ -711,6 +699,10 @@ export default function RfqsPage() {
     ? t("rfqCancelled")
     : selected?.cancelStatus === "requested"
       ? t("rfqCancelRequested")
+      : selected?.reverseStatus === "requested"
+        ? t("rfqReverseRequested")
+        : inbox === "revising"
+          ? t("rfqRevising")
       : !SHOW_RFQ_QUOTES && inbox === "accepted"
         ? t("rfqStatusInReview")
         : !SHOW_RFQ_QUOTES && awaitingSales
@@ -861,9 +853,9 @@ export default function RfqsPage() {
                   <p className="mt-0.5 text-xs text-mute">
                     {rfqProjectName(selected) || t("filterProjectUnassigned")}
                     {" · "}
-                    {selected.lines.length === 1
+                    {(selected.lines || []).length === 1
                       ? t("rfqLineCountOne")
-                      : t("rfqLineCount", { n: selected.lines.length })}
+                      : t("rfqLineCount", { n: (selected.lines || []).length })}
                     {" · "}
                     {formatPrice(rfqListSubtotal(selected))}
                   </p>
@@ -929,19 +921,70 @@ export default function RfqsPage() {
                     >
                       {t("rfqDownload")}
                     </button>
+                    {selected.id !== DEMO_QUOTED_RFQ.id && canBuyerReverse(selected) ? (
+                      <button
+                        type="button"
+                        className="inline-flex items-center border border-brand-600 bg-white px-4 py-2.5 text-sm font-semibold text-brand-800 hover:bg-brand-50"
+                        onClick={() => {
+                          setContactOpen(false);
+                          setConfirmCancel(false);
+                          setConfirmReverse(true);
+                        }}
+                      >
+                        {t("rfqReverse")}
+                      </button>
+                    ) : null}
                     {selected.id !== DEMO_QUOTED_RFQ.id && canBuyerRequestCancel(selected) ? (
                       <button
                         type="button"
                         className="inline-flex items-center border border-red-300 bg-white px-4 py-2.5 text-sm font-semibold text-red-700 hover:bg-red-50"
                         onClick={() => {
                           setContactOpen(false);
+                          setConfirmReverse(false);
                           setConfirmCancel(true);
                         }}
                       >
                         {t("rfqCancel")}
                       </button>
                     ) : null}
+                    {inbox === "revising" && !historicalRequestView ? (
+                      <button
+                        type="button"
+                        className="inline-flex items-center bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700"
+                        onClick={() => {
+                          const result = resubmitRfq(selected.id);
+                          if (result?.ok) {
+                            setRequestViewVersion("");
+                            setCancelFlash(t("rfqResubmitHint"));
+                          }
+                        }}
+                      >
+                        {t("rfqResubmit")}
+                      </button>
+                    ) : null}
                   </div>
+                  {confirmReverse && selected.id !== DEMO_QUOTED_RFQ.id && canBuyerReverse(selected) ? (
+                    <div className="max-w-xs rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-right">
+                      <p className="text-xs text-brand-900">{t("rfqReverseHint")}</p>
+                      <div className="mt-2 flex justify-end gap-2">
+                        <button type="button" className="btn-soft !px-3 !py-1.5 !text-xs" onClick={() => setConfirmReverse(false)}>
+                          {t("rfqCancelBack")}
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-lg bg-brand-700 px-3 py-1.5 text-xs font-semibold text-white"
+                          onClick={() => {
+                            const result = requestRfqReverse(selected.id);
+                            setConfirmReverse(false);
+                            if (result?.ok && result.rfq?.reviewStatus === "revising") setCancelFlash(t("rfqReverseCopied"));
+                            else if (result?.ok) setCancelFlash(t("rfqReverseNotified"));
+                          }}
+                        >
+                          {t("rfqReverseConfirm")}
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
                   {confirmCancel && selected.id !== DEMO_QUOTED_RFQ.id && canBuyerRequestCancel(selected) ? (
                     <div className="max-w-xs rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-right">
                       <p className="text-xs text-amber-900">{t("rfqCancelHint")}</p>
@@ -955,7 +998,8 @@ export default function RfqsPage() {
                           onClick={() => {
                             const result = requestRfqCancel(selected.id);
                             setConfirmCancel(false);
-                            if (result?.ok) setCancelFlash(t("rfqCancelNotified"));
+                            if (result?.ok && result.rfq?.reviewStatus === "cancelled") setCancelFlash(t("rfqCancelled"));
+                            else if (result?.ok) setCancelFlash(t("rfqCancelNotified"));
                           }}
                         >
                           {t("rfqCancelConfirm")}
@@ -991,23 +1035,49 @@ export default function RfqsPage() {
               {cancelFlash ? (
                 <p className="mt-3 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-sm text-brand-900">{cancelFlash}</p>
               ) : null}
+              {selected.reverseStatus === "requested" ? (
+                <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                  {t("rfqReverseRequestedHint")}
+                </p>
+              ) : null}
               {selected.cancelStatus === "requested" ? (
                 <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
                   {t("rfqCancelRequestedHint")}
                 </p>
               ) : null}
               {selected.cancelStatus === "accepted" || inbox === "cancelled" ? (
-                <p className="mt-3 rounded-lg border border-line bg-paper px-3 py-2 text-sm text-mute">{t("rfqCancelled")}</p>
+                <div className="mt-3 rounded-lg border border-line bg-paper px-3 py-2 text-sm text-mute">
+                  <p>{t("rfqCancelled")}</p>
+                </div>
               ) : null}
               {selected.cancelStatus === "declined" ? (
                 <p className="mt-3 rounded-lg border border-line bg-paper px-3 py-2 text-sm text-mute">{t("rfqCancelDeclined")}</p>
               ) : null}
 
               <div className="mt-3">
+                <RfqRequestVersionSelect
+                  rfq={selected}
+                  value={requestViewVersion || String(requestEffectiveNo)}
+                  onChange={setRequestViewVersion}
+                  currentLabel={t("rfqVersionCurrent")}
+                  label={t("rfqVersion")}
+                  id={`mm-rfq-version-${selected.id}`}
+                />
+                {historicalRequestView ? (
+                  <p className="mt-1 text-xs text-mute">{t("rfqVersionHistoricalHint")}</p>
+                ) : null}
+              </div>
+
+              <div className="mt-3">
                 <RfqActivityLog rfq={selected} lang={lang} audience="buyer" title={t("rfqActivityTitle")} />
               </div>
 
-              <RfqDetailsSummary rfq={selected} t={t} />
+              <RfqDetailsSummary
+                rfq={displayRfq}
+                t={t}
+                editing={inbox === "revising" && !historicalRequestView}
+                onPatch={(patch) => updateBuyerRfqDetails(selected.id, patch)}
+              />
 
               {SHOW_RFQ_QUOTES ? (
               <div className="mt-4">
@@ -1022,7 +1092,14 @@ export default function RfqsPage() {
 
               <div className="mt-4">
                 {activeStep === "submitted" || !SHOW_RFQ_QUOTES ? (
-                  <SubmittedStep rfq={selected} t={t} />
+                  <SubmittedStep
+                    rfq={displayRfq || selected}
+                    t={t}
+                    editing={inbox === "revising" && !historicalRequestView}
+                    onChangeLine={(productId, qty) => updateBuyerRfqDetails(selected.id, { lines: [{ productId, qty }] })}
+                    onRemoveLine={(productId) => updateBuyerRfqDetails(selected.id, { removeProductIds: [productId] })}
+                    onAddCustom={(payload) => updateBuyerRfqDetails(selected.id, { addLines: [{ ...payload, custom: true }] })}
+                  />
                 ) : null}
 
                 {SHOW_RFQ_QUOTES && activeStep === "quotes" ? (
@@ -1137,12 +1214,13 @@ function Shell({ children, wide = false, fluid = false }) {
   );
 }
 
-function SubmittedStep({ rfq, t }) {
+function SubmittedStep({ rfq, t, editing = false, onChangeLine, onRemoveLine, onAddCustom }) {
+  if (!rfq) return null;
   return (
     <div>
       <h3 className="text-sm font-semibold text-brand-800">{t("lineItems")}</h3>
       <ul className="mt-2 divide-y divide-line border-y border-line">
-        {rfq.lines.map((l) => {
+        {(rfq.lines || []).map((l) => {
           const thumb = lineThumb(l);
           return (
           <li key={`${l.productId}-${l.qty}`} className="flex justify-between gap-3 py-2.5 text-sm">
@@ -1154,7 +1232,7 @@ function SubmittedStep({ rfq, t }) {
               )}
               <span className="min-w-0">
               <span className="font-medium text-ink">
-                {l.name} × {l.qty}
+                {l.name}{editing ? "" : ` × ${l.qty}`}
                 {l.intent === "buy" || l.intent === "quote" ? (
                   <span className="ml-2 text-[10px] font-bold uppercase tracking-wide text-brand-700 bg-brand-50 px-1.5 py-0.5">
                     {t(l.intent === "buy" ? "intentBuy" : "intentQuote")}
@@ -1175,6 +1253,25 @@ function SubmittedStep({ rfq, t }) {
               {l.description ? <span className="block text-xs text-mute mt-0.5">{l.description}</span> : null}
               <AttachmentLinks files={l.attachments} />
               {l.supplier ? <span className="block text-xs text-mute mt-0.5">{l.supplier}</span> : null}
+              {editing ? (
+                <span className="mt-2 flex flex-wrap items-center gap-2">
+                  <label className="text-xs text-mute">
+                    {t("qty")}
+                    <input
+                      type="number"
+                      min="1"
+                      className="ml-1 w-16 rounded border border-line px-1.5 py-1 text-sm text-ink"
+                      value={l.qty}
+                      onChange={(e) => onChangeLine?.(l.productId, Math.max(1, Math.floor(Number(e.target.value) || 1)))}
+                    />
+                  </label>
+                  {(rfq.lines || []).length > 1 ? (
+                    <button type="button" className="text-xs font-semibold text-red-700 hover:underline" onClick={() => onRemoveLine?.(l.productId)}>
+                      {t("remove")}
+                    </button>
+                  ) : null}
+                </span>
+              ) : null}
               </span>
             </span>
             <span className="text-mute shrink-0 text-right">
@@ -1206,6 +1303,16 @@ function SubmittedStep({ rfq, t }) {
           );
         })}
       </ul>
+      {editing ? (
+        <div className="mt-4 rounded-lg border border-line bg-paper/50 p-3">
+          <CustomProductForm
+            compact
+            onSubmit={(payload) => {
+              onAddCustom?.(payload);
+            }}
+          />
+        </div>
+      ) : null}
       {rfq.note ? (
         <p className="mt-4 text-sm text-mute">
           <span className="font-medium text-ink">{t("noteLabel")}</span> {rfq.note}
