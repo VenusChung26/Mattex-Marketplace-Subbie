@@ -1,7 +1,7 @@
 import { MATTEX_PRODUCTS } from "../data/mattexProducts.js";
 import { collectAttachmentUrls, collectProductImageUrls, fitWhatsappUrls, uploadRfqPdf } from "./rfqBlob.js";
 import { buildQuotePdf, canSharePdfFile, downloadBlob, sharePdfFile } from "./quotePdf.js";
-import { fetchRemoteState, isSupabaseConfigured, persistKv } from "./supabasePersist.js";
+import { fetchRemoteKv, fetchRemoteState, isSupabaseConfigured, persistKv } from "./supabasePersist.js";
 import { adminOrigin, marketplaceOrigin } from "./origins.js";
 import {
   accountCreatedEmailHtml,
@@ -4662,14 +4662,9 @@ function rfqBuyerKind(rfq) {
   return "member";
 }
 
-/** Member marketplace RFQs + guest WhatsApp RFQs (dev-1 inbox when quotes are hidden). */
+/** Marketplace submissions that belong in the sales inbox (guest + member). */
 function isDev1InboxRfq(rfq) {
-  if (!rfq?.id) return false;
-  const kind = rfqBuyerKind(rfq);
-  if (kind === "member") return true;
-  const channel = String(rfq.channel || "");
-  const status = String(rfq.status || "");
-  return kind === "guest" && (channel === "whatsapp" || status === "whatsapp_sent");
+  return Boolean(rfq?.id);
 }
 
 function setRfqLineQuotedPrice(id, productId, price) {
@@ -6815,30 +6810,55 @@ function applySharedStore(kv) {
   return changed;
 }
 
+async function pullSupabaseSharedStore() {
+  const kv = await fetchRemoteKv([
+    ACCOUNTS_KEY,
+    DELETED_BUYERS_KEY,
+    RFQS_KEY,
+    QUOTE_SNAPSHOTS_KEY,
+    SEQ_KEY,
+    REPORTS_KEY,
+    REPORT_SEQ_KEY,
+    ADMIN_ALERTS_KEY,
+    PRODUCT_PATCH_KEY,
+    CUSTOM_CATEGORIES_KEY,
+    CATEGORY_ADMIN_KEY,
+    TMP_SEQ_KEY,
+    STAFF_KEY,
+    TMS_SEQ_KEY,
+  ]);
+  if (kv) applySharedStore(kv);
+}
+
 async function pullSharedStore({ bootstrap = false } = {}) {
+  let usedLocalApi = false;
   try {
     const res = await fetch("/api/shared-store");
-    if (!res.ok) return;
-    const data = await res.json();
-    const rev = Number(data?.rev) || 0;
-    if (bootstrap) {
-      if (data?.kv && Object.keys(data.kv).length) applySharedStore(data.kv);
-      const localKv = dumpLocalSharedKv();
-      if (Object.keys(localKv).length) {
-        await fetch("/api/shared-store", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ kv: localKv, bootstrap: true }),
-        });
+    if (res.ok) {
+      usedLocalApi = true;
+      const data = await res.json();
+      const rev = Number(data?.rev) || 0;
+      if (bootstrap) {
+        if (data?.kv && Object.keys(data.kv).length) applySharedStore(data.kv);
+        const localKv = dumpLocalSharedKv();
+        if (Object.keys(localKv).length) {
+          await fetch("/api/shared-store", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ kv: localKv, bootstrap: true }),
+          });
+        }
+        sharedStoreRev = rev;
+      } else if (rev !== sharedStoreRev) {
+        applySharedStore(data.kv);
+        sharedStoreRev = rev;
       }
-      sharedStoreRev = rev;
-      return;
     }
-    if (rev === sharedStoreRev) return;
-    applySharedStore(data.kv);
-    sharedStoreRev = rev;
   } catch {
     /* ignore */
+  }
+  if (!usedLocalApi || bootstrap) {
+    await pullSupabaseSharedStore();
   }
 }
 

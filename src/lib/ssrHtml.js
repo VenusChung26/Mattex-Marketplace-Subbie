@@ -250,12 +250,15 @@ function bootPayload(page) {
 }
 
 function ssrBody(page) {
-  const img = safeImage(page.product?.image || page.image);
-  return `<article data-ssr="mattex">
+  return `<div data-ssr="mattex" class="mattex-boot">
+      <div class="mattex-boot-orb" aria-hidden="true">
+        <img class="mattex-boot-logo" src="/assets/mattex-logo.png" alt="" />
+      </div>
       <h1>${esc(page.heading || page.title)}</h1>
-      ${img ? `<img src="${esc(img)}" alt="${esc(page.heading || page.title)}" />` : ""}
       <p>${esc(page.body || page.description)}</p>
-    </article>`;
+      <div class="mattex-boot-bar" aria-hidden="true"><span></span></div>
+      <p class="mattex-boot-status">Loading catalog</p>
+    </div>`;
 }
 
 export function injectPublicDocument(html, pathname, origin = siteOrigin()) {
@@ -274,11 +277,14 @@ export function injectPublicDocument(html, pathname, origin = siteOrigin()) {
   if (next.includes("window.__MATTEX_PAGE__")) {
     next = next.replace(/<script>window\.__MATTEX_PAGE__=[\s\S]*?<\/script>/, boot);
   } else {
-    next = next.replace('<div id="root"></div>', `${boot}\n    <div id="root">${ssrBody(page)}</div>`);
+    next = next.replace('<div id="root">', `${boot}\n    <div id="root">`);
   }
-  if (!next.includes('data-ssr="mattex"')) {
-    next = next.replace(/<div id="root"><\/div>/, `<div id="root">${ssrBody(page)}</div>`);
-    next = next.replace(/<div id="root">\s*<\/div>/, `<div id="root">${ssrBody(page)}</div>`);
+  const root = `<div id="root"><!--app-root-->${ssrBody(page)}<!--/app-root--></div>`;
+  if (next.includes("<!--app-root-->")) {
+    next = next.replace(/<div id="root"><!--app-root-->[\s\S]*?<!--\/app-root--><\/div>/, root);
+  } else if (!next.includes('data-ssr="mattex"')) {
+    next = next.replace(/<div id="root"><\/div>/, root);
+    next = next.replace(/<div id="root">\s*<\/div>/, root);
   }
   return next;
 }

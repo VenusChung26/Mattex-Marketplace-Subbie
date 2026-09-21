@@ -126,8 +126,31 @@ function upsertRfqIntoMap(map, buyerKey, rfq) {
   return next;
 }
 
+function jsonResponse(body, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json; charset=utf-8" },
+  });
+}
+
 export function handleSharedStoreGet() {
   return readStore();
+}
+
+export async function GET() {
+  if (process.env.VERCEL) return jsonResponse({ error: "use-supabase" }, 501);
+  return jsonResponse(handleSharedStoreGet());
+}
+
+export async function POST(request) {
+  if (process.env.VERCEL) return jsonResponse({ error: "use-supabase" }, 501);
+  let body = {};
+  try {
+    body = await request.json();
+  } catch {
+    return jsonResponse({ error: "invalid json" }, 400);
+  }
+  return jsonResponse(handleSharedStorePost(body));
 }
 
 export function handleSharedStorePost(body = {}) {
