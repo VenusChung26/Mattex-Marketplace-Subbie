@@ -72,6 +72,11 @@ const { PRODUCTS, getSuppliers, buildSupplierMetrics, supplierSlug } = await imp
   "../src/lib/store.js"
 );
 
+if (!PRODUCTS.length) {
+  console.log("Catalog lives in Supabase. Skip seeding products from GitHub.");
+  process.exit(0);
+}
+
 const sb = createClient(url, key, {
   auth: { persistSession: false, autoRefreshToken: false },
 });

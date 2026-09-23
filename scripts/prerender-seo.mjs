@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { hydrateStore } from "../src/lib/store.js";
 import { absUrl, siteOrigin, stripLocale, withLocale } from "../src/lib/locale.js";
 import { injectPublicDocument, listPublicPrerenderPaths } from "../src/lib/ssrHtml.js";
 
@@ -22,6 +23,7 @@ async function writePage(relPath, html) {
 }
 
 async function main() {
+  await hydrateStore();
   const template = await readFile(path.join(distDir, "index.html"), "utf8");
   const paths = listPublicPrerenderPaths();
 

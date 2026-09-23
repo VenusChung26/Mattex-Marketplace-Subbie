@@ -68,6 +68,18 @@ function skipPersistKey(key) {
   return !name || SKIP_KV_KEYS.has(name) || name.startsWith("subbie_drafts");
 }
 
+export function persistKvNow(key, value) {
+  if (skipPersistKey(key) || !isSupabaseConfigured()) return Promise.resolve();
+  const sb = getSupabase();
+  if (!sb) return Promise.resolve();
+  return sb
+    .from("app_kv")
+    .upsert({ key, value, updated_at: new Date().toISOString() })
+    .then(({ error }) => {
+      if (error) console.warn("supabase persist", key, error.message);
+    });
+}
+
 export function persistKv(key, value) {
   if (skipPersistKey(key) || !isSupabaseConfigured()) return;
   const prev = timers.get(key);
@@ -76,13 +88,7 @@ export function persistKv(key, value) {
     key,
     setTimeout(() => {
       timers.delete(key);
-      const sb = getSupabase();
-      if (!sb) return;
-      sb.from("app_kv")
-        .upsert({ key, value, updated_at: new Date().toISOString() })
-        .then(({ error }) => {
-          if (error) console.warn("supabase persist", key, error.message);
-        });
+      persistKvNow(key, value);
     }, 400)
   );
 }
@@ -101,7 +107,8 @@ export async function fetchRemoteKv(keys) {
   if (!sb) return null;
   try {
     let query = sb.from("app_kv").select("key,value").not("key", "like", "subbie_drafts%");
-    if (Array.isArray(keys) && keys.length) query = query.in("key", keys);
+    if (Array.isArray(keys) && keys.length === 1) query = query.eq("key", keys[0]);
+    else if (Array.isArray(keys) && keys.length) query = query.in("key", keys);
     const { data, error } = await query;
     if (error) {
       console.warn("supabase kv", error.message);
@@ -114,23 +121,61 @@ export async function fetchRemoteKv(keys) {
   }
 }
 
+function rfqsMapFromRows(rows) {
+  const out = {};
+  for (const row of rows || []) {
+    const payload = row?.payload;
+    if (!payload?.id) continue;
+    const key = String(row.buyer_key || payload.buyerEmail || "__guest__");
+    if (!out[key]) out[key] = [];
+    out[key].push(payload);
+  }
+  return out;
+}
+
+export async function fetchRemoteRfqs() {
+  const sb = getSupabase();
+  if (!sb) return null;
+  try {
+    const { data, error } = await sb.from("rfqs").select("buyer_key,payload");
+    if (error) {
+      console.warn("supabase rfqs", error.message);
+      return null;
+    }
+    return rfqsMapFromRows(data);
+  } catch (error) {
+    console.warn("supabase rfqs", error?.message || error);
+    return null;
+  }
+}
+
 export async function fetchRemoteState() {
   const sb = getSupabase();
   if (!sb) return null;
   try {
-    const [kvRes, productRes, metricRes] = await Promise.all([
+    const [kvRes, productRes, metricRes, rfqRes, accountRes] = await Promise.all([
       sb.from("app_kv").select("key,value").not("key", "like", "subbie_drafts%"),
-      sb.from("products").select("id,payload"),
+      sb.from("products").select("id,payload,image_url"),
       sb.from("supplier_metrics").select("*"),
+      sb.from("rfqs").select("buyer_key,payload"),
+      sb.from("user_accounts").select("email,kind,name,phone,company_name,password,enabled,approval_status,bootstrap,extra"),
     ]);
     if (kvRes.error && productRes.error) {
       console.warn("supabase hydrate", kvRes.error.message || productRes.error.message);
       return null;
     }
+    if (rfqRes.error) console.warn("supabase rfqs", rfqRes.error.message);
+    if (accountRes.error) console.warn("supabase accounts", accountRes.error.message);
     const kv = kvFromRows(kvRes.data);
     const products = (productRes.data || [])
-      .map((row) => row.payload)
-      .filter((p) => p && p.id);
+      .map((row) => {
+        const payload = row?.payload;
+        if (!payload?.id) return null;
+        const imageUrl = String(row.image_url || "").trim();
+        const image = imageUrl.startsWith("http") ? imageUrl : payload.image;
+        return { ...payload, image, imageUrl };
+      })
+      .filter(Boolean);
     const metrics = {};
     for (const row of metricRes.data || []) {
       metrics[row.slug] = {
@@ -143,9 +188,71 @@ export async function fetchRemoteState() {
         empty: Boolean(row.empty),
       };
     }
-    return { kv, products, metrics };
+    return {
+      kv,
+      products,
+      metrics,
+      rfqs: rfqsMapFromRows(rfqRes.data),
+      accounts: accountRes.data || [],
+    };
   } catch (error) {
     console.warn("supabase hydrate", error?.message || error);
     return null;
+  }
+}
+
+function chunk(list, size) {
+  const out = [];
+  for (let i = 0; i < (list || []).length; i += size) out.push(list.slice(i, i + size));
+  return out;
+}
+
+let catalogTimer = null;
+let catalogChain = Promise.resolve();
+
+export function persistCatalogTables(products) {
+  if (!isSupabaseConfigured() || !Array.isArray(products)) return;
+  if (catalogTimer) clearTimeout(catalogTimer);
+  catalogTimer = setTimeout(() => {
+    catalogTimer = null;
+    catalogChain = catalogChain.then(() => persistCatalogTablesNow(products)).catch((error) => {
+      console.warn("supabase catalog", error?.message || error);
+    });
+  }, 500);
+}
+
+export async function persistCatalogTablesNow(products) {
+  const sb = getSupabase();
+  if (!sb || !Array.isArray(products)) return;
+  const rows = products
+    .filter((p) => p && p.id)
+    .map((p) => ({
+      id: p.id,
+      payload: p,
+      updated_at: new Date().toISOString(),
+    }));
+  for (const part of chunk(rows, 80)) {
+    const { error } = await sb.from("products").upsert(part);
+    if (error) throw error;
+  }
+  const ids = rows.map((row) => row.id);
+  const existing = new Set();
+  for (const part of chunk(ids, 80)) {
+    const { data, error } = await sb.from("product_images").select("product_id").in("product_id", part);
+    if (error) throw error;
+    (data || []).forEach((row) => existing.add(row.product_id));
+  }
+  const imageRows = products
+    .filter((p) => p?.id && p.image && !existing.has(p.id))
+    .map((p) => ({
+      product_id: p.id,
+      url: p.image,
+      sort_order: 0,
+      is_primary: true,
+      source: "catalog",
+    }));
+  for (const part of chunk(imageRows, 80)) {
+    const { error } = await sb.from("product_images").upsert(part, { onConflict: "product_id,sort_order" });
+    if (error) throw error;
   }
 }

@@ -657,14 +657,14 @@ export default function AdminPortal() {
 
   return (
     <div className="flex min-h-screen bg-paper text-ink font-sans">
-      <aside className="relative w-60 shrink-0 bg-charcoal text-white">
-        <div className="flex items-center gap-2.5 px-4 py-4">
+      <aside className="sticky top-0 flex h-dvh w-60 shrink-0 flex-col self-start bg-charcoal text-white">
+        <div className="flex shrink-0 items-center gap-2.5 px-4 py-4">
           <img src="/assets/mattex-logo.png" alt="" className="h-8 w-auto shrink-0 brightness-0 invert" />
           <span className="min-w-0 text-[15px] font-semibold leading-tight tracking-tight">
             Mattex Marketplace Admin Portal
           </span>
         </div>
-        <nav className="space-y-1 px-3 pb-32">
+        <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto px-3">
           {NAV.map((item) => {
             if (item.id === "products") {
               const active = page === "products";
@@ -798,7 +798,7 @@ export default function AdminPortal() {
             );
           })}
         </nav>
-        <div className="absolute bottom-6 left-4 right-4 text-xs text-white/50">
+        <div className="shrink-0 px-4 pb-6 pt-3 text-xs text-white/50">
           <p>{staff.email}</p>
           <button
             type="button"
@@ -3839,6 +3839,7 @@ function RfqPanel({ rfqs: rawRfqs, note, focusId = "", onClearFocus, onOpenDetai
   const [waBusyId, setWaBusyId] = useState("");
   const [waOpenedId, setWaOpenedId] = useState("");
   const [pinnedId, setPinnedId] = useState("");
+  const [rfqPulling, setRfqPulling] = useState(false);
   const focused = Boolean(focusId) && rfqs.some((r) => r.id === focusId);
   const needle = searchNeedle(query);
   const searchedRfqs = needle
@@ -3872,6 +3873,25 @@ function RfqPanel({ rfqs: rawRfqs, note, focusId = "", onClearFocus, onOpenDetai
     }, 80);
     return () => window.clearTimeout(timer);
   }, [focusId, view]);
+
+  useEffect(() => {
+    if (!focusId || focused) {
+      setRfqPulling(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setRfqPulling(true);
+    const tick = async () => {
+      await pullSharedStore();
+      if (!cancelled) setRfqPulling(false);
+    };
+    tick();
+    const timer = window.setInterval(tick, 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [focusId, focused]);
 
   useEffect(() => {
     setWaOpenedId("");
@@ -4232,7 +4252,9 @@ function RfqPanel({ rfqs: rawRfqs, note, focusId = "", onClearFocus, onOpenDetai
         >
           {focused
             ? `Opened from Marketplace · ${focusId}. Buyer can still open the same RFQ under My RFQs.`
-            : `RFQ ${focusId} is not in this portal inbox. Buyer and sales need the same browser for the demo.`}
+            : rfqPulling
+              ? `Loading ${focusId} from Marketplace…`
+              : `${focusId} is not in this inbox yet. Refresh, or wait a moment for Marketplace to sync.`}
         </p>
       ) : null}
 

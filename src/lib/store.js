@@ -1,7 +1,6 @@
-import { MATTEX_PRODUCTS } from "../data/mattexProducts.js";
 import { collectAttachmentUrls, collectProductImageUrls, fitWhatsappUrls, uploadRfqPdf } from "./rfqBlob.js";
 import { buildQuotePdf, canSharePdfFile, downloadBlob, sharePdfFile } from "./quotePdf.js";
-import { fetchRemoteKv, fetchRemoteState, isSupabaseConfigured, persistKv } from "./supabasePersist.js";
+import { fetchRemoteKv, fetchRemoteRfqs, fetchRemoteState, isSupabaseConfigured, persistCatalogTables, persistKv, persistKvNow } from "./supabasePersist.js";
 import { adminOrigin, marketplaceOrigin } from "./origins.js";
 import {
   accountCreatedEmailHtml,
@@ -263,7 +262,12 @@ function normalizeProductRecord(product) {
     remark: product.remark || "",
     needsChainImage: Boolean(product.needsChainImage),
     tailorMade: Boolean(product.tailorMade),
-    images: Array.isArray(product.images) ? product.images.filter(Boolean).slice(0, 5) : [],
+    image: String(product.imageUrl || product.image || "").startsWith("http")
+      ? product.imageUrl || product.image
+      : product.image || product.imageUrl || "",
+    images: Array.isArray(product.images) && product.images.length
+      ? product.images.filter(Boolean).slice(0, 5)
+      : (product.imageUrl || product.image ? [product.imageUrl || product.image] : []),
     certFiles: Array.isArray(product.certFiles) ? product.certFiles : [],
     createdAt: Number(product.createdAt) > 0 ? Number(product.createdAt) : product.createdAt || 0,
   };
@@ -387,57 +391,7 @@ function writeCategoryAdminMeta(meta) {
 }
 
 function buildProducts() {
-  const featuredIds = [];
-  const out = [];
-  CATEGORY_DEFS.forEach((cat) => {
-    if (!SYNTHETIC_CATEGORY_IDS.has(cat.id)) return;
-    const total = cat.count;
-    for (let i = 1; i <= total; i++) {
-      const id = cat.id + "-" + String(i).padStart(2, "0");
-      const unpriced = i % 3 === 0 || (total <= 4 && i === total);
-      const price = unpriced
-        ? null
-        : Math.round((cat.base * (0.85 + (i % 7) * 0.08)) * 100) / 100;
-      const name =
-        FEATURED_NAMES[id] ||
-        cat.name.split(",")[0].trim() + " " + cat.unit + " #" + i;
-      const isGreen = GREEN_PRODUCT_IDS.has(id);
-      const suppliers = ALT_SUPPLIERS[cat.id] || [cat.supplier];
-      const supplier = suppliers[(i - 1) % suppliers.length];
-      const prefix = CATEGORY_PREFIX[cat.id] || cat.id.slice(0, 2).toUpperCase();
-      const productNo = `SB-${prefix}-${String(i).padStart(4, "0")}`;
-      const stockStatus = stockStatusFor(i, price);
-      const moq = UNIT_MOQ[cat.unit] || 1;
-      const quote = quoteFor(i, price, isGreen);
-      out.push({
-        id,
-        name,
-        productNo,
-        category: cat.name,
-        supplier,
-        featuredRank: featuredIds.includes(id) ? featuredIds.indexOf(id) + 1 : null,
-        green: isGreen,
-        price,
-        quote,
-        unit: cat.unit,
-        moq,
-        stockStatus,
-        leadTime: leadTimeFor(stockStatus, i),
-        standard: CATEGORY_STANDARDS[cat.id] || "—",
-        description: isGreen
-          ? GREEN_BLURBS[id] || "Green-preferred SKU for lower-impact project procurement."
-          : CATEGORY_BLURBS[cat.id] || "Spec-ready SKU for RFQ.",
-        image: cat.image,
-        specs: isGreen
-          ? cat.specs.concat(["Tag: Green preferred", "Impact: lower-carbon option"])
-          : cat.specs.slice(),
-      });
-    }
-  });
-  const leftover = out.filter(
-    (p) => !HIDDEN_CATEGORY_IDS.has(categoryIdFromName(p.category)) && isMattexSupplier(p.supplier)
-  );
-  return applyMattexDemoPrices(MATTEX_PRODUCTS).concat(leftover);
+  return [];
 }
 
 function categoryKey(name) {
@@ -1102,9 +1056,16 @@ async function hydrateStore() {
   try {
     const remote = await fetchRemoteState();
     if (!remote) return false;
-    if (remote.products.length) {
-      PRODUCTS.splice(0, PRODUCTS.length, ...remote.products.map(normalizeProductRecord));
-    }
+    PRODUCTS.splice(
+      0,
+      PRODUCTS.length,
+      ...(remote.products || []).map((row) =>
+        normalizeProductRecord({
+          ...row,
+          imageUrl: row.imageUrl || row.image_url || "",
+        })
+      )
+    );
     const overlayKeys = [
       CUSTOM_CATEGORIES_KEY,
       CATEGORY_ADMIN_KEY,
@@ -1115,7 +1076,39 @@ async function hydrateStore() {
       if (remote.kv[key] == null) return;
       writeLocalOnly(key, remote.kv[key]);
     });
-    if (remote.kv[STAFF_KEY] != null) {
+    if (remote.accounts?.length) {
+      const buyers = {};
+      const staff = [];
+      remote.accounts.forEach((row) => {
+        const extra = row?.extra && typeof row.extra === "object" ? row.extra : {};
+        if (row.kind === "staff") {
+          staff.push({
+            ...extra,
+            email: row.email,
+            name: row.name || extra.name || "",
+            password: row.password || extra.password || "",
+            enabled: row.enabled !== false,
+            bootstrap: Boolean(row.bootstrap || extra.bootstrap),
+          });
+          return;
+        }
+        buyers[row.email] = {
+          ...extra,
+          email: row.email,
+          name: row.name || extra.name || "",
+          phone: row.phone || extra.phone || "",
+          companyName: row.company_name || extra.companyName || "",
+          enabled: row.enabled !== false,
+          approvalStatus: row.approval_status || extra.approvalStatus || "approved",
+        };
+      });
+      if (Object.keys(buyers).length) {
+        writeLocalOnly(ACCOUNTS_KEY, stripDeletedBuyers({ ...readJson(ACCOUNTS_KEY, {}), ...buyers }));
+      }
+      if (staff.length) {
+        writeLocalOnly(STAFF_KEY, mergeStaffLists(readJson(STAFF_KEY, []), staff));
+      }
+    } else if (remote.kv[STAFF_KEY] != null) {
       writeLocalOnly(STAFF_KEY, mergeStaffLists(readJson(STAFF_KEY, []), remote.kv[STAFF_KEY]));
     }
     if (remote.kv[PRODUCT_PATCH_KEY] != null) {
@@ -1146,11 +1139,9 @@ async function hydrateStore() {
     if (remote.kv[ACCOUNTS_KEY]) {
       writeLocalOnly(ACCOUNTS_KEY, stripDeletedBuyers({ ...readJson(ACCOUNTS_KEY, {}), ...remote.kv[ACCOUNTS_KEY] }));
     }
-    if (remote.kv[DRAFTS_KEY]) {
-      writeLocalOnly(DRAFTS_KEY, mergeDraftMaps(readJson(DRAFTS_KEY, {}), remote.kv[DRAFTS_KEY]));
-    }
-    if (remote.kv[RFQS_KEY]) {
-      writeLocalOnly(RFQS_KEY, mergeRfqMaps(readJson(RFQS_KEY, {}), remote.kv[RFQS_KEY]));
+    const remoteRfqs = mergeRfqMaps(remote.rfqs || {}, remote.kv[RFQS_KEY] || {});
+    if (Object.keys(remoteRfqs).length) {
+      writeLocalOnly(RFQS_KEY, mergeRfqMaps(readJson(RFQS_KEY, {}), remoteRfqs));
     }
     if (remote.kv[QUOTE_SNAPSHOTS_KEY]) {
       writeLocalOnly(QUOTE_SNAPSHOTS_KEY, mergeQuoteSnapshots(remote.kv[QUOTE_SNAPSHOTS_KEY], readJson(QUOTE_SNAPSHOTS_KEY, {})));
@@ -1361,6 +1352,10 @@ function writeJson(key, value) {
     localStorage.setItem(key, JSON.stringify(value));
   } catch {
     /* ignore quota */
+  }
+  if (key === RFQS_KEY) {
+    persistRfqsRemote(value);
+    return;
   }
   persistKv(key, value);
   persistShared(key, value);
@@ -3653,11 +3648,10 @@ function mergeStaffLists(local, remote) {
 }
 
 function getStaffList() {
+  const saved = readJson(STAFF_KEY, null);
   const seeded = [
     { email: BOOTSTRAP_STAFF_EMAIL, name: "Sales", password: BOOTSTRAP_STAFF_PASSWORD, enabled: true, bootstrap: true },
-    { email: "ops@mattex.com", name: "Second Sales", password: "mattex", enabled: true, bootstrap: false },
   ];
-  const saved = readJson(STAFF_KEY, null);
   const source = Array.isArray(saved) && saved.length ? saved : seeded;
   const next = mergeStaffLists(source, []);
   const fingerprint = (list) =>
@@ -6167,6 +6161,7 @@ function persistProductPatches() {
   patches.__created = created;
   patches.__removed = removed;
   writeJson(PRODUCT_PATCH_KEY, patches);
+  persistCatalogTables(PRODUCTS);
 }
 
 function applySavedProductPatches() {
@@ -6682,6 +6677,25 @@ function persistShared(key, value) {
   enqueueSharedPost({ key, value: payload });
 }
 
+let rfqRemoteChain = Promise.resolve();
+
+function persistRfqsRemote(map) {
+  const next = leanSharedRfqsMap(map);
+  persistShared(RFQS_KEY, next);
+  rfqRemoteChain = rfqRemoteChain
+    .then(async () => {
+      const remote = await fetchRemoteKv([RFQS_KEY]);
+      const merged = mergeRfqMaps(next, remote?.[RFQS_KEY] || {});
+      writeLocalOnly(RFQS_KEY, merged);
+      await persistKvNow(RFQS_KEY, leanSharedRfqsMap(merged));
+      emitStoreChange();
+    })
+    .catch((error) => {
+      console.warn("rfq persist", error?.message || error);
+    });
+  return rfqRemoteChain;
+}
+
 function persistSharedRfq(buyerKey, rfq) {
   if (!rfq?.id) return;
   enqueueSharedPost({
@@ -6689,6 +6703,7 @@ function persistSharedRfq(buyerKey, rfq) {
     buyerKey: buyerKey || GUEST_KEY,
     rfq: leanSharedRfq(rfq),
   });
+  persistRfqsRemote(getRfqsMap());
 }
 
 function dumpLocalSharedKv() {
@@ -6811,15 +6826,21 @@ function applySharedStore(kv) {
 }
 
 async function pullSupabaseSharedStore() {
+  const tableRfqs = await fetchRemoteRfqs();
+  if (tableRfqs && Object.keys(tableRfqs).length) {
+    applySharedStore({ [RFQS_KEY]: tableRfqs });
+  } else {
+    const rfqs = await fetchRemoteKv([RFQS_KEY]);
+    if (rfqs) applySharedStore(rfqs);
+  }
   const kv = await fetchRemoteKv([
+    SEQ_KEY,
+    ADMIN_ALERTS_KEY,
+    QUOTE_SNAPSHOTS_KEY,
     ACCOUNTS_KEY,
     DELETED_BUYERS_KEY,
-    RFQS_KEY,
-    QUOTE_SNAPSHOTS_KEY,
-    SEQ_KEY,
     REPORTS_KEY,
     REPORT_SEQ_KEY,
-    ADMIN_ALERTS_KEY,
     PRODUCT_PATCH_KEY,
     CUSTOM_CATEGORIES_KEY,
     CATEGORY_ADMIN_KEY,
@@ -6831,11 +6852,9 @@ async function pullSupabaseSharedStore() {
 }
 
 async function pullSharedStore({ bootstrap = false } = {}) {
-  let usedLocalApi = false;
   try {
     const res = await fetch("/api/shared-store");
     if (res.ok) {
-      usedLocalApi = true;
       const data = await res.json();
       const rev = Number(data?.rev) || 0;
       if (bootstrap) {
@@ -6857,9 +6876,7 @@ async function pullSharedStore({ bootstrap = false } = {}) {
   } catch {
     /* ignore */
   }
-  if (!usedLocalApi || bootstrap) {
-    await pullSupabaseSharedStore();
-  }
+  await pullSupabaseSharedStore();
 }
 
 function startSharedStoreSync() {

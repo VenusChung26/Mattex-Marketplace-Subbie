@@ -140,10 +140,7 @@ function slugId(sku) {
 }
 
 function loadExisting() {
-  const file = readFileSync(path.join(root, "src/data/mattexProducts.js"), "utf8");
-  const patched = file.replace("export const MATTEX_PRODUCTS = ", "const MATTEX_PRODUCTS = ");
-  const products = new Function(`${patched}\nreturn MATTEX_PRODUCTS;`)();
-  return products;
+  return [];
 }
 
 function nextSku(prefix, used) {
@@ -268,15 +265,13 @@ function buildFromExcel() {
 }
 
 const products = buildFromExcel();
-const dest = path.join(root, "src/data/mattexProducts.js");
-writeFileSync(
-  dest,
-  `/** Mattex ready-to-sale catalog from Excel. Category names are Cantonese first, then English. Software is unchanged. */\nexport const MATTEX_PRODUCTS = ${JSON.stringify(products, null, 2)};\n`
+console.log(
+  `Built ${products.length} products from Excel. Catalog is stored in Supabase, not GitHub. Upsert with the storefront seed path or Table Editor.`
 );
 const live = products.filter((p) => p.published !== false && p.category !== "Software");
 const cats = [...new Set(live.map((p) => p.category))];
 const unpublished = products.filter((p) => p.published === false);
 console.log(
-  `Wrote ${products.length} products (${live.length} excel live, ${products.length - live.length - unpublished.length} software, ${unpublished.length} unpublished) → ${dest}`
+  `${live.length} excel live, ${products.length - live.length - unpublished.length} software, ${unpublished.length} unpublished`
 );
 console.log(cats.join("\n"));
